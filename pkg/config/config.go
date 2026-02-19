@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -45,14 +46,14 @@ type TokenConfig struct {
 
 // ProjectConfig represents ./.agentsecrets/project.json
 type ProjectConfig struct {
-	ProjectID     string `json:"project_id,omitempty"`
-	ProjectName   string `json:"project_name,omitempty"`
-	Description   string `json:"description,omitempty"`
-	Environment   string `json:"environment,omitempty"` // "development", "staging", "production"
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	WorkspaceName string `json:"workspace_name,omitempty"`
-	LastPull      string `json:"last_pull,omitempty"`
-	LastPush      string `json:"last_push,omitempty"`
+	ProjectID     string `json:"project_id"`
+	ProjectName   string `json:"project_name"`
+	Description   string `json:"description"`
+	Environment   string `json:"environment"` // "development", "staging", "production"
+	WorkspaceID   string `json:"workspace_id"`
+	WorkspaceName string `json:"workspace_name"`
+	LastPull      string `json:"last_pull"`
+	LastPush      string `json:"last_push"`
 }
 
 // Paths returns the standard config file paths
@@ -75,6 +76,16 @@ func GetPaths() (*Paths, error) {
 		ConfigFile: filepath.Join(globalDir, "config.json"),
 		TokenFile:  filepath.Join(globalDir, "token.json"),
 	}, nil
+}
+
+// GlobalConfigExists returns true if ~/.agentsecrets/config.json already exists.
+func GlobalConfigExists() bool {
+	paths, err := GetPaths()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(paths.ConfigFile)
+	return err == nil
 }
 
 // InitGlobalConfig creates the ~/.agentsecrets/ directory and default config files.
@@ -200,10 +211,132 @@ func writeJSON(path string, data interface{}, perm os.FileMode) error {
 func readJSON(path string, target interface{}) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Return zero-value target if file doesn't exist
+		}
 		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	if len(data) == 0 {
+		return nil
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		return fmt.Errorf("failed to parse %s: %w", path, err)
 	}
+	return nil
+}
+
+// --- Convenience functions (mirrors Python's CredentialsManager) ---
+
+// GetEmail returns the stored user email, or empty string if not logged in.
+func GetEmail() string {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		return ""
+	}
+	return config.Email
+}
+
+// SetEmail stores the user's email in global config.
+func SetEmail(email string) error {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		config = &GlobalConfig{}
+	}
+	config.Email = email
+	return SaveGlobalConfig(config)
+}
+
+// GetAccessToken returns the current access token, or empty string.
+func GetAccessToken() string {
+	tokens, err := LoadTokens()
+	if err != nil {
+		return ""
+	}
+	return tokens.AccessToken
+}
+
+// StoreTokens saves authentication tokens.
+func StoreTokens(accessToken, refreshToken, expiresAt string) error {
+	return SaveTokens(&TokenConfig{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    expiresAt,
+	})
+}
+
+// GetSelectedWorkspaceID returns the selected workspace for new project creation.
+func GetSelectedWorkspaceID() string {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		return ""
+	}
+	return config.SelectedWorkspaceID
+}
+
+// SetSelectedWorkspaceID sets the selected workspace for new project creation.
+func SetSelectedWorkspaceID(id string) error {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		config = &GlobalConfig{}
+	}
+	config.SelectedWorkspaceID = id
+	return SaveGlobalConfig(config)
+}
+
+// StoreWorkspaceCache saves decrypted workspace keys to global config.
+func StoreWorkspaceCache(workspaces map[string]WorkspaceCacheEntry) error {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		config = &GlobalConfig{}
+	}
+	config.Workspaces = workspaces
+	return SaveGlobalConfig(config)
+}
+
+// GetWorkspaceKey returns the decrypted workspace key for a given workspace ID.
+func GetWorkspaceKey(workspaceID string) ([]byte, error) {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		return nil, err
+	}
+	ws, ok := config.Workspaces[workspaceID]
+	if !ok || ws.Key == "" {
+		return nil, fmt.Errorf("workspace key not found for %s", workspaceID)
+	}
+	return base64.StdEncoding.DecodeString(ws.Key)
+}
+
+// GetProjectWorkspaceKey returns the workspace key for the current project directory.
+func GetProjectWorkspaceKey() ([]byte, error) {
+	project, err := LoadProjectConfig()
+	if err != nil || project.WorkspaceID == "" {
+		return nil, fmt.Errorf("no project configured in current directory")
+	}
+	return GetWorkspaceKey(project.WorkspaceID)
+}
+
+// IsAuthenticated checks if the user has a valid session (token + email present).
+func IsAuthenticated() bool {
+	return GetAccessToken() != "" && GetEmail() != ""
+}
+
+// ClearSession removes all stored credentials (logout).
+// Does NOT clear project.json.
+func ClearSession() error {
+	paths, err := GetPaths()
+	if err != nil {
+		return err
+	}
+
+	// Reset config to empty (preserves the file)
+	if err := writeJSON(paths.ConfigFile, &GlobalConfig{}, 0644); err != nil {
+		return err
+	}
+
+	// Reset tokens to empty
+	if err := writeJSON(paths.TokenFile, &TokenConfig{}, 0600); err != nil {
+		return err
+	}
+
 	return nil
 }

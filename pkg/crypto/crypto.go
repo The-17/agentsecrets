@@ -16,9 +16,11 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/nacl/box"
 )
 
@@ -27,6 +29,138 @@ const NonceSize = 12
 
 // KeySize is the size of AES-256-GCM keys and X25519 keys (32 bytes)
 const KeySize = 32
+
+// SaltSize is the size of the Argon2id salt (32 bytes)
+const SaltSize = 32
+
+// Argon2id parameters (OWASP recommended)
+const (
+	argonTime    = 3      // iterations
+	argonMemory  = 64 * 1024 // 64 MB
+	argonThreads = 4
+	argonKeyLen  = 32
+)
+
+// UserKeys holds the output of SetupUser — everything needed to register a new account.
+type UserKeys struct {
+	PrivateKey          []byte // Raw 32-byte private key (stored in keyring)
+	PublicKey           []byte // Raw 32-byte public key
+	EncryptedPrivateKey string // Base64-encoded AES-256-GCM ciphertext of private key
+	Salt                string // Hex-encoded Argon2id salt
+}
+
+// SetupUser generates a new keypair and encrypts the private key with the user's password.
+// This is called during account creation (init command).
+//
+// Flow:
+//  1. Generate X25519 keypair
+//  2. Generate random salt
+//  3. Derive encryption key from password using Argon2id
+//  4. Encrypt private key with AES-256-GCM using derived key
+func SetupUser(password string) (*UserKeys, error) {
+	// Generate keypair
+	privateKey, publicKey, err := GenerateKeypair()
+	if err != nil {
+		return nil, fmt.Errorf("setup_user: %w", err)
+	}
+
+	// Encrypt private key with password
+	encryptedPrivateKey, salt, err := EncryptPrivateKey(privateKey, password)
+	if err != nil {
+		return nil, fmt.Errorf("setup_user: %w", err)
+	}
+
+	return &UserKeys{
+		PrivateKey:          privateKey,
+		PublicKey:           publicKey,
+		EncryptedPrivateKey: encryptedPrivateKey,
+		Salt:                salt,
+	}, nil
+}
+
+// DeriveKeyFromPassword derives a 32-byte encryption key from a password using Argon2id.
+func DeriveKeyFromPassword(password, saltHex string) ([]byte, error) {
+	salt, err := hex.DecodeString(saltHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid salt hex: %w", err)
+	}
+	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	return key, nil
+}
+
+// EncryptPrivateKey encrypts a private key with a password-derived key.
+// Returns (base64 ciphertext, hex salt).
+func EncryptPrivateKey(privateKey []byte, password string) (ciphertextB64, saltHex string, err error) {
+	// Generate random salt
+	salt := make([]byte, SaltSize)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return "", "", fmt.Errorf("failed to generate salt: %w", err)
+	}
+	saltHex = hex.EncodeToString(salt)
+
+	// Derive key from password
+	derivedKey, err := DeriveKeyFromPassword(password, saltHex)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Encrypt private key with AES-256-GCM
+	block, err := aes.NewCipher(derivedKey)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create cipher: %w", err)
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create GCM: %w", err)
+	}
+	nonce := make([]byte, aesGCM.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", "", fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	// Seal: nonce is prepended to ciphertext for storage
+	ciphertext := aesGCM.Seal(nonce, nonce, privateKey, nil)
+
+	return base64.StdEncoding.EncodeToString(ciphertext), saltHex, nil
+}
+
+// DecryptPrivateKey decrypts a private key using the user's password.
+// This is called during login to recover the private key from the server's encrypted copy.
+func DecryptPrivateKey(encryptedB64, password, saltHex string) ([]byte, error) {
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedB64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode encrypted private key: %w", err)
+	}
+
+	derivedKey, err := DeriveKeyFromPassword(password, saltHex)
+	if err != nil {
+		return nil, err
+	}
+
+	block, err := aes.NewCipher(derivedKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	nonceSize := aesGCM.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+
+	// Extract nonce (prepended during encryption)
+	nonce, ciphertextBody := ciphertext[:nonceSize], ciphertext[nonceSize:]
+
+	privateKey, err := aesGCM.Open(nil, nonce, ciphertextBody, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt private key (wrong password?): %w", err)
+	}
+
+	return privateKey, nil
+}
 
 // GenerateKeypair creates a new X25519 keypair for asymmetric encryption.
 // Returns (privateKey, publicKey) — both are 32 bytes.
