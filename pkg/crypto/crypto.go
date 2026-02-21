@@ -24,19 +24,12 @@ import (
 	"golang.org/x/crypto/nacl/box"
 )
 
-// NonceSize is the standard nonce size for AES-256-GCM (12 bytes)
 const NonceSize = 12
-
-// KeySize is the size of AES-256-GCM keys and X25519 keys (32 bytes)
 const KeySize = 32
-
-// SaltSize is the size of the Argon2id salt (32 bytes)
 const SaltSize = 32
-
-// Argon2id parameters (OWASP recommended)
 const (
-	argonTime    = 3      // iterations
-	argonMemory  = 64 * 1024 // 64 MB
+	argonTime    = 3
+	argonMemory  = 64 * 1024
 	argonThreads = 4
 	argonKeyLen  = 32
 )
@@ -182,42 +175,36 @@ func GenerateWorkspaceKey() ([]byte, error) {
 }
 
 // EncryptSecret encrypts a plaintext secret with a workspace key using AES-256-GCM.
-// Returns (ciphertext, nonce) both base64-encoded.
-func EncryptSecret(plaintext string, workspaceKey []byte) (ciphertextB64, nonceB64 string, err error) {
+// The nonce is prepended to the ciphertext and returned as a single base64-encoded string.
+func EncryptSecret(plaintext string, workspaceKey []byte) (string, error) {
 	block, err := aes.NewCipher(workspaceKey)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create cipher: %w", err)
+		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}
 
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create GCM: %w", err)
+		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
 	// Generate random nonce
 	nonce := make([]byte, aesGCM.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", "", fmt.Errorf("failed to generate nonce: %w", err)
+		return "", fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Encrypt (GCM appends the auth tag to the ciphertext)
-	ciphertext := aesGCM.Seal(nil, nonce, []byte(plaintext), nil)
+	// Encrypt and prepend nonce
+	// Seal(dst, nonce, plaintext, additionalData)
+	ciphertext := aesGCM.Seal(nonce, nonce, []byte(plaintext), nil)
 
-	return base64.StdEncoding.EncodeToString(ciphertext),
-		base64.StdEncoding.EncodeToString(nonce),
-		nil
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// DecryptSecret decrypts a base64-encoded ciphertext with a workspace key using AES-256-GCM.
-func DecryptSecret(ciphertextB64, nonceB64 string, workspaceKey []byte) (string, error) {
-	ciphertext, err := base64.StdEncoding.DecodeString(ciphertextB64)
+// DecryptSecret decrypts a base64-encoded ciphertext (with prepended nonce) using AES-256-GCM.
+func DecryptSecret(encryptedB64 string, workspaceKey []byte) (string, error) {
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedB64)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
-	}
-
-	nonce, err := base64.StdEncoding.DecodeString(nonceB64)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode nonce: %w", err)
 	}
 
 	block, err := aes.NewCipher(workspaceKey)
@@ -230,7 +217,15 @@ func DecryptSecret(ciphertextB64, nonceB64 string, workspaceKey []byte) (string,
 		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
+	nonceSize := aesGCM.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+
+	// Extract nonce and ciphertext body
+	nonce, ciphertextBody := ciphertext[:nonceSize], ciphertext[nonceSize:]
+
+	plaintext, err := aesGCM.Open(nil, nonce, ciphertextBody, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt: %w", err)
 	}

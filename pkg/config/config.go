@@ -34,7 +34,7 @@ type WorkspaceCacheEntry struct {
 	Name string `json:"name"`
 	Key  string `json:"key"`  // Base64-encoded decrypted workspace key
 	Role string `json:"role"` // "owner", "admin", "member"
-	Type string `json:"type"` // "personal", "team"
+	Type string `json:"type"` // "personal", "shared"
 }
 
 // TokenConfig represents ~/.agentsecrets/token.json
@@ -63,9 +63,13 @@ type Paths struct {
 	TokenFile  string // ~/.agentsecrets/token.json
 }
 
+// HomeDirHook is used to determine the user's home directory.
+// It can be overridden in tests to redirect config files.
+var HomeDirHook = os.UserHomeDir
+
 // GetPaths returns the standard config paths based on the user's home directory.
 func GetPaths() (*Paths, error) {
-	home, err := os.UserHomeDir()
+	home, err := HomeDirHook()
 	if err != nil {
 		return nil, fmt.Errorf("could not determine home directory: %w", err)
 	}
