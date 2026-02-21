@@ -4,8 +4,8 @@
 *.dll
 *.so
 *.dylib
-agentsecrets
-agentsecrets-*
+/agentsecrets
+/agentsecrets-*
 
 # Test binary, built with `go test -c`
 *.test
