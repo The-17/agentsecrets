@@ -344,3 +344,17 @@ func ClearSession() error {
 
 	return nil
 }
+
+// ClearProjectConfig resets the local .agentsecrets/project.json file.
+func ClearProjectConfig() error {
+	projectDir := filepath.Join(".", ".agentsecrets")
+	projectFile := filepath.Join(projectDir, "project.json")
+	
+	// Check if it exists first
+	if _, err := os.Stat(projectFile); os.IsNotExist(err) {
+		return nil
+	}
+
+	defaultConfig := &ProjectConfig{Environment: "development"}
+	return writeJSON(projectFile, defaultConfig, 0644)
+}

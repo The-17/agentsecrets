@@ -55,7 +55,7 @@ func (s *Service) Create(name string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return parseAPIError(resp, "create workspace")
+		return s.API.DecodeError(resp)
 	}
 
 	var res struct {
@@ -99,7 +99,7 @@ func (s *Service) Invite(workspaceID, email, role string) error {
 	defer pubKeyResp.Body.Close()
 
 	if pubKeyResp.StatusCode != http.StatusOK {
-		return parseAPIError(pubKeyResp, "invite (get public key)")
+		return s.API.DecodeError(pubKeyResp)
 	}
 
 	var pubKeyRes struct {
@@ -149,7 +149,7 @@ func (s *Service) Invite(workspaceID, email, role string) error {
 	defer inviteResp.Body.Close()
 
 	if inviteResp.StatusCode != http.StatusCreated && inviteResp.StatusCode != http.StatusOK {
-		return parseAPIError(inviteResp, "invite")
+		return s.API.DecodeError(inviteResp)
 	}
 
 	return nil
@@ -171,7 +171,7 @@ func (s *Service) Members(workspaceID string) ([]WorkspaceMember, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseAPIError(resp, "list members")
+		return nil, s.API.DecodeError(resp)
 	}
 
 	var res struct {
@@ -196,22 +196,13 @@ func (s *Service) RemoveMember(workspaceID, email string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return parseAPIError(resp, "remove member")
+		return s.API.DecodeError(resp)
 	}
 
 	return nil
 }
 
 
-func parseAPIError(resp *http.Response, context string) error {
-	var errResp struct {
-		Message string `json:"message"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&errResp); err == nil && errResp.Message != "" {
-		return fmt.Errorf("%s failed: %s", context, errResp.Message)
-	}
-	return fmt.Errorf("%s failed: HTTP %d", context, resp.StatusCode)
-}
 
 // b64Enc is a shorthand for base64 standard encoding.
 func b64Enc(b []byte) string {

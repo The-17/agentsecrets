@@ -131,6 +131,47 @@ func (c *Client) Call(endpointKey, method string, data interface{}, urlParams ma
 	return c.HTTPClient.Do(req)
 }
 
+// DecodeError attempt to parse a JSON error message from the response body.
+// It returns a formatted error including the status code and any message from the API.
+func (c *Client) DecodeError(resp *http.Response) error {
+	var errResp struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+		Detail  string `json:"detail"`
+	}
+
+	// Read and buffer the body so we can try to decode it
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("API request failed with status %d (failed to read body: %v)", resp.StatusCode, err)
+	}
+	resp.Body.Close()
+
+	if err := json.Unmarshal(bodyBytes, &errResp); err == nil {
+		msg := errResp.Message
+		if msg == "" {
+			msg = errResp.Error
+		}
+		if msg == "" {
+			msg = errResp.Detail
+		}
+		if msg != "" {
+			return fmt.Errorf("API error: %s (status %d)", msg, resp.StatusCode)
+		}
+	}
+
+	bodySnippet := string(bodyBytes)
+	if len(bodySnippet) > 100 {
+		bodySnippet = bodySnippet[:100] + "..."
+	}
+
+	if bodySnippet != "" {
+		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, bodySnippet)
+	}
+
+	return fmt.Errorf("API request failed with status %d (empty body)", resp.StatusCode)
+}
+
 // resolveEndpoint converts "category.action" + params into a URL path
 func (c *Client) resolveEndpoint(key string, params map[string]string) (string, error) {
 	parts := strings.SplitN(key, ".", 2)

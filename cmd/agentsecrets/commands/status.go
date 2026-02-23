@@ -14,11 +14,11 @@ var statusCmd = &cobra.Command{
 	Short: "Show current session and project info",
 	Long: `Show the current AgentSecrets session status.
 
-Displays:
-  - Whether you're logged in
-  - Your email
-  - Active workspace
-  - Current project (if in a project directory)`,
+	Displays:
+	- Whether you're logged in
+	- Your email
+	- Active workspace
+	- Current project (if in a project directory)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		ui.Banner("AgentSecrets Status")
@@ -35,7 +35,7 @@ Displays:
 		}
 
 		email := config.GetEmail()
-		ui.StatusRow("Logged in:", email)
+		ui.StatusRow("Logged in as:", email)
 
 		// Workspace info
 		wsID := config.GetSelectedWorkspaceID()
@@ -43,32 +43,57 @@ Displays:
 			globalConfig, err := config.LoadGlobalConfig()
 			if err == nil && globalConfig.Workspaces != nil {
 				if ws, ok := globalConfig.Workspaces[wsID]; ok {
-					wsType := "personal"
-					if ws.Type == "team" {
-						wsType = "shared"
+					wsType := "shared"
+					if ws.Type == "personal" {
+						wsType = "personal"
 					}
-					ui.StatusRow("Workspace:", fmt.Sprintf("%s (%s)", ws.Name, wsType))
+					ui.StatusRow("Selected Workspace:", fmt.Sprintf("%s (%s)", ws.Name, wsType))
 				} else {
-					ui.StatusRow("Workspace:", wsID)
+					ui.StatusRow("Selected Workspace:", wsID)
 				}
 			}
 		} else {
-			ui.StatusRowDim("Workspace:", "—")
+			ui.StatusRowDim("Selected Workspace:", "—")
 		}
 
 		// Project info
 		project, err := config.LoadProjectConfig()
 		if err == nil && project.ProjectName != "" {
-			display := project.ProjectName
-			if project.WorkspaceName != "" {
-				display += fmt.Sprintf(" in %s", project.WorkspaceName)
+			projectName := project.ProjectName
+			workspaceName := project.WorkspaceName
+			
+			// If workspace name isn't in project config, try to find it in global
+			if workspaceName == "" {
+				globalConfig, _ := config.LoadGlobalConfig()
+				if ws, ok := globalConfig.Workspaces[project.WorkspaceID]; ok {
+					workspaceName = ws.Name
+				}
 			}
-			ui.StatusRow("Project:", display)
+
+			projectDisplay := projectName
+			if workspaceName != "" {
+				projectDisplay += fmt.Sprintf(" (in %s)", workspaceName)
+			}
+			ui.StatusRow("Current Project:", projectDisplay)
+
+			// Sync info (Placeholders for now, will be updated in Secret Layer)
+			ui.StatusRow("Secrets:", "0 synced (0 unsynced)")
+			
+			pushStr := "Never"
+			if project.LastPush != "" {
+				pushStr = project.LastPush
+			}
+			pullStr := "Never"
+			if project.LastPull != "" {
+				pullStr = project.LastPull
+			}
+			ui.StatusRow("Activity:", fmt.Sprintf("Last Push: %s | Last Pull: %s", pushStr, pullStr))
+			
 			if project.Environment != "" {
 				ui.StatusRow("Environment:", project.Environment)
 			}
 		} else {
-			ui.StatusRowDim("Project:", "—")
+			ui.StatusRowDim("Current Project:", "—")
 		}
 
 		fmt.Println()

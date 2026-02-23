@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 )
 
 // Brand colors
@@ -59,7 +60,7 @@ var (
 	// Status key-value pair styling
 	KeyStyle = lipgloss.NewStyle().
 			Foreground(DimText).
-			Width(14)
+			Width(20)
 
 	ValStyle = lipgloss.NewStyle().
 			Foreground(White)
@@ -112,4 +113,29 @@ func Divider() {
 // Banner prints a styled banner heading.
 func Banner(text string) {
 	fmt.Println(BannerStyle.Render(text))
+}
+
+// BannerStr returns a styled banner heading as a string.
+func BannerStr(text string) string {
+	return BannerStyle.Render(text)
+}
+
+// RenderTable returns a styled table as a string.
+func RenderTable(headers []string, rows [][]string) string {
+	t := table.New().
+		Border(lipgloss.ThickBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(Dim)).
+		Headers(headers...).
+		Rows(rows...)
+
+	// Style headers and rows
+	t.StyleFunc(func(row, col int) lipgloss.Style {
+		style := lipgloss.NewStyle().Padding(0, 1).Align(lipgloss.Left)
+		if row == 0 {
+			style = style.Foreground(Teal).Bold(true)
+		}
+		return style
+	})
+
+	return t.Render()
 }

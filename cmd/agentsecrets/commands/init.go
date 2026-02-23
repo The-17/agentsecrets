@@ -57,6 +57,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Clear existing config before re-initializing
+		if err := config.ClearSession(); err != nil {
+			return fmt.Errorf("failed to clear session: %w", err)
+		}
+		if err := config.ClearProjectConfig(); err != nil {
+			return fmt.Errorf("failed to clear project config: %w", err)
+		}
+
 		fmt.Println()
 	}
 

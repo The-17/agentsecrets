@@ -53,6 +53,7 @@ func init() {
 	// Create the shared services
 	authService = auth.NewService(apiClient)
 	workspaceService = workspaces.NewService(apiClient)
+	InitProjectService(apiClient)
 
 	// Register all subcommands
 	rootCmd.AddCommand(initCmd)
@@ -60,4 +61,5 @@ func init() {
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(workspaceCmd)
+	rootCmd.AddCommand(projectCmd)
 }

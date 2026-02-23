@@ -12,7 +12,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/The-17/agentsecrets/pkg/api"
@@ -72,7 +71,7 @@ func (s *Service) Signup(req SignupRequest) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return parseAPIError(resp, "signup")
+		return s.API.DecodeError(resp)
 	}
 
 	// Auto-login after signup — pass the keypair so we skip decryption
@@ -107,7 +106,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return parseAPIError(resp, "login")
+		return s.API.DecodeError(resp)
 	}
 
 	// Parse response
@@ -256,17 +255,7 @@ type loginWorkspace struct {
 
 // --- Helpers ---
 
-// parseAPIError extracts an error message from an API error response.
-func parseAPIError(resp *http.Response, context string) error {
-	body, _ := io.ReadAll(resp.Body)
-	var errResp struct {
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(body, &errResp) == nil && errResp.Message != "" {
-		return fmt.Errorf("%s failed: %s", context, errResp.Message)
-	}
-	return fmt.Errorf("%s failed: HTTP %d", context, resp.StatusCode)
-}
+// coalesce returns the first non-empty string.
 
 // coalesce returns the first non-empty string.
 func coalesce(values ...string) string {

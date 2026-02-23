@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/The-17/agentsecrets/pkg/api"
@@ -111,5 +112,35 @@ func TestLoginFlow(t *testing.T) {
 	// Verify tokens were stored
 	if config.GetAccessToken() != "access-123" {
 		t.Error("Access token was not stored correctly")
+	}
+}
+
+func TestLoginFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldHome := config.HomeDirHook
+	config.HomeDirHook = func() (string, error) { return tmpDir, nil }
+	defer func() { config.HomeDirHook = oldHome }()
+
+	if err := config.InitGlobalConfig(); err != nil {
+		t.Fatalf("InitGlobalConfig failed: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid credentials"})
+	}))
+	defer server.Close()
+
+	client := api.NewClient(func() string { return "" })
+	client.BaseURL = server.URL
+	svc := NewService(client)
+
+	dummyKey := make([]byte, 32)
+	err := svc.PerformLogin("test@example.com", "wrong-pass", dummyKey, dummyKey)
+	if err == nil {
+		t.Error("PerformLogin should have failed for unauthorized credentials")
+	}
+	if !strings.Contains(err.Error(), "Invalid credentials") {
+		t.Errorf("Expected 'Invalid credentials' in error, got: %v", err)
 	}
 }

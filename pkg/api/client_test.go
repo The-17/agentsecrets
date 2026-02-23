@@ -124,3 +124,34 @@ func TestAPIParams(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
 	}
 }
+
+func TestDecodeError(t *testing.T) {
+	client := NewClient(func() string { return "" })
+
+	// Case 1: JSON with 'error' field
+	resp1 := httptest.NewRecorder()
+	resp1.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(resp1).Encode(map[string]string{"error": "bad request"})
+	err := client.DecodeError(resp1.Result())
+	if !strings.Contains(err.Error(), "bad request") {
+		t.Errorf("Expected 'bad request' in error, got: %v", err)
+	}
+
+	// Case 2: JSON with 'detail' field (common in Django Rest Framework)
+	resp2 := httptest.NewRecorder()
+	resp2.WriteHeader(http.StatusForbidden)
+	json.NewEncoder(resp2).Encode(map[string]string{"detail": "permission denied"})
+	err = client.DecodeError(resp2.Result())
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("Expected 'permission denied' in error, got: %v", err)
+	}
+
+	// Case 3: Non-JSON response (e.g. 502/504 from Nginx)
+	resp3 := httptest.NewRecorder()
+	resp3.WriteHeader(http.StatusBadGateway)
+	resp3.WriteString("<html><body>502 Bad Gateway</body></html>")
+	err = client.DecodeError(resp3.Result())
+	if !strings.Contains(err.Error(), "502 Bad Gateway") {
+		t.Errorf("Expected '502 Bad Gateway' in error, got: %v", err)
+	}
+}
