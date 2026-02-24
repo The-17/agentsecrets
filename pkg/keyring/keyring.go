@@ -29,6 +29,12 @@ func init() {
 	// On Linux, test if the keyring actually works. If not, fall back to file storage.
 	// macOS and Windows have reliable keyring support.
 	if runtime.GOOS == "linux" {
+		// WSL specifically often hangs on dbus-based keyring calls if not set up correctly.
+		if os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("DISPLAY") == "" {
+			useFileBackend = true
+			return
+		}
+
 		// Try a test write/read/delete to see if keyring works
 		testKey := "__agentsecrets_keyring_test__"
 		err := gokeyring.Set(serviceName, testKey, "test")
@@ -182,4 +188,60 @@ func fileDelete(email string) error {
 	}
 	delete(entries, email)
 	return saveKeyringFile(entries)
+}
+
+// --- Individual Secret Storage (for Proxy support) ---
+
+func secretKeyName(projectID, key string) string {
+	return fmt.Sprintf("Secret_%s_%s", projectID, key)
+}
+
+// SetSecret stores a decrypted secret in the keyring.
+func SetSecret(projectID, key, value string) error {
+	name := secretKeyName(projectID, key)
+	if useFileBackend {
+		entries, err := loadKeyringFile()
+		if err != nil {
+			return fmt.Errorf("set secret: %w", err)
+		}
+		entry := entries[projectID]
+		if entry.Private == "" { // Reuse private key slot for project ID tracking in this backend if needed, or just store in a new schema
+			// Actually, let's just use a simple key=value map for secrets in the file backend
+		}
+		// For simplicity in the file backend, we'll store secrets as "Secret_{projectID}_{key}"
+		return fileSet(name, value, "")
+	}
+
+	if err := gokeyring.Set(serviceName, name, value); err != nil {
+		return fmt.Errorf("set secret: %w", err)
+	}
+	return nil
+}
+
+// GetSecret retrieves a secret from the keyring.
+func GetSecret(projectID, key string) (string, error) {
+	name := secretKeyName(projectID, key)
+	if useFileBackend {
+		val, err := fileGetKey(name, "private")
+		if err != nil {
+			return "", fmt.Errorf("get secret: %w", err)
+		}
+		return string(val), nil
+	}
+
+	val, err := gokeyring.Get(serviceName, name)
+	if err != nil {
+		return "", fmt.Errorf("get secret: %w", err)
+	}
+	return val, nil
+}
+
+// DeleteSecret removes a secret from the keyring.
+func DeleteSecret(projectID, key string) error {
+	name := secretKeyName(projectID, key)
+	if useFileBackend {
+		return fileDelete(name)
+	}
+	_ = gokeyring.Delete(serviceName, name)
+	return nil
 }

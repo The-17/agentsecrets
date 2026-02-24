@@ -54,6 +54,7 @@ func init() {
 	authService = auth.NewService(apiClient)
 	workspaceService = workspaces.NewService(apiClient)
 	InitProjectService(apiClient)
+	InitSecretsService(apiClient)
 
 	// Register all subcommands
 	rootCmd.AddCommand(initCmd)
@@ -62,4 +63,5 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(secretsCmd)
 }

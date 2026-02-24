@@ -307,7 +307,28 @@ func GetWorkspaceKey(workspaceID string) ([]byte, error) {
 	if !ok || ws.Key == "" {
 		return nil, fmt.Errorf("workspace key not found for %s", workspaceID)
 	}
-	return base64.StdEncoding.DecodeString(ws.Key)
+
+	// First level of decoding (from config.json)
+	key, err := base64.StdEncoding.DecodeString(ws.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode workspace key: %w", err)
+	}
+
+	// Compatibility: the original Python CLI uses Fernet keys, which are 32-byte keys
+	// encoded in base64 (44 chars). When the API sends them asymmetrically encrypted,
+	// the "plaintext" inside the box is often the 44-char base64 string rather than the raw 32 bytes.
+	if len(key) == 44 {
+		// Try standard base64
+		if decoded, err := base64.StdEncoding.DecodeString(string(key)); err == nil && len(decoded) == 32 {
+			return decoded, nil
+		}
+		// Try URL-safe base64 (Fernet uses this)
+		if decoded, err := base64.URLEncoding.DecodeString(string(key)); err == nil && len(decoded) == 32 {
+			return decoded, nil
+		}
+	}
+
+	return key, nil
 }
 
 // GetProjectWorkspaceKey returns the workspace key for the current project directory.
