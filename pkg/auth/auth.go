@@ -258,8 +258,6 @@ type loginWorkspace struct {
 // --- Helpers ---
 
 // coalesce returns the first non-empty string.
-
-// coalesce returns the first non-empty string.
 func coalesce(values ...string) string {
 	for _, v := range values {
 		if v != "" {

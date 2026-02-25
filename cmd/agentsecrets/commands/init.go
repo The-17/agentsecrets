@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/auth"
@@ -178,24 +177,15 @@ func runSignup() error {
 	fmt.Println()
 
 	// Create account with spinner
-	var signupErr error
-	err := spinner.New().
-		Title("Creating your account...").
-		Action(func() {
-			signupErr = authService.Signup(auth.SignupRequest{
-				FirstName: firstName,
-				LastName:  lastName,
-				Email:     email,
-				Password:  password,
-			})
-		}).
-		Run()
-	if err != nil {
-		return err
-	}
-
-	if signupErr != nil {
-		ui.Error("Signup failed: " + signupErr.Error())
+	if err := ui.Spinner("Creating your account...", func() error {
+		return authService.Signup(auth.SignupRequest{
+			FirstName: firstName,
+			LastName:  lastName,
+			Email:     email,
+			Password:  password,
+		})
+	}); err != nil {
+		ui.Error("Signup failed: " + err.Error())
 		return nil
 	}
 
@@ -206,59 +196,5 @@ func runSignup() error {
 }
 
 func runLoginFlow() error {
-	var (
-		email    string
-		password string
-	)
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Email").
-				Value(&email).
-				Validate(func(s string) error {
-					if s == "" {
-						return fmt.Errorf("email is required")
-					}
-					return nil
-				}),
-
-			huh.NewInput().
-				Title("Password").
-				EchoMode(huh.EchoModePassword).
-				Value(&password).
-				Validate(func(s string) error {
-					if s == "" {
-						return fmt.Errorf("password is required")
-					}
-					return nil
-				}),
-		),
-	)
-
-	if err := form.Run(); err != nil {
-		return nil
-	}
-
-	fmt.Println()
-
-	var loginErr error
-	err := spinner.New().
-		Title("Logging in...").
-		Action(func() {
-			loginErr = authService.PerformLogin(email, password, nil, nil)
-		}).
-		Run()
-	if err != nil {
-		return err
-	}
-
-	if loginErr != nil {
-		ui.Error("Login failed: " + loginErr.Error())
-		return nil
-	}
-
-	fmt.Println()
-	ui.Success("Logged in successfully!")
-	return nil
+	return performLogin()
 }

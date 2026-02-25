@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // DefaultBaseURL is the SecretsCLI API endpoint
@@ -75,7 +76,7 @@ type Client struct {
 func NewClient(tokenFunc func() string) *Client {
 	return &Client{
 		BaseURL:    DefaultBaseURL,
-		HTTPClient: &http.Client{},
+		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 		getToken:   tokenFunc,
 	}
 }
@@ -145,7 +146,6 @@ func (c *Client) DecodeError(resp *http.Response) error {
 	if err != nil {
 		return fmt.Errorf("API request failed with status %d (failed to read body: %v)", resp.StatusCode, err)
 	}
-	resp.Body.Close()
 
 	if err := json.Unmarshal(bodyBytes, &errResp); err == nil {
 		for _, msg := range []string{errResp.Message, errResp.Error, errResp.Detail} {

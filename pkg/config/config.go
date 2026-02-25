@@ -106,7 +106,7 @@ func InitGlobalConfig() error {
 
 	// Create config.json if it doesn't exist
 	if _, err := os.Stat(paths.ConfigFile); os.IsNotExist(err) {
-		if err := writeJSON(paths.ConfigFile, &GlobalConfig{}, 0644); err != nil {
+		if err := writeJSON(paths.ConfigFile, &GlobalConfig{}, 0600); err != nil {
 			return err
 		}
 	}
@@ -158,7 +158,7 @@ func SaveGlobalConfig(config *GlobalConfig) error {
 	if err != nil {
 		return err
 	}
-	return writeJSON(paths.ConfigFile, config, 0644)
+	return writeJSON(paths.ConfigFile, config, 0600)
 }
 
 // LoadTokens reads ~/.agentsecrets/token.json
@@ -354,7 +354,7 @@ func ClearSession() error {
 	}
 
 	// Reset config to empty (preserves the file)
-	if err := writeJSON(paths.ConfigFile, &GlobalConfig{}, 0644); err != nil {
+	if err := writeJSON(paths.ConfigFile, &GlobalConfig{}, 0600); err != nil {
 		return err
 	}
 

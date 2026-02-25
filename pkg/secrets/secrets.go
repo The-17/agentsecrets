@@ -131,7 +131,7 @@ func (s *Service) Get(key string) (string, error) {
 	return plaintext, nil
 }
 
-// ListResponse holds the secret metadata from the API.
+// SecretMetadata holds the secret metadata from the API.
 type SecretMetadata struct {
 	Key       string `json:"key"`
 	Value     string `json:"value,omitempty"` // Encrypted value

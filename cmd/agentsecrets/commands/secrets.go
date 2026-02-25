@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/api"
@@ -16,6 +15,7 @@ import (
 var (
 	secretsService *secrets.Service
 	pullForce      bool
+	pushForce      bool
 	showValue      bool
 )
 
@@ -77,6 +77,7 @@ var secretsDiffCmd = &cobra.Command{
 
 func init() {
 	secretsPullCmd.Flags().BoolVarP(&pullForce, "force", "f", false, "Overwrite local changes without prompting")
+	secretsPushCmd.Flags().BoolVarP(&pushForce, "force", "f", false, "Push without prompting for missing keys")
 	secretsListCmd.Flags().BoolVarP(&showValue, "value", "v", false, "Decrypt and show secret values")
 	secretsGetCmd.Flags().BoolVarP(&showValue, "value", "v", false, "Decrypt and show the secret value")
 
@@ -106,19 +107,10 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	var setErr error
-	err := spinner.New().
-		Title(fmt.Sprintf("Encrypting and syncing %d secrets...", len(kv))).
-		Action(func() {
-			setErr = secretsService.BatchSet(kv)
-		}).
-		Run()
-
-	if err != nil {
-		return err
-	}
-	if setErr != nil {
-		ui.Error(fmt.Sprintf("Failed to set secrets: %v", setErr))
+	if err := ui.Spinner(fmt.Sprintf("Encrypting and syncing %d secrets...", len(kv)), func() error {
+		return secretsService.BatchSet(kv)
+	}); err != nil {
+		ui.Error(fmt.Sprintf("Failed to set secrets: %v", err))
 		return nil
 	}
 
@@ -131,15 +123,13 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 func runSecretsGet(cmd *cobra.Command, args []string) error {
 	key := args[0]
 	var value string
-	var getErr error
 
-	err := spinner.New().
-		Title(fmt.Sprintf("Retrieving %s...", key)).
-		Action(func() { value, getErr = secretsService.Get(key) }).
-		Run()
-
-	if err != nil || getErr != nil {
-		ui.Error(fmt.Sprintf("Get secret: %v", coalesce(err, getErr)))
+	if err := ui.Spinner(fmt.Sprintf("Retrieving %s...", key), func() error {
+		var e error
+		value, e = secretsService.Get(key)
+		return e
+	}); err != nil {
+		ui.Error(fmt.Sprintf("Get secret: %v", err))
 		return nil
 	}
 
@@ -153,20 +143,18 @@ func runSecretsGet(cmd *cobra.Command, args []string) error {
 
 func runSecretsList(cmd *cobra.Command, args []string) error {
 	var list []secrets.SecretMetadata
-	var listErr error
 
-	err := spinner.New().
-		Title(fmt.Sprintf("Fetching %s...", func() string {
-			if showValue {
-				return "keys and values"
-			}
-			return "keys"
-		}())).
-		Action(func() { list, listErr = secretsService.List(showValue) }).
-		Run()
+	listTitle := "Fetching keys"
+	if showValue {
+		listTitle = "Fetching keys and values"
+	}
 
-	if err != nil || listErr != nil {
-		ui.Error(fmt.Sprintf("List secrets: %v", coalesce(err, listErr)))
+	if err := ui.Spinner(listTitle+"...", func() error {
+		var e error
+		list, e = secretsService.List(showValue)
+		return e
+	}); err != nil {
+		ui.Error(fmt.Sprintf("List secrets: %v", err))
 		return nil
 	}
 
@@ -196,21 +184,14 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 
 func runSecretsPull(cmd *cobra.Command, args []string) error {
 	var diff *secrets.DiffResult
-	var diffErr error
 
 	// 1. Check for conflicts first
-	err := spinner.New().
-		Title("Checking for conflicts...").
-		Action(func() {
-			diff, diffErr = secretsService.Diff()
-		}).
-		Run()
-
-	if err != nil {
-		return err
-	}
-	if diffErr != nil {
-		ui.Error("Failed to check for conflicts: " + diffErr.Error())
+	if err := ui.Spinner("Checking for conflicts...", func() error {
+		var e error
+		diff, e = secretsService.Diff()
+		return e
+	}); err != nil {
+		ui.Error("Failed to check for conflicts: " + err.Error())
 		return nil
 	}
 
@@ -254,33 +235,25 @@ func runSecretsPull(cmd *cobra.Command, args []string) error {
 			ui.Info("Pull cancelled.")
 			return nil
 		case "missing":
-			// We only want to pull keys that are in cloud but NOT in local (diff.Removed)
 			if len(diff.Removed) == 0 {
 				ui.Info("No missing secrets found. Pull cancelled (local changes preserved).")
 				return nil
 			}
 			targetKeys = diff.Removed
-			if targetKeys == nil {
-				targetKeys = []string{} // Should not happen with len check but safe
-			}
 		case "overwrite":
 			targetKeys = nil // Pull all
 		}
 	}
 
-	var pullErr error
-	err = spinner.New().
-		Title(fmt.Sprintf("Pulling %d secrets...", func() int {
-			if targetKeys == nil {
-				return len(diff.Removed) + len(diff.Changed) + len(diff.Unchanged)
-			}
-			return len(targetKeys)
-		}())).
-		Action(func() { pullErr = secretsService.Pull(targetKeys) }).
-		Run()
+	pullCount := len(diff.Removed) + len(diff.Changed) + len(diff.Unchanged)
+	if targetKeys != nil {
+		pullCount = len(targetKeys)
+	}
 
-	if err != nil || pullErr != nil {
-		ui.Error(fmt.Sprintf("Pull: %v", coalesce(err, pullErr)))
+	if err := ui.Spinner(fmt.Sprintf("Pulling %d secrets...", pullCount), func() error {
+		return secretsService.Pull(targetKeys)
+	}); err != nil {
+		ui.Error(fmt.Sprintf("Pull: %v", err))
 		return nil
 	}
 
@@ -289,32 +262,99 @@ func runSecretsPull(cmd *cobra.Command, args []string) error {
 }
 
 func runSecretsPush(cmd *cobra.Command, args []string) error {
-	var pushErr error
-	err := spinner.New().
-		Title("Pushing secrets...").
-		Action(func() { pushErr = secretsService.Push() }).
-		Run()
+	// 1. Check for keys in cloud that are missing locally
+	var diff *secrets.DiffResult
 
-	if err != nil || pushErr != nil {
-		ui.Error(fmt.Sprintf("Push: %v", coalesce(err, pushErr)))
+	if err := ui.Spinner("Checking for conflicts...", func() error {
+		var e error
+		diff, e = secretsService.Diff()
+		return e
+	}); err != nil {
+		ui.Error("Failed to check for conflicts: " + err.Error())
+		return nil
+	}
+
+	deleteFromCloud := false
+
+	if len(diff.Removed) > 0 && !pushForce {
+		fmt.Println()
+		ui.Warning("The following keys exist in the cloud but not in your local .env:")
+
+		headers := []string{"Key", "Status"}
+		rows := [][]string{}
+		for _, k := range diff.Removed {
+			rows = append(rows, []string{ui.BrandStyle.Render(k), ui.ErrorStyle.Render("Missing locally")})
+		}
+		fmt.Println(ui.RenderTable(headers, rows))
+
+		var result string
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("How would you like to handle these?").
+					Options(
+						huh.NewOption("Push & Delete Missing from Cloud", "delete"),
+						huh.NewOption("Push Only (Keep Cloud Keys)", "keep"),
+						huh.NewOption("Cancel", "cancel"),
+					).
+					Value(&result),
+			),
+		)
+
+		if err := form.Run(); err != nil {
+			return err
+		}
+
+		switch result {
+		case "cancel":
+			ui.Info("Push cancelled.")
+			return nil
+		case "delete":
+			deleteFromCloud = true
+		case "keep":
+			// Just push, don't delete
+		}
+	}
+
+	// 2. Push local secrets
+	if err := ui.Spinner("Pushing secrets...", func() error {
+		return secretsService.Push()
+	}); err != nil {
+		ui.Error(fmt.Sprintf("Push: %v", err))
 		return nil
 	}
 
 	ui.Success("Successfully pushed .env secrets to the cloud.")
+
+	// 3. Delete missing keys from cloud if requested
+	if deleteFromCloud && len(diff.Removed) > 0 {
+		if err := ui.Spinner(fmt.Sprintf("Deleting %d missing keys from cloud...", len(diff.Removed)), func() error {
+			for _, key := range diff.Removed {
+				if err := secretsService.Delete(key); err != nil {
+					return fmt.Errorf("failed to delete %s: %w", key, err)
+				}
+			}
+			return nil
+		}); err != nil {
+			ui.Error(fmt.Sprintf("Delete: %v", err))
+			return nil
+		}
+
+		for _, k := range diff.Removed {
+			ui.Success(fmt.Sprintf("Deleted %s from cloud", k))
+		}
+	}
+
 	return nil
 }
 
 func runSecretsDelete(cmd *cobra.Command, args []string) error {
 	key := args[0]
-	var delErr error
 
-	err := spinner.New().
-		Title(fmt.Sprintf("Deleting %s...", key)).
-		Action(func() { delErr = secretsService.Delete(key) }).
-		Run()
-
-	if err != nil || delErr != nil {
-		ui.Error(fmt.Sprintf("Delete: %v", coalesce(err, delErr)))
+	if err := ui.Spinner(fmt.Sprintf("Deleting %s...", key), func() error {
+		return secretsService.Delete(key)
+	}); err != nil {
+		ui.Error(fmt.Sprintf("Delete: %v", err))
 		return nil
 	}
 
@@ -324,15 +364,13 @@ func runSecretsDelete(cmd *cobra.Command, args []string) error {
 
 func runSecretsDiff(cmd *cobra.Command, args []string) error {
 	var diff *secrets.DiffResult
-	var diffErr error
 
-	err := spinner.New().
-		Title("Comparing secrets...").
-		Action(func() { diff, diffErr = secretsService.Diff() }).
-		Run()
-
-	if err != nil || diffErr != nil {
-		ui.Error(fmt.Sprintf("Diff: %v", coalesce(err, diffErr)))
+	if err := ui.Spinner("Comparing secrets...", func() error {
+		var e error
+		diff, e = secretsService.Diff()
+		return e
+	}); err != nil {
+		ui.Error(fmt.Sprintf("Diff: %v", err))
 		return nil
 	}
 
@@ -357,11 +395,3 @@ func runSecretsDiff(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func coalesce(errs ...error) error {
-	for _, e := range errs {
-		if e != nil {
-			return e
-		}
-	}
-	return nil
-}

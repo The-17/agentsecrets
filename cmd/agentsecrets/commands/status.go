@@ -78,15 +78,23 @@ var statusCmd = &cobra.Command{
 			ui.StatusRow("Current Project:", projectDisplay)
 
 			// Sync info
-			syncedCount := 0
-			unsyncedCount := 0
+			secretsDisplay := "Unable to calculate"
 			if secretsService != nil {
-				if diff, err := secretsService.Diff(); err == nil {
-					syncedCount = len(diff.Unchanged)
-					unsyncedCount = len(diff.Added) + len(diff.Changed) + len(diff.Removed)
+				diff, diffErr := secretsService.Diff()
+				if diffErr != nil {
+					secretsDisplay = fmt.Sprintf("Could not check (%s)", diffErr.Error())
+				} else {
+					syncedCount := len(diff.Unchanged)
+					unsyncedCount := len(diff.Added) + len(diff.Changed) + len(diff.Removed)
+					total := syncedCount + unsyncedCount
+					if total == 0 {
+						secretsDisplay = "No secrets found"
+					} else {
+						secretsDisplay = fmt.Sprintf("%d synced (%d unsynced)", syncedCount, unsyncedCount)
+					}
 				}
 			}
-			ui.StatusRow("Secrets:", fmt.Sprintf("%d synced (%d unsynced)", syncedCount, unsyncedCount))
+			ui.StatusRow("Secrets:", secretsDisplay)
 			
 			ui.StatusRow("Activity:", fmt.Sprintf("Last Push: %s | Last Pull: %s", formatTime(p.LastPush), formatTime(p.LastPull)))
 		} else {

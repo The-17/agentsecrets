@@ -18,24 +18,24 @@ type Project struct {
 
 // Service handles project orchestration
 type Service struct {
-	client *api.Client
+	API *api.Client
 }
 
 // NewService creates a new project service
 func NewService(client *api.Client) *Service {
-	return &Service{client: client}
+	return &Service{API: client}
 }
 
 // List returns all projects for the currently selected workspace
 func (s *Service) List() ([]Project, error) {
-	resp, err := s.client.Call("projects.list", "GET", nil, nil)
+	resp, err := s.API.Call("projects.list", "GET", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, s.client.DecodeError(resp)
+		return nil, s.API.DecodeError(resp)
 	}
 
 	var result struct {
@@ -77,14 +77,14 @@ func (s *Service) Create(name, description string) (*Project, error) {
 		data["description"] = description
 	}
 
-	resp, err := s.client.Call("projects.create", "POST", data, nil)
+	resp, err := s.API.Call("projects.create", "POST", data, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create project: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
-		return nil, s.client.DecodeError(resp)
+		return nil, s.API.DecodeError(resp)
 	}
 
 	var result struct {
@@ -114,14 +114,14 @@ func (s *Service) Use(name string) (*Project, error) {
 		"project_name": name,
 	}
 
-	resp, err := s.client.Call("projects.get", "GET", nil, params)
+	resp, err := s.API.Call("projects.get", "GET", nil, params)
 	if err != nil {
 		return nil, fmt.Errorf("use project: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, s.client.DecodeError(resp)
+		return nil, s.API.DecodeError(resp)
 	}
 
 	var result struct {

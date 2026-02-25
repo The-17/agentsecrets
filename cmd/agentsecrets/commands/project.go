@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
@@ -55,20 +54,13 @@ func init() {
 
 func runProjectList(cmd *cobra.Command, args []string) error {
 	var projs []projects.Project
-	var listErr error
 
-	err := spinner.New().
-		Title("Fetching projects...").
-		Action(func() {
-			projs, listErr = projectService.List()
-		}).
-		Run()
-
-	if err != nil {
-		return err
-	}
-	if listErr != nil {
-		ui.Error("Failed to list projects: " + listErr.Error())
+	if err := ui.Spinner("Fetching projects...", func() error {
+		var e error
+		projs, e = projectService.List()
+		return e
+	}); err != nil {
+		ui.Error("Failed to list projects: " + err.Error())
 		return nil
 	}
 
@@ -145,20 +137,13 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	var created *projects.Project
-	var createErr error
 
-	err = spinner.New().
-		Title("Creating project...").
-		Action(func() {
-			created, createErr = projectService.Create(name, desc)
-		}).
-		Run()
-
-	if err != nil {
-		return err
-	}
-	if createErr != nil {
-		ui.Error("Failed to create project: " + createErr.Error())
+	if err := ui.Spinner("Creating project...", func() error {
+		var e error
+		created, e = projectService.Create(name, desc)
+		return e
+	}); err != nil {
+		ui.Error("Failed to create project: " + err.Error())
 		return nil
 	}
 
@@ -178,20 +163,13 @@ func runProjectUse(cmd *cobra.Command, args []string) error {
 	if name == "" {
 		// Fetch projects for selection
 		var projs []projects.Project
-		var listErr error
 
-		err = spinner.New().
-			Title("Fetching projects...").
-			Action(func() {
-				projs, listErr = projectService.List()
-			}).
-			Run()
-
-		if err != nil {
-			return err
-		}
-		if listErr != nil {
-			ui.Error("Failed to fetch projects: " + listErr.Error())
+		if err = ui.Spinner("Fetching projects...", func() error {
+			var e error
+			projs, e = projectService.List()
+			return e
+		}); err != nil {
+			ui.Error("Failed to fetch projects: " + err.Error())
 			return nil
 		}
 
@@ -217,20 +195,13 @@ func runProjectUse(cmd *cobra.Command, args []string) error {
 	}
 
 	var used *projects.Project
-	var useErr error
 
-	err = spinner.New().
-		Title(fmt.Sprintf("Selecting project '%s'...", name)).
-		Action(func() {
-			used, useErr = projectService.Use(name)
-		}).
-		Run()
-
-	if err != nil {
-		return err
-	}
-	if useErr != nil {
-		ui.Error("Failed to use project: " + useErr.Error())
+	if err = ui.Spinner(fmt.Sprintf("Selecting project '%s'...", name), func() error {
+		var e error
+		used, e = projectService.Use(name)
+		return e
+	}); err != nil {
+		ui.Error("Failed to use project: " + err.Error())
 		return nil
 	}
 

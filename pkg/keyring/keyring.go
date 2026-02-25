@@ -200,7 +200,9 @@ func secretKeyName(projectID, key string) string {
 func SetSecret(projectID, key, value string) error {
 	name := secretKeyName(projectID, key)
 	if useFileBackend {
-		return fileSet(name, value, "")
+		// Base64-encode before storing so fileGetKey's decode round-trips correctly.
+		encoded := base64.StdEncoding.EncodeToString([]byte(value))
+		return fileSet(name, encoded, "")
 	}
 
 	if err := gokeyring.Set(serviceName, name, value); err != nil {
@@ -236,3 +238,4 @@ func DeleteSecret(projectID, key string) error {
 	_ = gokeyring.Delete(serviceName, name)
 	return nil
 }
+
