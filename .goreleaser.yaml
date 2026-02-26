@@ -28,12 +28,14 @@ builds:
       - -s -w -X github.com/The-17/agentsecrets/cmd/agentsecrets/commands.Version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     # this name template makes the result look like: agentsecrets_0.1.0_linux_amd64.tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     files:
       - LICENSE
       - README.md
@@ -44,7 +46,7 @@ checksum:
   name_template: "checksums.txt"
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -53,7 +55,7 @@ changelog:
       - "^docs:"
       - "^test:"
 
-brews:
+homebrews:
   - name: agentsecrets
     repository:
       owner: The-17
