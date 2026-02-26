@@ -1,7 +1,7 @@
 ---
 name: agentsecrets
 description: Zero-knowledge credential management — make authenticated API calls without exposing your keys
-version: 1.0.0
+version: 1.0.2
 tags:
   - security
   - credentials
@@ -10,6 +10,7 @@ tags:
   - mcp
   - setup
 homepage: https://github.com/The-17/agentsecrets
+registry: https://clawhub.ai/SteppaCodes/agentsecrets
 metadata:
   clawdbot:
     summary: Secure credential proxy — your agent makes API calls without seeing key values
@@ -23,7 +24,11 @@ requires:
   binaries:
     - name: agentsecrets
       description: The AgentSecrets CLI binary
-      install: "pip install agentsecrets"
+      install: |
+        - npx agentsecrets (Run without install)
+        - brew install The-17/tap/agentsecrets (macOS)
+        - pip install git+https://github.com/The-17/agentsecrets#subdirectory=pypi (Python/Universal)
+        - go install github.com/The-17/agentsecrets/cmd/agentsecrets@latest (Go devs)
 files:
   - "scripts/*"
 ---
@@ -50,14 +55,18 @@ Run silently:
 agentsecrets --version 2>/dev/null && echo "INSTALLED" || echo "NOT_INSTALLED"
 ```
 
-**If NOT_INSTALLED**, tell the user:
+**If NOT_INSTALLED**, detect the environment and provide the best installation command for the user to run:
 
-> "I need to install AgentSecrets to handle your API keys securely. This is a one-time setup that takes about 10 seconds. It stores your credentials in your OS keychain instead of plain text files — much safer than .env files. Want me to proceed?"
+1.  **Check for Node.js + npx**: `which npx`
+    - If found, tell user: "You can run this immediately without installation using `npx agentsecrets`. Just let me know if you want to proceed."
+2.  **Check for macOS + Homebrew**: `which brew`
+    - If found, tell user: "Please run `brew install The-17/tap/agentsecrets` in your terminal to install the AgentSecrets core."
+3.  **Check for Python**: `which pip`
+    - Tell user: "Please run `pip install git+https://github.com/The-17/agentsecrets#subdirectory=pypi` in your terminal to install the AgentSecrets core."
+4.  **Check for Go environment**: `which go`
+    - If user is a Go dev, tell them: "Please run `go install github.com/The-17/agentsecrets/cmd/agentsecrets@latest` to install the AgentSecrets core."
 
-If they agree, run:
-```bash
-pip install agentsecrets
-```
+**NOTE**: For security reasons, I do not run the installation command myself. This ensures you are in full control of the binary being installed on your machine.
 
 ### Step 2: Create Account or Log In
 
@@ -112,27 +121,21 @@ This project becomes the central store for all API keys used through OpenClaw. T
 
 > "I've created an `OPENCLAW_MANAGER` project to organize your credentials. All your API keys will be stored here."
 
-### Step 3: Collect credentials conversationally
+### Step 3: Secret Provisioning (Zero-Knowledge)
 
-When the user needs to use an API that requires authentication, ask them naturally:
+When an API call requires a key that isn't in the keychain:
 
-> "To call [API name], I need a [key type] key. Could you paste your API key here? I'll store it securely in your keychain immediately and it won't be kept in our chat history."
+1.  Determine the required key name (e.g., `STRIPE_KEY`).
+2.  **NEVER** ask the user to paste the key into this chat.
+3.  Instead, give the user the exact command to run in their own terminal:
 
-**IMPORTANT**: As soon as the user provides a credential value:
+> "I need a `STRIPE_KEY` to complete this request. For your security, please run this command in your local terminal to store the key in your OS keychain:
+>
+> `agentsecrets secrets set STRIPE_KEY`
+>
+> Once you've done that, let me know and I'll proceed. I will never see the actual key value."
 
-1. Store it IMMEDIATELY:
-```bash
-agentsecrets secrets set KEY_NAME=<the_value_they_gave>
-```
-
-2. Confirm storage:
-```bash
-agentsecrets secrets list
-```
-
-3. Tell the user:
-
-> "Stored securely as `KEY_NAME`. From now on, I'll refer to it by name only — the actual value is locked in your keychain. You can safely delete the message where you pasted it."
+4.  Wait for the user to confirm. Verify by running `agentsecrets secrets list`.
 
 **Naming conventions for keys** (use these automatically):
 | Service | Key Name |

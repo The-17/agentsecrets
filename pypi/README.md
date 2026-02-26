@@ -8,7 +8,6 @@ AgentSecrets is a **zero-knowledge credential proxy**. Your agent makes authenti
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
-[![ClawHub](https://img.shields.io/badge/ClawHub-SteppaCodes/agentsecrets-EB5C27?logo=anthropic)](https://clawhub.ai/SteppaCodes/agentsecrets)
 
 ---
 
@@ -39,15 +38,6 @@ Your agent says **"use STRIPE_KEY"**. AgentSecrets resolves the real value from 
 **macOS / Linux (One-liner):**
 ```bash
 curl -sSL https://get.agentsecrets.com | sh
-```
-
-**npm / npx (Universal):**
-```bash
-# Run without installing
-npx agentsecrets init
-
-# Install globally
-npm install -g agentsecrets
 ```
 
 **Homebrew:**
@@ -359,7 +349,6 @@ Docker isolates your agent but your keys are still plaintext *inside* the contai
 
 - [Architecture](docs/ARCHITECTURE.md) — deep dive into the security model
 - [Proxy Reference](docs/PROXY.md) — full HTTP proxy documentation
-- [ClawHub Registry](https://clawhub.ai/SteppaCodes/agentsecrets) — official OpenClaw skill
 - [Contributing](docs/CONTRIBUTING.md) — how to help
 - [Quick Start](docs/QUICKSTART.md) — detailed setup guide
 

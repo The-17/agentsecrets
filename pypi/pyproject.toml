@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentsecrets"
+version = "1.0.0"
+description = "AI-native zero-knowledge secrets manager (CLI wrapper)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    { name = "The Seventeen", email = "hello@theseventeen.co" },
+]
+keywords = [
+    "ai",
+    "agents",
+    "secrets",
+    "security",
+    "credentials",
+    "cli",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = []
+
+[project.scripts]
+agentsecrets = "agentsecrets.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentsecrets"]

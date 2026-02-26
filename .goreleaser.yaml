@@ -1,0 +1,77 @@
+# .goreleaser.yaml
+# Simple GoReleaser configuration for AgentSecrets
+# Documentation at https://goreleaser.com
+
+version: 2
+
+project_name: agentsecrets
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: agentsecrets
+    main: ./cmd/agentsecrets/
+    binary: agentsecrets
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/The-17/agentsecrets/cmd/agentsecrets/commands.Version={{.Version}}
+
+archives:
+  - format: tar.gz
+    # this name template makes the result look like: agentsecrets_0.1.0_linux_amd64.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - integrations/**/*
+      - docs/**/*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+brews:
+  - name: agentsecrets
+    repository:
+      owner: The-17
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/The-17/agentsecrets"
+    description: "Zero-knowledge credential proxy for AI agents"
+    license: "MIT"
+    install: |
+      bin.install "agentsecrets"
+    test: |
+      system "#{bin}/agentsecrets --version"
+
+release:
+  github:
+    owner: The-17
+    name: agentsecrets
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"

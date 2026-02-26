@@ -1,0 +1,33 @@
+{
+  "name": "agentsecrets",
+  "version": "1.0.0",
+  "description": "AI-native zero-knowledge secrets manager (CLI wrapper)",
+  "main": "index.js",
+  "bin": {
+    "agentsecrets": "bin/agentsecrets.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "secrets",
+    "security",
+    "credentials",
+    "cli"
+  ],
+  "author": "The Seventeen <hello@theseventeen.co>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/The-17/agentsecrets.git"
+  },
+  "bugs": {
+    "url": "https://github.com/The-17/agentsecrets/issues"
+  },
+  "homepage": "https://github.com/The-17/agentsecrets#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

@@ -230,7 +230,7 @@ requires:
   binaries:
     - name: agentsecrets
       description: The AgentSecrets CLI binary
-      install: "pip install agentsecrets"
+      install: "pip install git+https://github.com/The-17/agentsecrets#subdirectory=pypi"
 files:
   - "scripts/*"
 ---
@@ -247,7 +247,7 @@ Follow this when a user first needs API authentication.
 ` + "```bash" + `
 agentsecrets --version 2>/dev/null && echo "INSTALLED" || echo "NOT_INSTALLED"
 ` + "```" + `
-If not installed, explain the security benefit and run: ` + "`pip install agentsecrets`" + `
+If not installed, explain the security benefit and run: ` + "`pip install git+https://github.com/The-17/agentsecrets#subdirectory=pypi`" + `
 
 ### Step 2: Initialize
 ` + "```bash" + `
