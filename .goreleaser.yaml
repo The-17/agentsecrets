@@ -60,7 +60,7 @@ brews:
     repository:
       owner: The-17
       name: homebrew-tap
-      token: "{{ .Env.GITHUB_TOKEN }}"
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/The-17/agentsecrets"
     description: "Zero-knowledge credential proxy for AI agents"
