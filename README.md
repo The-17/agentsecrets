@@ -54,11 +54,6 @@ A prompt injection attack redirecting your agent to exfiltrate credentials gets:
 
 ## Installation
 
-**macOS / Linux:**
-```bash
-curl -sSL https://get.agentsecrets.com | sh
-```
-
 **npm / npx:**
 ```bash
 npm install -g @the-17/agentsecrets
