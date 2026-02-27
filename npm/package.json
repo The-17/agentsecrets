@@ -1,6 +1,6 @@
 {
   "name": "@the-17/agentsecrets",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AI-native zero-knowledge secrets manager (CLI wrapper)",
   "main": "index.js",
   "bin": {

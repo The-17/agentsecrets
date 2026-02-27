@@ -10,10 +10,12 @@ import (
 
 	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/secrets"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
 var forceReinit bool
+var storageMode int
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -35,6 +37,7 @@ var initCmd = &cobra.Command{
 
 func init() {
 	initCmd.Flags().BoolVarP(&forceReinit, "force", "f", false, "Skip reinitialize confirmation")
+	initCmd.Flags().IntVar(&storageMode, "storage-mode", 1, "Set storage mode (1: keychain only, 2: keychain & .env file)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -77,6 +80,37 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := config.InitProjectConfig(); err != nil {
 		return fmt.Errorf("failed to initialize project config: %w", err)
 	}
+
+	// Ask for storage mode if it wasn't explicitly passed via flag
+	modeToSet := storageMode
+	if !cmd.Flags().Changed("storage-mode") {
+		var modeChoice string
+		err := huh.NewSelect[string]().
+			Title("How would you like secrets to be stored locally?").
+			Options(
+				huh.NewOption("1. Keychain only (recommended) — values never written to disk.\n   .env.example created with key names only.", "1"),
+				huh.NewOption("2. .env file — plaintext file, compatible with all existing tooling.", "2"),
+			).
+			Value(&modeChoice).
+			Run()
+		
+		if err == nil {
+			if modeChoice == "2" {
+				modeToSet = 2
+			} else {
+				modeToSet = 1
+			}
+		}
+	}
+
+	// Set storage mode in global config.
+	if err := config.SetStorageMode(modeToSet); err != nil {
+		return fmt.Errorf("failed to set storage mode: %w", err)
+	}
+
+	// Create blank .env files based on storage mode footprint to ensure they exist immediately
+	secretsEnv := secrets.NewEnvManager()
+	_ = secretsEnv.Write(make(map[string]string))
 
 	_ = writeWorkflowFile()
 

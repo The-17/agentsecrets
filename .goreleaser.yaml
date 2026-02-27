@@ -30,7 +30,6 @@ builds:
 archives:
   - formats:
       - tar.gz
-    # this name template makes the result look like: agentsecrets_0.1.0_linux_amd64.tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
@@ -63,7 +62,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/The-17/agentsecrets"
-    description: "Zero-knowledge credential proxy for AI agents"
+    description: "Zero-knowledge credential firewall for the AI era"
     license: "MIT"
     install: |
       bin.install "agentsecrets"

@@ -1,7 +1,7 @@
 ---
 name: agentsecrets
 description: Zero-knowledge credential management — make authenticated API calls without exposing your keys
-version: 1.0.0
+version: 1.0.2
 tags:
   - security
   - credentials
@@ -81,7 +81,7 @@ agentsecrets status 2>/dev/null && echo "INITIALIZED" || echo "NOT_INITIALIZED"
 
 **If they want a NEW account:**
 ```bash
-agentsecrets init
+agentsecrets init --storage-mode 1
 ```
 This starts the interactive setup. Guide them through it:
 - They'll be asked to create an account (email + password)
@@ -90,36 +90,45 @@ This starts the interactive setup. Guide them through it:
 
 **If they want to LOG IN to an existing account:**
 ```bash
-agentsecrets init
+agentsecrets init --storage-mode 1
 ```
 - Choose the "Login" option when prompted
 - Ask for their email: "What email did you sign up with?"
 - They'll need to enter their password (guide them through the prompt)
 
 **If they just want local-only (no account):**
-```bash
-agentsecrets init --skip-login
-```
+The interactive `agentsecrets init --storage-mode 1` command will ask them to either login or signup. There is no local-only bypassing of the auth flow natively, but they can easily create an isolated throwaway account for the bot.
 
 After setup, tell the user:
 
 > "You're set up! Your API keys will be stored in your OS keychain — encrypted and protected by your system login. I'll never see the actual key values, just the names."
 
-### Step 2.5: Create the credential project
+### Step 2.5: Setup the credential project
 
-Secrets are organized by project. Check if one exists:
+Secrets are organized by project. The bot uses a dedicated project named `OPENCLAW_MANAGER`.
+
+Check if it's already linked locally:
 ```bash
-agentsecrets project list 2>/dev/null | grep -q "OPENCLAW_MANAGER" && echo "HAS_PROJECT" || echo "NO_PROJECT"
+agentsecrets status 2>/dev/null | grep -q "OPENCLAW_MANAGER" && echo "LINKED" || echo "NOT_LINKED"
 ```
 
-**If NO_PROJECT**, create a dedicated project for OpenClaw credentials:
+**If NOT_LINKED**, check if it exists in the user's workspace:
 ```bash
-agentsecrets project create OPENCLAW_MANAGER
+agentsecrets project list 2>/dev/null | grep -q "OPENCLAW_MANAGER" && echo "EXISTS_REMOTE" || echo "NOT_FOUND"
 ```
+
+- **If EXISTS_REMOTE**: Link it to the current directory:
+  ```bash
+  agentsecrets project use OPENCLAW_MANAGER
+  ```
+- **If NOT_FOUND**: Create it:
+  ```bash
+  agentsecrets project create OPENCLAW_MANAGER
+  ```
 
 This project becomes the central store for all API keys used through OpenClaw. Tell the user:
 
-> "I've created an `OPENCLAW_MANAGER` project to organize your credentials. All your API keys will be stored here."
+> "I've set up the `OPENCLAW_MANAGER` project to organize your credentials. All your API keys will be stored here."
 
 ### Step 3: Secret Provisioning (Zero-Knowledge)
 

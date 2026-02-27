@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	gokeyring "github.com/zalando/go-keyring"
 )
@@ -196,19 +197,21 @@ func secretKeyName(projectID, key string) string {
 	return fmt.Sprintf("Secret_%s_%s", projectID, key)
 }
 
-// SetSecret stores a decrypted secret in the keyring.
+// SetSecret stores a decrypted secret in the keyring and updates the project's key index.
 func SetSecret(projectID, key, value string) error {
 	name := secretKeyName(projectID, key)
 	if useFileBackend {
 		// Base64-encode before storing so fileGetKey's decode round-trips correctly.
 		encoded := base64.StdEncoding.EncodeToString([]byte(value))
-		return fileSet(name, encoded, "")
+		if err := fileSet(name, encoded, ""); err != nil {
+			return err
+		}
+	} else {
+		if err := gokeyring.Set(serviceName, name, value); err != nil {
+			return fmt.Errorf("set secret %s: %w", name, err)
+		}
 	}
-
-	if err := gokeyring.Set(serviceName, name, value); err != nil {
-		return fmt.Errorf("set secret %s: %w", name, err)
-	}
-	return nil
+	return addKeyToIndex(projectID, key)
 }
 
 // GetSecret retrieves a secret from the keyring.
@@ -229,13 +232,90 @@ func GetSecret(projectID, key string) (string, error) {
 	return val, nil
 }
 
-// DeleteSecret removes a secret from the keyring.
+// DeleteSecret removes a secret from the keyring and its index.
 func DeleteSecret(projectID, key string) error {
 	name := secretKeyName(projectID, key)
 	if useFileBackend {
-		return fileDelete(name)
+		if err := fileDelete(name); err != nil {
+			return err
+		}
+	} else {
+		_ = gokeyring.Delete(serviceName, name)
 	}
-	_ = gokeyring.Delete(serviceName, name)
-	return nil
+	return removeKeyFromIndex(projectID, key)
+}
+
+// --- Key Index Management ---
+// We maintain a comma-separated list of keys per project so we can iterate them 
+// since go-keyring lacks a list/iterate feature.
+
+func projectIndexName(projectID string) string {
+	return fmt.Sprintf("ProjectKeys_%s", projectID)
+}
+
+func getProjectKeys(projectID string) []string {
+	var val string
+	name := projectIndexName(projectID)
+
+	if useFileBackend {
+		if v, err := fileGetKey(name, "private"); err == nil {
+			val = string(v)
+		}
+	} else {
+		if v, err := gokeyring.Get(serviceName, name); err == nil {
+			val = v
+		}
+	}
+
+	if val == "" {
+		return []string{}
+	}
+	return strings.Split(val, ",")
+}
+
+func saveProjectKeys(projectID string, keys []string) error {
+	name := projectIndexName(projectID)
+	val := strings.Join(keys, ",")
+
+	if useFileBackend {
+		encoded := base64.StdEncoding.EncodeToString([]byte(val))
+		return fileSet(name, encoded, "")
+	}
+	return gokeyring.Set(serviceName, name, val)
+}
+
+func addKeyToIndex(projectID, key string) error {
+	keys := getProjectKeys(projectID)
+	for _, k := range keys {
+		if k == key {
+			return nil // Already exists
+		}
+	}
+	keys = append(keys, key)
+	return saveProjectKeys(projectID, keys)
+}
+
+func removeKeyFromIndex(projectID, key string) error {
+	keys := getProjectKeys(projectID)
+	var newKeys []string
+	for _, k := range keys {
+		if k != key {
+			newKeys = append(newKeys, k)
+		}
+	}
+	return saveProjectKeys(projectID, newKeys)
+}
+
+// GetAllProjectSecrets returns all secrets mapped for a specific project from the keyring.
+func GetAllProjectSecrets(projectID string) (map[string]string, error) {
+	keys := getProjectKeys(projectID)
+	res := make(map[string]string)
+
+	for _, k := range keys {
+		if val, err := GetSecret(projectID, k); err == nil {
+			res[k] = val
+		}
+	}
+	return res, nil
 }
 

@@ -6,6 +6,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/The-17/agentsecrets/pkg/config"
 )
 
 // EnvManager handles reading and writing .env files while preserving comments.
@@ -86,8 +88,11 @@ func (m *EnvManager) parseValue(val string) string {
 
 // Write merges the provided secrets into .env and updates .env.example.
 func (m *EnvManager) Write(newSecrets map[string]string) error {
-	if err := m.updateFile(m.EnvPath, newSecrets, false); err != nil {
-		return err
+	mode := config.GetStorageMode()
+	if mode != 1 {
+		if err := m.updateFile(m.EnvPath, newSecrets, false); err != nil {
+			return err
+		}
 	}
 	return m.updateFile(m.EnvExamplePath, newSecrets, true)
 }
@@ -150,8 +155,11 @@ func (m *EnvManager) updateFile(path string, newSecrets map[string]string, keysO
 
 // Delete removes a key from both files.
 func (m *EnvManager) Delete(key string) error {
-	if err := m.removeFromFile(m.EnvPath, key); err != nil {
-		return err
+	mode := config.GetStorageMode()
+	if mode != 1 {
+		if err := m.removeFromFile(m.EnvPath, key); err != nil {
+			return err
+		}
 	}
 	return m.removeFromFile(m.EnvExamplePath, key)
 }

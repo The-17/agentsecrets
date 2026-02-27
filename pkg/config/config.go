@@ -27,6 +27,7 @@ type GlobalConfig struct {
 	Email               string                      `json:"email,omitempty"`
 	SelectedWorkspaceID string                      `json:"selected_workspace_id,omitempty"`
 	Workspaces          map[string]WorkspaceCacheEntry `json:"workspaces,omitempty"`
+	StorageMode         int                         `json:"storage_mode,omitempty"` // 1 = keychain (default), 2 = env_file
 }
 
 // WorkspaceCacheEntry is a cached workspace with its decrypted key
@@ -378,4 +379,24 @@ func ClearProjectConfig() error {
 
 	defaultConfig := &ProjectConfig{Environment: "development"}
 	return writeJSON(projectFile, defaultConfig, 0644)
+}
+
+// GetStorageMode returns the configured storage mode (1: keychain, 2: env_file).
+// Defaults to 1 (keychain) if not set.
+func GetStorageMode() int {
+	config, err := LoadGlobalConfig()
+	if err != nil || config.StorageMode == 0 {
+		return 1 // Default to keychain
+	}
+	return config.StorageMode
+}
+
+// SetStorageMode updates the storage mode in the global config.
+func SetStorageMode(mode int) error {
+	c, err := LoadGlobalConfig()
+	if err != nil || c == nil {
+		c = &GlobalConfig{}
+	}
+	c.StorageMode = mode
+	return SaveGlobalConfig(c)
 }

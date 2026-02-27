@@ -212,11 +212,11 @@ func (s *Service) Pull(targetKeys []string) error {
 	}
 
 	if isSelective && len(secretsMap) == 0 {
-		return nil
+		// Even if empty, we want to ensure .env footprint is laid down
 	}
 
 	if err := s.Env.Write(secretsMap); err != nil {
-		return fmt.Errorf("pull: failed to write .env: %w", err)
+		return fmt.Errorf("pull: failed to update local files: %w", err)
 	}
 
 	// Update project last_pull timestamp
@@ -226,14 +226,21 @@ func (s *Service) Pull(targetKeys []string) error {
 	return nil
 }
 
-// Push uploads all local .env secrets to the cloud.
+// Push uploads all local secrets (.env or keychain) to the cloud.
 func (s *Service) Push() error {
 	project, err := config.LoadProjectConfig()
 	if err != nil || project.ProjectID == "" {
 		return fmt.Errorf("push secrets: no project configured in current directory")
 	}
 
-	localSecrets, err := s.Env.Read()
+	var localSecrets map[string]string
+
+	if config.GetStorageMode() == 1 {
+		localSecrets, err = keyring.GetAllProjectSecrets(project.ProjectID)
+	} else {
+		localSecrets, err = s.Env.Read()
+	}
+
 	if err != nil {
 		return err
 	}
@@ -320,11 +327,23 @@ type DiffResult struct {
 	Unchanged []string
 }
 
-// Diff compares local .env secrets with cloud secrets.
+// Diff compares local secrets (either .env or keychain) with cloud secrets.
 func (s *Service) Diff() (*DiffResult, error) {
-	local, err := s.Env.Read()
-	if err != nil {
-		return nil, err
+	var local map[string]string
+	var err error
+
+	// When StorageMode == 1, the local source of truth is the keychain.
+	if config.GetStorageMode() == 1 {
+		project, _ := config.LoadProjectConfig()
+		local, err = keyring.GetAllProjectSecrets(project.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		local, err = s.Env.Read()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	cloud, err := s.List(true)

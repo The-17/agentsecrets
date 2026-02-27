@@ -61,6 +61,13 @@ func init() {
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(statusCmd)
+	
+	// Add auth middleware to commands that require it
+	workspaceCmd.PersistentPreRunE = authService.EnsureAuth
+	projectCmd.PersistentPreRunE = authService.EnsureAuth
+	secretsCmd.PersistentPreRunE = authService.EnsureAuth
+	callCmd.PersistentPreRunE = authService.EnsureAuth
+
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(secretsCmd)

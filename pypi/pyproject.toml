@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentsecrets"
-version = "1.0.1"
-description = "AI-native zero-knowledge secrets manager (CLI wrapper)"
+version = "1.0.2"
+description = "AI-native zero-knowledge secrets manager"
 readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"
