@@ -8,7 +8,7 @@ import tempfile
 import shutil
 import stat
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 GITHUB_REPO = "The-17/agentsecrets"
 
 def get_platform_info():
