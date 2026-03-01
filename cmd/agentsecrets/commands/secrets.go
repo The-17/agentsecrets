@@ -16,7 +16,6 @@ var (
 	secretsService *secrets.Service
 	pullForce      bool
 	pushForce      bool
-	showValue      bool
 )
 
 // InitSecretsService sets up the service for the CLI
@@ -78,8 +77,6 @@ var secretsDiffCmd = &cobra.Command{
 func init() {
 	secretsPullCmd.Flags().BoolVarP(&pullForce, "force", "f", false, "Overwrite local changes without prompting")
 	secretsPushCmd.Flags().BoolVarP(&pushForce, "force", "f", false, "Push without prompting for missing keys")
-	secretsListCmd.Flags().BoolVarP(&showValue, "value", "v", false, "Decrypt and show secret values")
-	secretsGetCmd.Flags().BoolVarP(&showValue, "value", "v", false, "Decrypt and show the secret value")
 
 	secretsCmd.AddCommand(
 		secretsSetCmd,
@@ -122,36 +119,25 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 
 func runSecretsGet(cmd *cobra.Command, args []string) error {
 	key := args[0]
-	var value string
 
 	if err := ui.Spinner(fmt.Sprintf("Retrieving %s...", key), func() error {
-		var e error
-		value, e = secretsService.Get(key)
+		_, e := secretsService.Get(key)
 		return e
 	}); err != nil {
 		ui.Error(fmt.Sprintf("Get secret: %v", err))
 		return nil
 	}
 
-	if showValue {
-		fmt.Printf("\n%s=%s\n", ui.BrandStyle.Render(key), value)
-	} else {
-		fmt.Printf("\n%s\n", ui.BrandStyle.Render(key))
-	}
+	fmt.Printf("\n%s\n", ui.BrandStyle.Render(key))
 	return nil
 }
 
 func runSecretsList(cmd *cobra.Command, args []string) error {
 	var list []secrets.SecretMetadata
 
-	listTitle := "Fetching keys"
-	if showValue {
-		listTitle = "Fetching keys and values"
-	}
-
-	if err := ui.Spinner(listTitle+"...", func() error {
+	if err := ui.Spinner("Fetching keys...", func() error {
 		var e error
-		list, e = secretsService.List(showValue)
+		list, e = secretsService.List(false)
 		return e
 	}); err != nil {
 		ui.Error(fmt.Sprintf("List secrets: %v", err))
@@ -164,17 +150,10 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 	}
 
 	headers := []string{"Key"}
-	if showValue {
-		headers = append(headers, "Value")
-	}
 
 	rows := make([][]string, len(list))
 	for i, s := range list {
-		row := []string{ui.BrandStyle.Render(s.Key)}
-		if showValue {
-			row = append(row, s.Value)
-		}
-		rows[i] = row
+		rows[i] = []string{ui.BrandStyle.Render(s.Key)}
 	}
 
 	renderedTable := ui.RenderTable(headers, rows)

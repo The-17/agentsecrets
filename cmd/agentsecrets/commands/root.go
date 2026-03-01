@@ -74,4 +74,5 @@ func init() {
 	rootCmd.AddCommand(proxyCmd)
 	rootCmd.AddCommand(mcpCmd)
 	rootCmd.AddCommand(callCmd)
+	rootCmd.AddCommand(NewExecCmd())
 }

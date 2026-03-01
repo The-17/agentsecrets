@@ -1,7 +1,10 @@
+# SKILL.md — Updated AgentSecrets OpenClaw Skill
+
+```yaml
 ---
 name: agentsecrets
-description: Zero-knowledge credential management — make authenticated API calls without exposing your keys
-version: 1.0.2
+description: Zero-knowledge secrets infrastructure — AI agents operate the complete credential lifecycle without ever seeing values
+version: 1.0.4
 tags:
   - security
   - credentials
@@ -9,11 +12,13 @@ tags:
   - secrets
   - mcp
   - setup
+  - zero-knowledge
+  - secrets-management
 homepage: https://github.com/The-17/agentsecrets
 registry: https://clawhub.ai/SteppaCodes/agentsecrets
 metadata:
   clawdbot:
-    summary: Secure credential proxy — your agent makes API calls without seeing key values
+    summary: Zero-knowledge secrets infrastructure — the agent manages credentials autonomously without ever seeing values
     author: The Seventeen
     license: MIT
 requires:
@@ -32,270 +37,447 @@ requires:
 files:
   - "scripts/*"
 ---
+```
 
-# AgentSecrets — Zero-Knowledge Credential Management
+# AgentSecrets — Zero-Knowledge Secrets Infrastructure
 
-AgentSecrets lets you make authenticated API calls without ever exposing your credentials. Your keys stay in your OS keychain — you reference them by name, and AgentSecrets handles the rest.
+AgentSecrets is not a credential lookup tool. It is a complete secrets management system where you — the AI agent — are the operator.
 
-> **NOTE**: This skill uses the full AgentSecrets CLI, giving you access to ALL commands:
-> `init`, `login`, `signup`, `secrets set/list/delete`, `call`, `proxy logs`, and more.
-> This is more powerful than the MCP integration (which only exposes `api_call` and `list_secrets`).
-> You can manage accounts, store credentials, make API calls, and audit usage — all from chat.
+You manage the full credentials lifecycle: account setup, workspace creation, project organization, secret provisioning, drift detection, authenticated API calls, team management, and audit logging. At no step do you see an actual credential value.
+
+> **You are the operator. You never see the values.**
 
 ---
 
-## GUIDED SETUP WORKFLOW (Start Here)
+## YOUR ROLE
 
-When a user first asks you to make an API call, store a credential, or mentions AgentSecrets, follow this flow **step by step**. This is designed for users who interact through chat — you run the commands for them.
+You are operating AgentSecrets on behalf of the user. This means:
 
-### Step 1: Check if AgentSecrets is installed
+- You run commands autonomously — you do not ask the user to run commands you can run yourself
+- You manage the secrets lifecycle end to end without prompting the user for credential values
+- You detect problems (missing keys, drift, wrong project) and resolve them without human intervention
+- The only thing you never do is see, display, or handle actual secret values
+
+---
+
+## STEP 1: Verify Installation
 
 Run silently:
 ```bash
 agentsecrets --version 2>/dev/null && echo "INSTALLED" || echo "NOT_INSTALLED"
 ```
 
-**If NOT_INSTALLED**, detect the environment and provide the best installation command for the user to run:
+If NOT_INSTALLED, detect the environment and tell the user which command to run. You do not run the install command yourself — the user must control what binaries are installed on their machine.
 
-1.  **Check for Node.js + npx**: `which npx`
-    - If found, tell user: "You can run this immediately without installation using `npx @the-17/agentsecrets`. Just let me know if you want to proceed."
-2.  **Check for macOS + Homebrew**: `which brew`
-    - If found, tell user: "Please run `brew install The-17/tap/agentsecrets` in your terminal to install the AgentSecrets core."
-3.  **Check for Python**: `which pip`
-    - Tell user: "Please run `pip install agentsecrets` in your terminal to install the AgentSecrets core."
-4.  **Check for Go environment**: `which go`
-    - If user is a Go dev, tell them: "Please run `go install github.com/The-17/agentsecrets/cmd/agentsecrets@latest` to install the AgentSecrets core."
-
-**NOTE**: For security reasons, I do not run the installation command myself. This ensures you are in full control of the binary being installed on your machine.
-
-### Step 2: Create Account or Log In
-
-Run silently:
 ```bash
-agentsecrets status 2>/dev/null && echo "INITIALIZED" || echo "NOT_INITIALIZED"
+which npx   # Node.js available
+which brew  # Homebrew available
+which pip   # Python available
+which go    # Go available
 ```
 
-**If NOT_INITIALIZED**, ask the user:
+Installation commands by environment:
+- npx: `npx @the-17/agentsecrets`
+- Homebrew: `brew install The-17/tap/agentsecrets`
+- pip: `pip install agentsecrets`
+- Go: `go install github.com/The-17/agentsecrets/cmd/agentsecrets@latest`
 
-> "Do you already have an AgentSecrets account, or would you like to create one? Creating an account lets you sync secrets across devices and share them with team members."
+Tell the user: "AgentSecrets keeps your API keys in your OS keychain. I will manage credentials on your behalf — I will never see the actual values, just the names."
 
-**If they want a NEW account:**
+---
+
+## STEP 2: Check Status
+
+Always run this before any secrets operation:
+
 ```bash
-agentsecrets init --storage-mode 1
+agentsecrets status
 ```
-This starts the interactive setup. Guide them through it:
-- They'll be asked to create an account (email + password)
-- Ask them for their email: "What email would you like to use for your AgentSecrets account?"
-- Run the init and follow the prompts on their behalf
 
-**If they want to LOG IN to an existing account:**
+This returns: logged-in user, active workspace, active project, last sync time.
+
+If NOT_INITIALIZED (no output or error):
+
 ```bash
 agentsecrets init --storage-mode 1
 ```
-- Choose the "Login" option when prompted
-- Ask for their email: "What email did you sign up with?"
-- They'll need to enter their password (guide them through the prompt)
 
-**If they just want local-only (no account):**
-The interactive `agentsecrets init --storage-mode 1` command will ask them to either login or signup. There is no local-only bypassing of the auth flow natively, but they can easily create an isolated throwaway account for the bot.
+Guide the user through account creation or login. After init, verify:
 
-After setup, tell the user:
-
-> "You're set up! Your API keys will be stored in your OS keychain — encrypted and protected by your system login. I'll never see the actual key values, just the names."
-
-### Step 2.5: Setup the credential project
-
-Secrets are organized by project. The bot uses a dedicated project named `OPENCLAW_MANAGER`.
-
-Check if it's already linked locally:
 ```bash
-agentsecrets status 2>/dev/null | grep -q "OPENCLAW_MANAGER" && echo "LINKED" || echo "NOT_LINKED"
+agentsecrets status
 ```
 
-**If NOT_LINKED**, check if it exists in the user's workspace:
+---
+
+## STEP 3: Workspace Setup
+
+Check available workspaces:
+
 ```bash
-agentsecrets project list 2>/dev/null | grep -q "OPENCLAW_MANAGER" && echo "EXISTS_REMOTE" || echo "NOT_FOUND"
+agentsecrets workspace list
 ```
 
-- **If EXISTS_REMOTE**: Link it to the current directory:
-  ```bash
-  agentsecrets project use OPENCLAW_MANAGER
-  ```
-- **If NOT_FOUND**: Create it:
-  ```bash
-  agentsecrets project create OPENCLAW_MANAGER
-  ```
+If the user needs a new workspace:
+```bash
+agentsecrets workspace create "Workspace Name"
+agentsecrets workspace switch "Workspace Name"
+```
 
-This project becomes the central store for all API keys used through OpenClaw. Tell the user:
+If switching to an existing workspace:
+```bash
+agentsecrets workspace switch "Workspace Name"
+```
 
-> "I've set up the `OPENCLAW_MANAGER` project to organize your credentials. All your API keys will be stored here."
+Invite teammates when requested:
+```bash
+agentsecrets workspace invite user@email.com
+```
 
-### Step 3: Secret Provisioning (Zero-Knowledge)
+---
 
-When an API call requires a key that isn't in the keychain:
+## STEP 4: Project Setup
 
-1.  Determine the required key name (e.g., `STRIPE_KEY`).
-2.  **NEVER** ask the user to paste the key into this chat.
-3.  Instead, give the user the exact command to run in their own terminal:
+AgentSecrets organizes secrets by project. For OpenClaw workflows, use the dedicated `OPENCLAW_MANAGER` project.
 
-> "I need a `STRIPE_KEY` to complete this request. For your security, please run this command in your local terminal to store the key in your OS keychain:
->
-> `agentsecrets secrets set STRIPE_KEY`
->
-> Once you've done that, let me know and I'll proceed. I will never see the actual key value."
+Check if it exists:
+```bash
+agentsecrets project list 2>/dev/null | grep -q "OPENCLAW_MANAGER" && echo "EXISTS" || echo "NOT_FOUND"
+```
 
-4.  Wait for the user to confirm. Verify by running `agentsecrets secrets list`.
+If EXISTS:
+```bash
+agentsecrets project use OPENCLAW_MANAGER
+```
 
-**Naming conventions for keys** (use these automatically):
+If NOT_FOUND:
+```bash
+agentsecrets project create OPENCLAW_MANAGER
+agentsecrets project use OPENCLAW_MANAGER
+```
+
+For non-OpenClaw workflows, use or create the appropriate project:
+```bash
+agentsecrets project list
+agentsecrets project use PROJECT_NAME
+# or
+agentsecrets project create PROJECT_NAME
+agentsecrets project use PROJECT_NAME
+```
+
+---
+
+## STEP 5: Secret Provisioning
+
+Before making any API call, verify the required secret exists:
+
+```bash
+agentsecrets secrets list
+```
+
+You will see key names only. Never values.
+
+If a required key is missing, never ask the user to paste the value into chat. Tell them:
+
+> "I need `KEY_NAME` to complete this. Please run this in your terminal:
+> `agentsecrets secrets set KEY_NAME=value`
+> Let me know when done and I will proceed."
+
+Wait for confirmation, then verify:
+```bash
+agentsecrets secrets list
+```
+
+Standard key naming conventions:
+
 | Service | Key Name |
-|---------|----------|
-| Stripe | `STRIPE_KEY` or `STRIPE_LIVE_KEY` / `STRIPE_TEST_KEY` |
+|---|---|
+| Stripe (live) | `STRIPE_KEY` or `STRIPE_LIVE_KEY` |
+| Stripe (test) | `STRIPE_TEST_KEY` |
 | OpenAI | `OPENAI_KEY` |
 | GitHub | `GITHUB_TOKEN` |
 | Google Maps | `GOOGLE_MAPS_KEY` |
 | AWS | `AWS_ACCESS_KEY` and `AWS_SECRET_KEY` |
-| Any other service | `SERVICENAME_KEY` (uppercase, underscores) |
-
-### Step 4: Ready to use
-
-After storing at least one key, confirm:
-
-> "You're all set! I can now make API calls on your behalf without ever seeing your keys. Just tell me what you need — like 'check my Stripe balance' or 'list my GitHub repos' — and I'll handle the authentication securely."
+| Paystack | `PAYSTACK_KEY` |
+| SendGrid | `SENDGRID_KEY` |
+| Twilio | `TWILIO_SID` and `TWILIO_TOKEN` |
+| Any other | `SERVICENAME_KEY` (uppercase, underscores) |
 
 ---
 
-## MAKING API CALLS
+## STEP 6: Detect and Resolve Drift
 
-Once setup is complete, use `agentsecrets call` for all authenticated requests.
+Before deployment workflows or when secrets may be stale:
 
-### Basic pattern
 ```bash
-agentsecrets call --url <API_URL> --method <METHOD> --bearer <KEY_NAME>
+agentsecrets secrets diff
 ```
 
-### Auth Styles
+This shows what is out of sync between local keychain and cloud. If drift is detected:
 
-Different APIs authenticate differently. Choose the right flag:
-
-| API Pattern | Flag | Example |
-|-------------|------|---------|
-| Bearer token (most APIs) | `--bearer KEY` | `--bearer STRIPE_KEY` |
-| Custom header | `--header Name=KEY` | `--header X-API-Key=MY_KEY` |
-| Query parameter | `--query param=KEY` | `--query key=GMAP_KEY` |
-| Basic auth | `--basic KEY` | `--basic CREDENTIALS` |
-| JSON body field | `--body-field path=KEY` | `--body-field client_secret=SECRET` |
-| Form field | `--form-field name=KEY` | `--form-field api_key=KEY` |
-
-### Examples
-
-**Check Stripe balance:**
 ```bash
+agentsecrets secrets pull
+```
+
+To push local changes to cloud:
+```bash
+agentsecrets secrets push
+```
+
+---
+
+## STEP 7: Make Authenticated API Calls
+
+Always use `agentsecrets call` — never curl or direct HTTP with credentials.
+
+Basic pattern:
+```bash
+agentsecrets call --url <URL> --method <METHOD> --<AUTH_STYLE> <KEY_NAME>
+```
+
+Default method is GET if `--method` is omitted.
+
+Auth styles:
+
+| Pattern | Flag | Use For |
+|---|---|---|
+| Bearer token | `--bearer KEY_NAME` | Stripe, OpenAI, GitHub, most modern APIs |
+| Custom header | `--header Name=KEY_NAME` | SendGrid, Twilio, API Gateway |
+| Query parameter | `--query param=KEY_NAME` | Google Maps, weather APIs |
+| Basic auth | `--basic KEY_NAME` | Jira, legacy REST APIs |
+| JSON body | `--body-field path=KEY_NAME` | OAuth flows, custom auth |
+| Form field | `--form-field field=KEY_NAME` | Form-based auth |
+
+Examples:
+
+```bash
+# GET request
 agentsecrets call --url https://api.stripe.com/v1/balance --bearer STRIPE_KEY
-```
 
-**Create Stripe charge:**
-```bash
+# POST with body
 agentsecrets call \
   --url https://api.stripe.com/v1/charges \
   --method POST \
   --bearer STRIPE_KEY \
   --body '{"amount":1000,"currency":"usd","source":"tok_visa"}'
-```
 
-**List GitHub repos:**
-```bash
-agentsecrets call --url https://api.github.com/user/repos --bearer GITHUB_TOKEN
-```
+# PUT request
+agentsecrets call \
+  --url https://api.example.com/resource/123 \
+  --method PUT \
+  --bearer API_KEY \
+  --body '{"field":"value"}'
 
-**Google Maps geocode:**
-```bash
+# DELETE request
+agentsecrets call \
+  --url https://api.example.com/resource/123 \
+  --method DELETE \
+  --bearer API_KEY
+
+# Custom header
+agentsecrets call \
+  --url https://api.sendgrid.com/v3/mail/send \
+  --method POST \
+  --header X-Api-Key=SENDGRID_KEY \
+  --body '{"personalizations":[...]}'
+
+# Query parameter
 agentsecrets call \
   --url "https://maps.googleapis.com/maps/api/geocode/json?address=Lagos" \
   --query key=GOOGLE_MAPS_KEY
+
+# Multiple credentials
+agentsecrets call \
+  --url https://api.example.com/data \
+  --bearer AUTH_TOKEN \
+  --header X-Org-ID=ORG_SECRET
+
+# Basic auth
+agentsecrets call \
+  --url https://jira.example.com/rest/api/2/issue \
+  --basic JIRA_CREDS
+
+# Paystack
+agentsecrets call \
+  --url https://api.paystack.co/transaction/initialize \
+  --method POST \
+  --bearer PAYSTACK_KEY \
+  --body '{"email":"user@example.com","amount":10000}'
 ```
 
 ---
 
-## KEY MANAGEMENT COMMANDS
+## STEP 8: Proxy Mode
 
-Use these to help users manage their stored credentials:
+For workflows requiring multiple calls or framework integrations:
 
-**List all stored key names:**
+```bash
+agentsecrets proxy start
+agentsecrets proxy status
+agentsecrets proxy stop
+```
+
+With custom port:
+```bash
+agentsecrets proxy start --port 9000
+```
+
+HTTP proxy pattern for any agent or framework:
+```
+POST http://localhost:8765/proxy
+X-AS-Target-URL: https://api.stripe.com/v1/balance
+X-AS-Inject-Bearer: STRIPE_KEY
+```
+
+---
+
+## STEP 9: Audit What Happened
+
+After any significant operation:
+
+```bash
+agentsecrets proxy logs
+agentsecrets proxy logs --last 20
+agentsecrets proxy logs --secret STRIPE_KEY
+```
+
+Output shows: timestamp, method, target URL, key name, status code, duration.
+Never shows values.
+
+Raw log location: `~/.agentsecrets/proxy.log` (JSONL format)
+
+---
+
+## FULL COMMAND REFERENCE
+
+### Account
+```bash
+agentsecrets init                          # Create account or login
+agentsecrets init --storage-mode 1         # Init with keychain-only mode
+agentsecrets login                         # Login to existing account
+agentsecrets logout                        # Clear session
+agentsecrets status                        # Current context
+```
+
+### Workspaces
+```bash
+agentsecrets workspace create "Name"       # Create workspace
+agentsecrets workspace list                # List all workspaces
+agentsecrets workspace switch "Name"       # Switch active workspace
+agentsecrets workspace invite user@email   # Invite teammate
+```
+
+### Projects
+```bash
+agentsecrets project create NAME           # Create project
+agentsecrets project list                  # List projects in workspace
+agentsecrets project use NAME              # Set active project
+agentsecrets project update NAME           # Update project
+agentsecrets project delete NAME           # Delete project
+```
+
+### Secrets
+```bash
+agentsecrets secrets set KEY=value         # Store secret
+agentsecrets secrets get KEY               # Retrieve value (user sees it, you don't)
+agentsecrets secrets list                  # List key names only
+agentsecrets secrets list --project NAME   # List keys for specific project
+agentsecrets secrets push                  # Upload .env to cloud (encrypted)
+agentsecrets secrets pull                  # Download cloud secrets to keychain
+agentsecrets secrets delete KEY            # Remove secret
+agentsecrets secrets diff                  # Compare local vs cloud
+```
+
+### Calls and Proxy
+```bash
+agentsecrets call --url URL --bearer KEY   # One-shot authenticated call
+agentsecrets call --url URL --method POST --bearer KEY --body '{}'
+agentsecrets call --url URL --header Name=KEY
+agentsecrets call --url URL --query param=KEY
+agentsecrets call --url URL --basic KEY
+agentsecrets call --url URL --body-field path=KEY
+agentsecrets call --url URL --form-field field=KEY
+agentsecrets proxy start                   # Start HTTP proxy
+agentsecrets proxy start --port 9000       # Custom port
+agentsecrets proxy status                  # Check proxy status
+agentsecrets proxy stop                    # Stop proxy
+agentsecrets proxy logs                    # View audit log
+agentsecrets proxy logs --last N           # Last N entries
+agentsecrets proxy logs --secret KEY       # Filter by key name
+```
+
+### MCP
+```bash
+agentsecrets mcp serve                     # Start MCP server
+agentsecrets mcp install                   # Auto-configure Claude Desktop + Cursor
+```
+
+---
+
+## HANDLING COMMON SCENARIOS
+
+### First time setup
+Run Steps 1 through 5 in sequence. Do not skip steps.
+
+### "Make an API call to X"
+1. `agentsecrets status` — verify context
+2. `agentsecrets secrets list` — check key exists
+3. `agentsecrets call` — make the call
+4. Return response to user
+
+### "Deploy to production"
+1. `agentsecrets workspace switch production`
+2. `agentsecrets secrets diff` — check for drift
+3. `agentsecrets secrets pull` — sync if needed
+4. Run deployment
+5. `agentsecrets proxy logs` — audit
+
+### "Invite a teammate"
+```bash
+agentsecrets workspace invite teammate@company.com
+```
+
+### "Rotate a key"
+1. Tell user to run: `agentsecrets secrets set KEY_NAME=new_value` in their terminal
+2. Verify: `agentsecrets secrets list`
+3. Push to cloud: `agentsecrets secrets push`
+
+### "What keys do I have?"
 ```bash
 agentsecrets secrets list
 ```
 
-**Store a new key:**
+### "Check audit log"
 ```bash
-agentsecrets secrets set KEY_NAME=value
+agentsecrets proxy logs --last 50
 ```
 
-**Remove a key:**
-```bash
-agentsecrets secrets delete KEY_NAME
-```
-
-**Check what keys a project has:**
-```bash
-agentsecrets secrets list --project PROJECT_NAME
-```
-
----
-
-## HANDLING COMMON USER REQUESTS
-
-### "Store my API key"
-Follow Step 3 of the Guided Setup. Ask what service it's for, suggest a name, store it.
-
-### "Make an API call to X"
-1. Check if the required key exists: `agentsecrets secrets list`
-2. If missing, ask the user for the key (Step 3)
-3. Make the call with `agentsecrets call`
-4. Return only the response
-
-### "What keys do I have?"
-Run: `agentsecrets secrets list`
-
-### "Delete / rotate a key"
-1. Delete old: `agentsecrets secrets delete KEY_NAME`
-2. Ask for new value
-3. Store: `agentsecrets secrets set KEY_NAME=new_value`
-
-### "Is this secure?"
-Explain honestly:
-> "Your keys are stored in your OS keychain — the same encrypted storage your browser uses for passwords. I can use them to make API calls, but I never see the actual values. Every call is logged with the key name (never the value) so you can audit what I've done."
+### Key missing mid-workflow
+Do not stop the workflow. Tell the user exactly what to run in their terminal, wait for confirmation, verify with `secrets list`, continue.
 
 ---
 
 ## CRITICAL RULES
 
-1. **NEVER** display, echo, print, or log an actual key value after storing it
-2. **NEVER** ask the user for a key they've already stored — use the name
-3. **ALWAYS** use `agentsecrets call` instead of `curl` — this ensures keys are injected securely
-4. **ALWAYS** suggest the user delete their chat message containing the raw key after storage
-5. If a key is missing, tell the user to provide it — don't guess or fabricate values
-6. If `agentsecrets` is not installed, always explain WHY before installing (security benefit)
+1. NEVER display, echo, print, or log an actual secret value
+2. NEVER ask the user to paste a key value into chat
+3. NEVER use curl or direct HTTP for authenticated requests — always use `agentsecrets call`
+4. ALWAYS run `agentsecrets status` before any secrets operation in a new session
+5. ALWAYS run `agentsecrets secrets diff` before deployment workflows
+6. ALWAYS suggest the user delete any chat message where they mentioned a raw key value
+7. You are the operator — manage the lifecycle autonomously, do not delegate commands back to the user unless it involves installing software or entering a password
 
 ---
 
-## External Endpoints
+## Security Model
 
-This skill calls whatever API URL the user specifies. AgentSecrets acts as a proxy — it adds authentication credentials from the OS keychain to the outbound request.
-
-No data is sent to AgentSecrets servers. This is a local-only tool.
-
-## Security & Privacy
-
-- **Zero-knowledge**: You (the AI agent) never see actual credential values after storage
-- **OS keychain**: Keys stored in macOS Keychain, Windows Credential Manager, or Linux Secret Service
-- **Audit trail**: Every call logged with key names (never values) at `~/.agentsecrets/proxy.log`
-- **No cloud dependency**: Everything runs locally
-- **No telemetry**: AgentSecrets collects no usage data
-
-## Model Invocation Note
-
-When making API calls, always use `agentsecrets call` instead of `curl` or direct HTTP requests. This ensures credentials are injected securely without being visible in the command output or your context.
+- Zero-knowledge: credential values never enter your context at any step
+- OS keychain: macOS Keychain, Windows Credential Manager, Linux Secret Service
+- Server: stores encrypted blobs only — cannot decrypt
+- Audit trail: key names only, no value field exists in the log struct
+- Encryption: X25519 + AES-256-GCM + Argon2id
 
 ## Trust Statement
 
-AgentSecrets is open source (MIT license). The full source code is available at https://github.com/The-17/agentsecrets for security audit. All credential resolution happens locally — no data leaves the user's machine except the outbound API request itself.
+AgentSecrets is open source (MIT). Full source at https://github.com/The-17/agentsecrets. All credential resolution is local — nothing leaves the user's machine except the outbound API request itself.
+
