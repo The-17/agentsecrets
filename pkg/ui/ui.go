@@ -19,8 +19,9 @@ var (
 	Red     = lipgloss.Color("#F87171")
 	Yellow  = lipgloss.Color("#FBBF24")
 	Dim     = lipgloss.Color("#6B7280")
-	White   = lipgloss.Color("#F9FAFB")
-	DimText = lipgloss.Color("#9CA3AF")
+	White       = lipgloss.Color("#F9FAFB")
+	DimText     = lipgloss.Color("#9CA3AF")
+	FaintBorder = lipgloss.Color("#27272A")
 )
 
 // Reusable styles
@@ -123,8 +124,8 @@ func BannerStr(text string) string {
 // RenderTable returns a styled table as a string.
 func RenderTable(headers []string, rows [][]string) string {
 	t := table.New().
-		Border(lipgloss.ThickBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(Dim)).
+		Border(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(FaintBorder)).
 		Headers(headers...).
 		Rows(rows...)
 

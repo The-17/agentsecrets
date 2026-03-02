@@ -206,7 +206,7 @@ func runProxyLogs(cmd *cobra.Command, args []string) error {
 			reasonStr = "-"
 		}
 
-		rows[i] = []string{
+		rows[len(events)-1-i] = []string{
 			e.Timestamp.Format("15:04:05"),
 			statusStr,
 			e.Method,
