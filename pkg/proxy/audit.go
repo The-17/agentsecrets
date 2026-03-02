@@ -17,10 +17,12 @@ type AuditEvent struct {
 	AgentID    string    `json:"agent_id,omitempty"`     // from agent identification
 	Method     string    `json:"method"`
 	TargetURL  string    `json:"target_url"`
+	Domain     string    `json:"domain,omitempty"`       // Target domain (e.g. "api.stripe.com")
 	AuthStyles []string  `json:"auth_styles"`            // e.g. ["bearer"]
 	StatusCode int       `json:"status_code"`
 	DurationMs int64     `json:"duration_ms"`
-	// SecretValue is NEVER logged — not even as a field
+	Status     string    `json:"status"`                 // "OK" or "BLOCKED"
+	Reason     string    `json:"reason,omitempty"`       // "domain_not_in_allowlist" or "-"
 }
 
 // AuditLogger writes AuditEvents as JSONL to an append-only log file.

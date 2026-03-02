@@ -4,7 +4,7 @@
 ---
 name: agentsecrets
 description: Zero-knowledge secrets infrastructure — AI agents operate the complete credential lifecycle without ever seeing values
-version: 1.0.4
+version: "1.0.4"
 tags:
   - security
   - credentials

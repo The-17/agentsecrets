@@ -36,6 +36,7 @@ func TestEngineExecuteBearer(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        upstream.Client(),
 		ResolveSecret: mockResolver(map[string]string{"STRIPE_KEY": "sk_test_123"}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -78,6 +79,7 @@ func TestEngineExecuteMultipleInjections(t *testing.T) {
 			"ORG_ID":  "org-abc",
 			"API_KEY": "key-xyz",
 		}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -111,6 +113,7 @@ func TestEngineExecuteQueryInjection(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        upstream.Client(),
 		ResolveSecret: mockResolver(map[string]string{"GMAP_KEY": "gmap-key-123"}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -134,6 +137,7 @@ func TestEngineExecuteMissingSecret(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        http.DefaultClient,
 		ResolveSecret: mockResolver(map[string]string{}), // no secrets
+		SkipAllowlist: true,
 	}
 
 	_, err := engine.Execute(CallRequest{
@@ -154,6 +158,7 @@ func TestEngineExecuteMissingURL(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        http.DefaultClient,
 		ResolveSecret: mockResolver(map[string]string{}),
+		SkipAllowlist: true,
 	}
 
 	_, err := engine.Execute(CallRequest{
@@ -172,6 +177,7 @@ func TestEngineExecuteNoInjections(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        http.DefaultClient,
 		ResolveSecret: mockResolver(map[string]string{}),
+		SkipAllowlist: true,
 	}
 
 	_, err := engine.Execute(CallRequest{
@@ -198,6 +204,7 @@ func TestEngineExecuteExtraHeaders(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        upstream.Client(),
 		ResolveSecret: mockResolver(map[string]string{"KEY": "val"}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -245,6 +252,7 @@ func TestAuditNeverLogsSecretValues(t *testing.T) {
 		Client:        upstream.Client(),
 		Audit:         audit,
 		ResolveSecret: mockResolver(map[string]string{"STRIPE_KEY": secretValue}),
+		SkipAllowlist: true,
 	}
 
 	_, err = engine.Execute(CallRequest{

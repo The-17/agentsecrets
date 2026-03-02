@@ -27,6 +27,7 @@ type GlobalConfig struct {
 	Email               string                      `json:"email,omitempty"`
 	SelectedWorkspaceID string                      `json:"selected_workspace_id,omitempty"`
 	Workspaces          map[string]WorkspaceCacheEntry `json:"workspaces,omitempty"`
+	PasswordHash        string                      `json:"password_hash,omitempty"` // Added for local password verification
 	StorageMode         int                         `json:"storage_mode,omitempty"` // 1 = keychain (default), 2 = env_file
 }
 
