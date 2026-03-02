@@ -392,6 +392,14 @@ agentsecrets mcp install    # auto-configure Claude Desktop + Cursor
 agentsecrets mcp serve      # start MCP server
 ` + "```" + `
 
+### API Call Blocked by Allowlist
+If ` + "`agentsecrets call`" + ` returns a 403 error stating the domain is not in the allowlist:
+1. Do not ask the user to bypass the proxy.
+2. Instruct the user to authorize the domain by running this in their terminal:
+   ` + "`agentsecrets workspace allowlist add <domain>`" + `
+3. Wait for their confirmation.
+4. Retry the API call.
+
 ## CRITICAL RULES
 
 1. NEVER display or log actual secret values
@@ -400,6 +408,7 @@ agentsecrets mcp serve      # start MCP server
 4. ALWAYS run agentsecrets status at the start of a new session
 5. ALWAYS run agentsecrets secrets diff before deployment workflows
 6. You are the operator — manage the lifecycle autonomously
+7. Respect the Zero-Trust allowlist — if a domain is blocked, guide the user to explicitly allow it using the allowlist add command.
 `
 
 func writeWorkflowFile() error {

@@ -452,8 +452,13 @@ agentsecrets secrets list
 agentsecrets proxy logs --last 50
 ```
 
-### Key missing mid-workflow
-Do not stop the workflow. Tell the user exactly what to run in their terminal, wait for confirmation, verify with `secrets list`, continue.
+### API Call Blocked by Zero-Trust Allowlist
+If an API call returns a 403 error stating the domain is not in the workspace allowlist:
+1. Do not bypass the proxy.
+2. Tell the user exactly what to run in their terminal to authorize the domain:
+   `agentsecrets workspace allowlist add <domain>`
+   *(Wait for their confirmation that they have entered their password and added the domain)*
+3. Retry the API call.
 
 ---
 
@@ -465,7 +470,8 @@ Do not stop the workflow. Tell the user exactly what to run in their terminal, w
 4. ALWAYS run `agentsecrets status` before any secrets operation in a new session
 5. ALWAYS run `agentsecrets secrets diff` before deployment workflows
 6. ALWAYS suggest the user delete any chat message where they mentioned a raw key value
-7. You are the operator — manage the lifecycle autonomously, do not delegate commands back to the user unless it involves installing software or entering a password
+7. You are the operator — manage the lifecycle autonomously, do not delegate commands back to the user unless it involves installing software, entering a password, or modifying the Zero-Trust Allowlist.
+8. Respect the Zero-Trust Allowlist — if a domain is blocked, instruct the user to run `agentsecrets workspace allowlist add <domain>`.
 
 ---
 

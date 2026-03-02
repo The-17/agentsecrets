@@ -168,6 +168,20 @@ AgentSecrets is zero-knowledge at every layer — not just at the point of API i
 
 The log struct has no value field. It is structurally impossible to accidentally log a credential value anywhere in the system.
 
+### Zero-Trust Proxy Enforcement
+
+AgentSecrets goes beyond credential isolation by enforcing a secure boundary on **where** agents can send credentials. 
+
+To prevent data exfiltration or SSRF attacks, the proxy enforces a **Strict Domain Allowlist** linked to your workspace. If an agent attempts to hit an unauthorized domain, the proxy blocks the request (403 Forbidden) and logs the attempt.
+
+```bash
+# Authorize a domain (requires your password)
+agentsecrets workspace allowlist add api.stripe.com
+
+# Review allowed domains
+agentsecrets workspace allowlist list
+```
+
 ### Encryption
 | Layer | Implementation |
 |---|---|

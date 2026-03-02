@@ -209,6 +209,7 @@ agentsecrets proxy logs --secret STRIPE_KEY # Filter by key
 
 ## Security
 
+- **Zero-Trust Workspace Allowlist**: The proxy enforces a strict domain allowlist synced from your workspace. If an agent attempts to call an unauthorized domain, the proxy blocks it outright (returning a 403 Forbidden). Add domains via `agentsecrets workspace allowlist add <domain>`.
 - Secret values are **resolved at execution time** from the OS keychain — they exist in memory only during the request
 - The AI agent **never receives** secret values in any response
 - The audit log records **key names and metadata**, never values
