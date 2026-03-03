@@ -1,6 +1,6 @@
 # agentsecrets env
 
-> Inject secrets as environment variables into a child process.
+> Inject secrets from the OS keychain as environment variables into a child process.
 
 ## Usage
 
@@ -8,42 +8,138 @@
 agentsecrets env -- <command> [args...]
 ```
 
-## Description
+The `--` separator is required. Everything after it is passed verbatim as the command and its arguments.
 
-Resolves all secrets from the active project in the OS keychain and injects them as environment variables into the specified command. The command runs with secrets available as env vars. Nothing is written to disk. Secrets exist only in the child process memory.
-
-When the child process exits, the secrets are gone.
-
-## Examples
-
-```bash
-# Wrap Stripe CLI
-agentsecrets env -- stripe mcp
-agentsecrets env -- stripe listen --forward-to localhost:3000
-
-# Wrap Node.js
-agentsecrets env -- node server.js
-
-# Wrap any dev server
-agentsecrets env -- npm run dev
-
-# Check a secret is available
-agentsecrets env -- printenv STRIPE_KEY
-```
+---
 
 ## How It Works
 
-1. Loads the active project from `.agentsecrets/project.json`
-2. Calls `keyring.GetAllProjectSecrets()` to resolve all secrets from the OS keychain
-3. Builds environment: parent process env + injected secrets (secrets override on conflict)
-4. Spawns child process via `exec.Command` with `stdin`, `stdout`, `stderr` wired through
-5. Forwards `SIGINT` / `SIGTERM` signals to the child process
-6. Exits with the child's exit code (transparent passthrough)
-7. Logs key names (never values) to the audit log with method `ENV`
+`agentsecrets env` is a **process wrapper**. It resolves all secrets for the active project from the OS keychain, then spawns the specified command as a child process with those secrets available in its environment.
 
-## Claude Desktop Config
+Mechanically:
 
-Wrap native MCP servers with AgentSecrets env injection:
+1. Reads the active project from `.agentsecrets/project.json`
+2. Calls `keyring.GetAllProjectSecrets(projectID)` — pulls all key/value pairs from the OS keychain for that project
+3. Builds the environment for the child process: **current process env + injected secrets** (project secrets override on conflict)
+4. Spawns the child via `exec.Command`, with `stdin`, `stdout`, and `stderr` wired straight through — no buffering, no interception
+5. Forwards `SIGINT` and `SIGTERM` to the child process (so `Ctrl+C` works exactly as expected)
+6. Exits with the child's exact exit code
+
+The parent process (`agentsecrets`) never uses the secret values — it only passes them directly into the child's environment at spawn time. Nothing is written to disk. When the child exits, the secrets are gone.
+
+---
+
+## Examples
+
+### Python / Django
+
+Django reads credentials from environment variables. Instead of putting secrets in `.env` files, inject them directly from the keychain:
+
+```bash
+# Run Django development server
+agentsecrets env -- python manage.py runserver
+
+# Run migrations (reads DATABASE_URL or DB_* vars from env)
+agentsecrets env -- python manage.py migrate
+
+# Django shell with secrets available
+agentsecrets env -- python manage.py shell
+
+# Celery worker
+agentsecrets env -- celery -A myapp worker --loglevel=info
+
+# Custom management command
+agentsecrets env -- python manage.py send_newsletter
+```
+
+Your Django `settings.py` works without changes:
+
+```python
+# settings.py — reads from env as normal
+import os
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ["DB_NAME"],
+        "USER": os.environ["DB_USER"],
+        "PASSWORD": os.environ["DB_PASSWORD"],  # injected by agentsecrets env
+        "HOST": os.environ["DB_HOST"],
+        "PORT": os.environ.get("DB_PORT", "5432"),
+    }
+}
+
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]   # injected by agentsecrets env
+STRIPE_SECRET_KEY = os.environ["STRIPE_KEY"]   # injected by agentsecrets env
+```
+
+As long as the key names in `agentsecrets secrets list` match what `os.environ` reads, it works transparently.
+
+### Node.js / Express
+
+```bash
+# Dev server (process.env.* available throughout)
+agentsecrets env -- node server.js
+agentsecrets env -- npm run dev
+agentsecrets env -- npx ts-node src/index.ts
+
+# Next.js
+agentsecrets env -- npx next dev
+
+# Prisma migrations
+agentsecrets env -- npx prisma migrate dev
+```
+
+```js
+// server.js — reads from process.env as normal
+const stripe = require('stripe')(process.env.STRIPE_KEY);  // injected
+const db = require('./db')(process.env.DATABASE_URL);       // injected
+```
+
+### Stripe CLI
+
+Stripe CLI reads `STRIPE_API_KEY` from the environment:
+
+```bash
+# Start Stripe MCP server
+agentsecrets env -- stripe mcp
+
+# Forward webhook events to local server
+agentsecrets env -- stripe listen --forward-to localhost:3000/webhooks
+
+# Trigger a test event
+agentsecrets env -- stripe trigger payment_intent.created
+```
+
+### Go
+
+```bash
+# Run binary
+agentsecrets env -- ./myserver
+
+# Run tests that hit real APIs
+agentsecrets env -- go test ./pkg/payments/...
+```
+
+Inside Go, `os.Getenv("STRIPE_KEY")` reads from the injected environment exactly as expected.
+
+### Shell / Scripts
+
+```bash
+# A script that sources no .env files — reads from env directly
+agentsecrets env -- ./scripts/deploy.sh
+
+# Docker Compose (picks up env vars from the shell)
+agentsecrets env -- docker-compose up
+
+# Verify which secrets are visible to the child
+agentsecrets env -- printenv | grep STRIPE
+agentsecrets env -- printenv DB_URL
+```
+
+### Claude Desktop / MCP Config
+
+Wrap native MCP servers so they receive secrets from the keychain:
 
 ```json
 {
@@ -56,6 +152,23 @@ Wrap native MCP servers with AgentSecrets env injection:
 }
 ```
 
+---
+
+## vs. `agentsecrets call`
+
+| | `agentsecrets call` | `agentsecrets env` |
+|---|---|---|
+| **Use for** | One-shot HTTP API calls | Processes that read from `os.environ` |
+| **How** | Proxy resolves + injects at transport layer | Secret values injected into child process environment |
+| **Scope** | Single request | Entire process lifetime |
+| **Frameworks** | Any agent via proxy or MCP | Django, Node.js, Stripe CLI, Go binaries, shell scripts |
+| **Audit** | Per-request log with method, URL, status | Single log entry with key names and command |
+
+Use `agentsecrets call` when you want the agent to make a specific authenticated API call.  
+Use `agentsecrets env` when you're running a server, script, or CLI tool that manages its own HTTP calls.
+
+---
+
 ## Output
 
 ```
@@ -63,23 +176,60 @@ Wrap native MCP servers with AgentSecrets env injection:
 ```
 
 For a single secret:
+
 ```
 ℹ Injecting 1 secret: STRIPE_KEY
 ```
 
+The output goes to stderr and doesn't interfere with the child process's stdout.
+
+---
+
+## Exit Codes
+
+`agentsecrets env` passes the child's exit code through transparently:
+
+```bash
+agentsecrets env -- python manage.py test
+echo $?  # exit code from Django test runner, not from agentsecrets
+```
+
+This means it works correctly in CI/CD pipelines — a failing test suite exits non-zero and the pipeline fails as expected.
+
+---
+
 ## Audit Log
 
-The env command logs an audit event with:
-- `method`: `ENV`
-- `secret_keys`: array of injected key names
-- `target_url`: the command that was run
-- `auth_styles`: `["env_inject"]`
+Every `agentsecrets env` invocation writes to `~/.agentsecrets/proxy.log`:
 
-No secret values are ever logged.
+```json
+{
+  "timestamp": "2026-03-03T22:00:00Z",
+  "method": "ENV",
+  "target_url": "python manage.py runserver",
+  "secret_keys": ["DB_PASSWORD", "STRIPE_KEY", "DJANGO_SECRET_KEY"],
+  "auth_styles": ["env_inject"],
+  "status": "OK",
+  "reason": "-"
+}
+```
 
-## Security
+Secret values are never logged. Only key names and the command that was run.
 
-- Secrets exist only in child process memory — not written to disk at any point
-- The calling process never accesses secret values (they go directly from keychain to child env)
-- If the child process is terminated, the secrets are immediately gone
-- Audit log records key names only — structurally cannot log values
+---
+
+## Security Notes
+
+- **No disk writes**: Secrets go from OS keychain directly into the child process memory — nothing is ever written to a file, `.env`, or any other location
+- **No parent access**: The `agentsecrets` process passes secrets to the child at spawn time via the OS `execve`-style interface — the secrets exist in the child's address space, not the parent's
+- **Process-scoped lifetime**: When the child exits (or is killed), the environment variables are gone with it
+- **Signal forwarding**: `SIGINT` and `SIGTERM` are forwarded to the child so the process can handle them gracefully (e.g., Django's runserver cleanup)
+- **Conflicts**: If a secret key name already exists in the parent environment (e.g., from a previous export), the keychain value takes precedence
+
+---
+
+## Prerequisites
+
+- Active project: `agentsecrets project use <name>`
+- Secrets provisioned: `agentsecrets secrets pull` or `agentsecrets secrets set KEY=value`
+- Verify with: `agentsecrets secrets list`
