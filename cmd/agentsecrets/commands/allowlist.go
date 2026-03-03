@@ -206,8 +206,8 @@ func runAllowlistList(_ *cobra.Command, _ []string) error {
 		}
 
 		rows[i] = []string{
-			ui.BrandStyle.Render(d.Domain),
-			fmt.Sprintf("added by %s", ui.DimStyle.Render(d.AddedBy)),
+			d.Domain,
+			ui.DimStyle.Render(d.AddedBy),
 			ui.DimStyle.Render(timeStr),
 		}
 	}
@@ -237,7 +237,7 @@ func runAllowlistLog(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	headers := []string{"Time", "User", "Action", "Domain"}
+	headers := []string{"Time", "Domain", "User", "Action"}
 	rows := make([][]string, len(logResp))
 	for i, l := range logResp {
 		timeStr := strings.Replace(l.CreatedAt, "T", " ", 1)
@@ -254,9 +254,9 @@ func runAllowlistLog(_ *cobra.Command, _ []string) error {
 
 		rows[i] = []string{
 			ui.DimStyle.Render(timeStr),
-			ui.LabelStyle.Render(l.UserEmail),
+			l.Domain,
+			ui.DimStyle.Render(l.UserEmail),
 			actionStr,
-			ui.BrandStyle.Render(l.Domain),
 		}
 	}
 
