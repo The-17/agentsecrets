@@ -85,10 +85,18 @@ agentsecrets secrets set DATABASE_URL=postgresql://...
 # Or push your existing .env all at once
 agentsecrets secrets push
 
+# Authorize the domains your agents can reach
+agentsecrets workspace allowlist add api.stripe.com api.openai.com
+
 # Connect your AI tool
-npx @the-17/agentsecrets mcp install   # Claude Desktop + Cursor
+agentsecrets mcp install               # Claude Desktop + Cursor
 agentsecrets proxy start               # Any agent via HTTP
 openclaw skill install agentsecrets    # OpenClaw
+
+# Or inject secrets as env vars into any Python process
+agentsecrets env -- python manage.py runserver
+agentsecrets env -- celery -A myapp worker
+agentsecrets env -- pytest
 ```
 
 Your agent now has full API access. It will never see a credential value.
@@ -147,22 +155,42 @@ AgentSecrets is zero-knowledge at every layer — not just at the point of API i
 | `secrets diff` | Key names and sync status |
 | `secrets pull` | Confirmation message — values go to OS keychain |
 | `agentsecrets call` | API response only |
+| `agentsecrets env` | Injects values into child process — agent never sees them |
 | `proxy logs` | Key names, endpoints, status codes |
 
 The log struct has no value field. It is structurally impossible to accidentally log a credential value anywhere in the system.
 
 ### Zero-Trust Proxy Enforcement
 
-AgentSecrets goes beyond credential isolation by enforcing a secure boundary on **where** agents can send credentials. 
+AgentSecrets enforces a **deny-by-default** security posture on every proxied request.
 
-To prevent data exfiltration or SSRF attacks, the proxy enforces a **Strict Domain Allowlist** linked to your workspace. If an agent attempts to hit an unauthorized domain, the proxy blocks the request (403 Forbidden) and logs the attempt.
+**Domain Allowlist:** Every outbound request must target a domain explicitly authorized in your workspace allowlist. If an agent attempts to hit an unauthorized domain, whether through prompt injection, SSRF, or misconfiguration, the proxy blocks the request with 403 Forbidden and logs the attempt.
 
 ```bash
-# Authorize a domain (requires your password)
-agentsecrets workspace allowlist add api.stripe.com
+# Authorize domains (supports multiple at once)
+agentsecrets workspace allowlist add api.stripe.com api.openai.com
 
 # Review allowed domains
 agentsecrets workspace allowlist list
+
+# View blocked attempts
+agentsecrets workspace allowlist log
+```
+
+Allowlist modifications require admin role and password verification. Non-admins cannot change what domains agents can reach.
+
+**Response Body Redaction:** If an external API echoes back the injected credential in its response body, the proxy automatically replaces the value with `[REDACTED_BY_AGENTSECRETS]` before the response reaches the agent. This prevents credential echo exfiltration — a class of attack where a malicious API is designed to reflect secrets back into agent context.
+
+```bash
+agentsecrets proxy logs --last 5
+# 14:23:01  ✓ OK (REDACTED)  GET  httpbin.org/headers  STRIPE_KEY  bearer  200  credential_echo  245ms
+```
+
+### Role Management
+
+```bash
+agentsecrets workspace promote user@email.com   # Grant admin role
+agentsecrets workspace demote user@email.com    # Revoke admin role
 ```
 
 ### Encryption
@@ -247,7 +275,7 @@ agentsecrets call --url https://oauth.example.com/token \
 ### Claude Desktop + Cursor (MCP)
 
 ```bash
-npx @the-17/agentsecrets mcp install
+agentsecrets mcp install
 ```
 
 Auto-configures your MCP setup. No credential values in any config file.
@@ -273,7 +301,33 @@ AgentSecrets ships as both a ClawHub skill and a native exec provider for OpenCl
 
 ### Any AI Assistant (Workflow File)
 
-`agentsecrets init` creates `.agent/workflows/api-call.md` — a workflow file that teaches any AI assistant how to use AgentSecrets automatically. Claude, Gemini, Copilot, or any tool that reads workflow files picks it up without configuration.
+`agentsecrets init` creates `.agent/workflows/agentsecrets.md` — a workflow file that teaches any AI assistant how to use AgentSecrets automatically. Claude, Gemini, Copilot, or any tool that reads workflow files picks it up without configuration.
+
+### Environment Variable Injection
+
+For tools that manage their own credential storage (Stripe CLI) or SDKs that read from environment variables:
+
+```bash
+# Wrap any command — secrets injected as env vars
+agentsecrets env -- python manage.py runserver
+agentsecrets env -- celery -A myapp worker
+agentsecrets env -- pytest
+```
+
+Values exist only in the child process memory. Nothing is written to disk. When the process exits, the secrets are gone.
+
+**Claude Desktop config (wrapping native Stripe MCP):**
+
+```json
+{
+  "mcpServers": {
+    "stripe": {
+      "command": "agentsecrets",
+      "args": ["env", "--", "stripe", "mcp"]
+    }
+  }
+}
+```
 
 ### HTTP Proxy (Any Agent or Framework)
 
@@ -327,7 +381,7 @@ agentsecrets secrets delete KEY           # Remove a secret
 agentsecrets secrets diff                 # Compare local vs cloud
 ```
 
-### Proxy
+### Proxy & Calls
 ```bash
 agentsecrets call --url <URL> --bearer KEY    # One-shot authenticated call
 agentsecrets proxy start [--port 8765]        # Start HTTP proxy
@@ -338,6 +392,23 @@ agentsecrets mcp serve                        # Start MCP server
 agentsecrets mcp install                      # Auto-configure AI tools
 ```
 
+### Environment Injection
+```bash
+agentsecrets env -- <command> [args...]       # Inject secrets as env vars into child process
+agentsecrets env -- python manage.py migrate  # Wrap Django
+agentsecrets env -- celery -A app worker      # Wrap Celery
+agentsecrets env -- pytest                    # Wrap Pytest
+```
+
+### Workspace Security
+```bash
+agentsecrets workspace allowlist add <domain> [domain...]  # Authorize domains
+agentsecrets workspace allowlist list                      # List allowed domains
+agentsecrets workspace allowlist log                       # View allowlist audit log
+agentsecrets workspace promote user@email.com              # Grant admin role
+agentsecrets workspace demote user@email.com               # Revoke admin role
+```
+
 ---
 
 ## vs. Traditional Secrets Management
@@ -346,13 +417,15 @@ agentsecrets mcp install                      # Auto-configure AI tools
 |---|---|---|---|---|---|
 | **Agent as operator** | ✅ Full lifecycle | ❌ Consumer only | ❌ Consumer only | ❌ Consumer only | ❌ Consumer only |
 | **Zero-knowledge end to end** | ✅ Every step | ❌ Agent retrieves value | ❌ Agent retrieves value | ❌ Agent retrieves value | ⚠️ Partial |
+| **Domain allowlist enforcement** | ✅ Deny-by-default | ❌ | ❌ | ❌ | ❌ |
+| **Response body redaction** | ✅ Echo exfiltration defense | ❌ | ❌ | ❌ | ❌ |
 | **Prompt injection protection** | ✅ Structural | ❌ | ❌ | ❌ | ❌ |
+| **Env var injection (`run --`)** | ✅ `agentsecrets env` | ❌ | ❌ | ✅ `doppler run` | ✅ `op run` |
 | **AI-native workflow** | ✅ Built for it | ❌ | ❌ | ❌ | ❌ |
 | **Team workspaces** | ✅ Built-in | ⚠️ Complex | ⚠️ IAM roles | ✅ | ✅ Vaults |
 | **OS keychain storage** | ✅ | ❌ | ❌ | ❌ | ✅ |
 | **Setup time** | ⚡ 1 minute | ⏱️ Hours | ⏱️ 30+ min | ⏱️ 10 min | ⏱️ 5 min |
 | **Free** | ✅ | ✅ OSS | ⚠️ AWS costs | ⚠️ Limited | ❌ |
-| **Secret rotation** | ❌ Coming soon | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -382,7 +455,7 @@ agentsecrets secrets diff          # checks for drift
 agentsecrets secrets pull          # syncs if needed
 agentsecrets workspace switch production
 agentsecrets secrets pull
-npm run deploy
+agentsecrets env -- python deploy.py
 agentsecrets proxy logs            # audits what happened
 ```
 
@@ -424,7 +497,10 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROXY.md](docs/PROXY.md) for de
 - [x] npm, pip, Homebrew distribution
 - [x] secrets diff
 - [x] Automatic JWT refresh
-- [ ] Keychain-only global storage mode
+- [x] Zero-trust domain allowlist enforcement
+- [x] Response body redaction (echo exfiltration defense)
+- [x] Workspace role management (promote/demote)
+- [x] `agentsecrets env` — environment variable injection
 - [ ] Secret rotation
 - [ ] Environment support (dev/staging/prod)
 - [ ] Web dashboard
