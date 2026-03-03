@@ -8,7 +8,30 @@ import tempfile
 import shutil
 import stat
 
-VERSION = "1.0.4"
+# Try to get the version from package metadata, fallback to a hardcoded version
+def _get_version():
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+    except ImportError:  # Python < 3.8
+        try:
+            from pkg_resources import get_distribution, DistributionNotFound
+        except ImportError:
+            # Fallback if pkg_resources is also not available
+            return "1.1.0"
+
+        try:
+            return get_distribution("agentsecrets").version
+        except DistributionNotFound:
+            # Fallback if package not found
+            return "1.1.0"
+
+    try:
+        return version("agentsecrets")
+    except PackageNotFoundError:
+        # Fallback if package not found
+        return "1.1.0"
+
+VERSION = _get_version()
 GITHUB_REPO = "The-17/agentsecrets"
 
 def get_platform_info():
