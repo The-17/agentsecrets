@@ -227,10 +227,10 @@ func (s *Service) UpdateRole(workspaceID, userID, action string) error {
 
 // --- Workspace Allowlist ---
 
-// AddAllowlist adds a domain to the workspace allowlist.
-func (s *Service) AddAllowlist(workspaceID, domain string) error {
-	resp, err := s.API.Call("workspaces.allowlist_add", "POST", map[string]string{
-		"domain": domain,
+// AddAllowlist adds one or more domains to the workspace allowlist.
+func (s *Service) AddAllowlist(workspaceID string, domains ...string) error {
+	resp, err := s.API.Call("workspaces.allowlist_add", "POST", map[string]interface{}{
+		"domains": domains,
 	}, map[string]string{
 		"workspace_id": workspaceID,
 	})

@@ -23,9 +23,9 @@ var workspaceAllowlistCmd = &cobra.Command{
 }
 
 var allowlistAddCmd = &cobra.Command{
-	Use:   "add <domain>",
-	Short: "Add a domain to the allowlist",
-	Args:  cobra.ExactArgs(1),
+	Use:   "add <domain> [domain...]",
+	Short: "Add one or more domains to the allowlist",
+	Args:  cobra.MinimumNArgs(1),
 	RunE:  runAllowlistAdd,
 }
 
@@ -102,7 +102,7 @@ func syncAllowlistToKeyring(workspaceID string) error {
 }
 
 func runAllowlistAdd(_ *cobra.Command, args []string) error {
-	domain := args[0]
+	domains := args
 
 	workspaceID, err := requireWorkspaceID()
 	if err != nil {
@@ -114,8 +114,8 @@ func runAllowlistAdd(_ *cobra.Command, args []string) error {
 	}
 
 	var opErr error
-	if err := ui.Spinner(fmt.Sprintf("Adding %s to allowlist...", domain), func() error {
-		if err := workspaceService.AddAllowlist(workspaceID, domain); err != nil {
+	if err := ui.Spinner(fmt.Sprintf("Adding %s to allowlist...", strings.Join(domains, ", ")), func() error {
+		if err := workspaceService.AddAllowlist(workspaceID, domains...); err != nil {
 			if strings.Contains(err.Error(), "403") {
 				return fmt.Errorf("Only workspace admins can modify the allowlist.")
 			}
@@ -132,7 +132,7 @@ func runAllowlistAdd(_ *cobra.Command, args []string) error {
 
 	cfg, _ := config.LoadGlobalConfig()
 	wsName := cfg.Workspaces[workspaceID].Name
-	ui.Success(fmt.Sprintf("✓ %s added to %s allowlist", domain, wsName))
+	ui.Success(fmt.Sprintf("✓ %s added to %s allowlist", strings.Join(domains, ", "), wsName))
 	return nil
 }
 

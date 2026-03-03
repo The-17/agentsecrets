@@ -257,7 +257,7 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 			StatusCode: result.StatusCode,
 			DurationMs: result.Duration.Milliseconds(),
 			Status:     "OK",
-			Reason:     "-",
+			Reason:     func() string { if redacted { return "credential_echo" }; return "-" }(),
 			Redacted:   redacted,
 		})
 	}
