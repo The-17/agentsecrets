@@ -1,30 +1,84 @@
-# `agentsecrets login`
+# agentsecrets login
 
-The `login` command manages explicit authentication into an existing AgentSecrets account, completely bypassing the project initialization phases of `init`.
+> Authenticate to an existing AgentSecrets account.
 
-## Overview
-Because AgentSecrets utilizes end-to-end encryption for team environments, "logging in" is conceptually heavier than just receiving a JWT from an API. Authentication involves securely decrypting your personal private key and deriving workspace keys.
+## Usage
 
-## Workflow
+```bash
+agentsecrets login
+```
 
-1. **Credentials Parsing**: 
-   The command prompts securely for an Email and Password.
+## Description
 
-2. **Session Verification**: 
-   These exact credentials are sent to the `auth.login` API route.
-   - A successful payload returns standard `access_token` and `refresh_token` JSON Web Tokens (JWTs).
-   - It also returns the user's `encrypted_private_key`, `key_salt`, and an array of `encrypted_workspace_keys`.
+`login` re-authenticates on a machine where you already have an account. Unlike `init`, it skips project setup — it only restores your session and decrypts your workspace keys.
 
-3. **Cryptographic Validation**:
-   - The CLI uses the user's plaintext password to derive a symmetric decryption key.
-   - It uses this derived key to unlock the `encrypted_private_key` returned by the server.
-   - Once the private key is decrypted, the CLI uses the private key to aggressively decrypt all of the user's associative Workspace keys.
+Use `login` when:
+- Your session expired and you're prompted to authenticate
+- You're setting up AgentSecrets on a second machine
+- You logged out and want to log back in
 
-4. **Caching & Keyring Storage**:
-   - The user email, JWT tokens, and Base64-encoded Workspace keys are cached into `~/.agentsecrets/config.json`.
-   - The highly-sensitive unlocked Private Key itself is stored exclusively inside the host OS's native Keychain.
+---
 
-## Silent Refreshing
-When using any other commands (like `secrets pull`), you do not need to manually call `login` to receive a fresh API access token. 
+## What Happens
 
-AgentSecrets natively implements a Cobra `EnsureAuth` middleware hook. Before a command begins, if the local JWT calculates as expiring within 5 minutes, a `RefreshSession()` API background sequence is automatically scheduled—the terminal will output "Refreshing expired session token..." before seamlessly running your command with the un-staled credentials.
+Login is more than a JWT exchange. Because secrets are encrypted with workspace keys that are themselves encrypted with your private key, login involves a full cryptographic key unwrapping sequence:
+
+**1. Credential submission**  
+Prompts for email and password. Sends them to the `auth.login` API endpoint.
+
+**2. Server response**  
+The server returns:
+- `access_token` and `refresh_token` (JWTs)
+- `encrypted_private_key` — your private key, encrypted with an Argon2id-derived key from your password
+- `key_salt` — the Argon2id salt used to derive the key
+- `encrypted_workspace_keys` — one encrypted workspace key per workspace you belong to
+
+**3. Private key decryption**  
+The CLI uses your password to derive a symmetric key with Argon2id:
+
+```
+password + key_salt → (Argon2id) → derived_key
+derived_key → (AES-256-GCM decrypt) → private_key
+```
+
+**4. Workspace key decryption**  
+For each workspace:
+
+```
+private_key → (NaCl SealedBox open) → workspace_key
+```
+
+**5. Caching**  
+- Private key → OS keychain (encrypted by OS)
+- Workspace keys (decrypted in memory) → `~/.agentsecrets/config.json`
+- JWT tokens → `~/.agentsecrets/config.json`
+
+Your password is used only during this step and then discarded. It is never stored anywhere.
+
+---
+
+## Automatic Token Refresh
+
+You rarely need to call `login` manually. AgentSecrets attaches an `EnsureAuth` middleware to every command. Before each command runs, it checks the JWT expiry:
+
+- If the token is valid → proceed
+- If expiring within 5 minutes → silently call `POST /auth/refresh` with the refresh token, get a new access token, cache it, proceed
+- If both tokens are expired → prompt for re-authentication
+
+This means `agentsecrets secrets pull` at 3am after a long session still works — the refresh happens transparently.
+
+---
+
+## Multi-Machine Setup
+
+On a second machine:
+
+```bash
+agentsecrets login     # decrypts your keys from the server, sets up keychain
+agentsecrets status    # verify workspace context
+cd your-project/
+agentsecrets project use my-backend   # link the directory
+agentsecrets secrets pull             # pull secrets to keychain
+```
+
+No need to re-run `init` unless you want to create a new project.

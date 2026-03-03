@@ -1,19 +1,73 @@
-# `agentsecrets logout`
+# agentsecrets logout
 
-The `logout` command cleanly terminates an active session and wipes cached credentials off the host filesystem.
+> Clear your session and remove cached credentials from this machine.
 
-## Overview
-Because the CLI caches sensitive Private Keys inside the OS Keyring and JWT tracking tokens inside `~/.agentsecrets/`, switching development accounts or purging compromised machines mandates a strict `logout` loop.
+## Usage
 
-## Behavior
+```bash
+agentsecrets logout
+```
 
-1. **Remote De-Authorization**:
-   The CLI fires a best-effort `POST` request to the `auth.logout` API endpoint. If reachable, this forces the backend to block the associated `refresh_token` from generating subsequent valid sessions.
+## Description
 
-2. **Keyring Purge**:
-   The `logout` flow invokes the underlying OS keyring bindings to aggressively scrub the user's securely-stored Private Key mappings.
+`logout` terminates your session on the current machine and wipes all locally cached credentials. It does not affect other machines, team members, or your stored secrets, only the local session.
 
-3. **Filesystem Purge**:
-   The command targets `~/.agentsecrets/config.json` and `~/.agentsecrets/token.json`. It completely overwrites their contents with empty JSON object maps, explicitly stripping email caches, workspace routing bindings, and JWTs.
+---
 
-> **Note:** Executing `logout` only clears *global* credentials. It explicitly does **not** erase the local project linkages found inside `./.agentsecrets/project.json`. This ensures that logging out and back in does not forcefully un-bind the current directory from the remote synchronization tree.
+## What Gets Cleared
+
+`logout` operates in three steps:
+
+**1. Remote invalidation (best-effort)**  
+Sends a `POST` to `auth.logout`. If the server is reachable, it invalidates the refresh token, preventing it from being used to generate new access tokens. If the server is unreachable (offline, network issue), logout still proceeds locally.
+
+**2. OS keychain purge**  
+Removes the private key from the OS keychain:
+- macOS: deletes the Keychain entry
+- Windows: removes the Credential Manager entry
+- Linux: removes the Secret Service entry
+
+**3. Config wipe**  
+Clears `~/.agentsecrets/config.json` of:
+- JWT access and refresh tokens
+- Cached workspace keys
+- User email and workspace bindings
+
+---
+
+## What Is NOT Cleared
+
+- **`.agentsecrets/project.json`** in any project directory — your project links remain intact. Logging back in and running `agentsecrets secrets pull` restores everything immediately.
+- **Secrets in the OS keychain** — secret values stored by `secrets pull` (keyed by project ID) are not removed. They remain available for `agentsecrets env` even after logout, until they are explicitly deleted with `agentsecrets secrets delete`.
+- **Remote data** — your secrets, workspace, and team remain on the server, encrypted.
+
+---
+
+## When to Use
+
+```bash
+# Switching to a different account
+agentsecrets logout
+agentsecrets login   # or agentsecrets init for a new account
+
+# Shared machine — end of session
+agentsecrets logout
+
+# After a credential-related security incident
+agentsecrets logout
+# Then rotate the affected secrets:
+agentsecrets secrets set COMPROMISED_KEY=new_value
+```
+
+---
+
+## After Logout
+
+To resume work on any machine:
+
+```bash
+agentsecrets login
+agentsecrets secrets pull   # restores secrets to keychain
+```
+
+Your secrets are still encrypted on the server. Nothing is lost.
