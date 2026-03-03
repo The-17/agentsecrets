@@ -1,127 +1,179 @@
-# Quick Start Guide
+# Quick Start
 
-Get AgentSecrets running in 5 minutes.
+Get AgentSecrets running in under 5 minutes.
 
-## 1. Install Go
+---
 
-**macOS:**
+## Install
+
+**macOS (Homebrew):**
 ```bash
-brew install go
+brew install the-17/tap/agentsecrets
 ```
 
-**Linux:**
+**npm (Node.js projects):**
 ```bash
-sudo snap install go --classic
+npm install -g @the-17/agentsecrets
 ```
 
-**Verify:**
+**PyPI (Python projects):**
 ```bash
-go version  # Should show 1.21+
+pip install agentsecrets
 ```
 
-## 2. Clone and Build
-
+**From source (Go 1.21+):**
 ```bash
-# Clone the repo
 git clone https://github.com/The-17/agentsecrets
 cd agentsecrets
-
-# Download dependencies
-go mod download
-
-# Build it
-make build
-
-# Or just run it
-make run
+go build -o agentsecrets ./cmd/agentsecrets
 ```
 
-## 3. Your First Commands
+Verify:
+```bash
+agentsecrets --version
+```
+
+---
+
+## 1. Create Your Account
 
 ```bash
-# Run the CLI
-./bin/agentsecrets --help
-
-# See version
-./bin/agentsecrets version
-
-# Try commands (will need API once backend is ready)
-./bin/agentsecrets init
+agentsecrets init
 ```
 
-## 4. Run Tests
+This will:
+1. Ask: **Create a new account** or **Log in** to an existing one
+2. Ask which **storage mode** to use:
+   - **Keychain (recommended)** — secrets go to the OS keychain, no `.env` file is created
+   - **Standard** — secrets are written to a `.env` file (traditional workflow)
+3. Generate a cryptographic keypair on your machine — your private key never leaves your device
+4. Write `.agent/workflows/agentsecrets.md` — the workflow file that teaches any AI assistant how to use AgentSecrets automatically
+
+**Skip the interactive prompts:**
+```bash
+agentsecrets init --storage-mode 1   # Keychain mode (default)
+agentsecrets init --storage-mode 2   # Standard .env mode
+```
+
+---
+
+## 2. Create a Project
+
+Projects map to your applications. Secrets are partitioned by project.
 
 ```bash
-make test
+agentsecrets project create my-app
 ```
 
-## 5. Development Workflow
+This writes `.agentsecrets/project.json` in the current directory, linking it to the remote project. Every `secrets` operation uses this project context.
+
+---
+
+## 3. Store Secrets
+
+Values are encrypted client-side before leaving your machine:
 
 ```bash
-# Format code
-make fmt
-
-# Run tests
-make test
-
-# Build
-make build
-
-# All pre-commit checks
-make pre-commit
+agentsecrets secrets set STRIPE_KEY=sk_live_51H...
+agentsecrets secrets set DATABASE_URL=postgresql://user:pass@host/db
+agentsecrets secrets set OPENAI_KEY=sk-proj-...
 ```
 
-## 6. Learn Go
+Or import an existing `.env` file all at once:
 
-New to Go? Read [GO_LEARNING_GUIDE.md](GO_LEARNING_GUIDE.md)
-
-Use Claude Opus to help:
-```
-"Help me implement the login command"
-"Explain how this crypto function works"
-"Write tests for the config package"
+```bash
+agentsecrets secrets push
 ```
 
-## Common Tasks
+Verify what's stored (key names only — values are never shown):
 
-### Add a New Command
+```bash
+agentsecrets secrets list
+```
 
-1. Create file: `cmd/agentsecrets/mycommand.go`
-2. Define command using Cobra
-3. Add to root in `main.go`
-4. Test it
+---
 
-Ask Claude: "Help me add a new command to AgentSecrets"
+## 4. Authorize Your Domains
 
-### Implement a Package Function
+Before making any proxy calls, tell AgentSecrets which API domains your project is allowed to reach. This is the zero-trust allowlist, calls to unauthorized domains are blocked.
 
-1. Add function to appropriate package (e.g., `pkg/crypto/`)
-2. Write tests in `*_test.go`
-3. Document with comments
-4. Run `make test`
+```bash
+agentsecrets workspace allowlist add api.stripe.com api.openai.com
+```
 
-Ask Claude: "Help me implement secret encryption in the crypto package"
+This requires your password and takes effect immediately.
 
-### Debug an Issue
+---
 
-1. Run with debug flag (when implemented)
-2. Check error messages
-3. Add print statements
-4. Use Go debugger (Delve)
+## 5. Connect Your AI Tool
 
-Ask Claude: "Why is this function returning an error?"
+### Claude Desktop / Cursor / Windsurf (MCP)
+
+```bash
+agentsecrets mcp install
+```
+
+This auto-configures MCP for Claude Desktop and Cursor. Restart your AI tool. You'll see two new tools: `api_call` and `list_secrets`.
+
+### HTTP Proxy (any agent or framework)
+
+```bash
+agentsecrets proxy start
+```
+
+Then route requests through `http://localhost:8765/proxy` with `X-AS-*` injection headers.
+
+### OpenClaw
+
+```bash
+openclaw skill install agentsecrets
+```
+
+### Any CLI Tool (env var injection)
+
+```bash
+agentsecrets env -- stripe mcp
+agentsecrets env -- node server.js
+agentsecrets env -- python manage.py runserver
+```
+
+---
+
+## 6. Make Your First Authenticated API Call
+
+```bash
+# One-shot authenticated call — agent uses key name, proxy resolves from keychain
+agentsecrets call --url https://api.stripe.com/v1/balance --bearer STRIPE_KEY
+```
+
+Output:
+```
+HTTP 200
+
+{"object":"balance","available":[{"amount":10000,"currency":"usd",...}]}
+```
+
+What was sent to Stripe: `Authorization: Bearer sk_live_51H...`  
+What you (or your agent) saw: the API response only.
+
+---
+
+## 7. Check Your Audit Log
+
+```bash
+agentsecrets proxy logs --last 5
+```
+
+```
+TIME      RESULT  METHOD  URL                              KEY          AUTH    STATUS  REASON  DURATION
+14:23:01  ✓ OK    GET     api.stripe.com/v1/balance        STRIPE_KEY   bearer  200     -       245ms
+```
+
+---
 
 ## Next Steps
 
-- Read [CONTRIBUTING.md](CONTRIBUTING.md)
-- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Check out [GO_LEARNING_GUIDE.md](GO_LEARNING_GUIDE.md)
-- Look at the Claude skill in `skills/claude/SKILL.md`
-
-## Getting Help
-
-- **Claude Opus**: Your AI pair programmer
-- **GitHub Issues**: Report bugs
-- **Discussions**: Ask questions
-
-Let's build the future of secrets management! 🚀
+- [Command Reference](commands/) — full reference for every subcommand
+- [Proxy & MCP](PROXY.md) — deep dive into proxy authentication styles
+- [Architecture](ARCHITECTURE.md) — how the encryption model works
+- [Contributing](CONTRIBUTING.md) — how to contribute

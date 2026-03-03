@@ -118,7 +118,6 @@ func runProxyStatus(cmd *cobra.Command, args []string) error {
 func runProxyLogs(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	ui.Banner("Proxy Audit Log")
-	ui.Divider()
 
 	logPath, err := proxy.DefaultLogPath()
 	if err != nil {
@@ -182,20 +181,42 @@ func runProxyLogs(cmd *cobra.Command, args []string) error {
 	events = events[start:]
 
 	// Display as table
-	headers := []string{"Time", "Method", "Target URL", "Secrets", "Auth", "Status", "Duration"}
+	headers := []string{"Time", "Status", "Method", "Target URL", "Secrets", "Auth", "Code", "Reason", "Duration"}
 	rows := make([][]string, len(events))
 	for i, e := range events {
 		targetURL := e.TargetURL
-		if len(targetURL) > 50 {
-			targetURL = targetURL[:47] + "..."
+		targetURL = strings.TrimPrefix(targetURL, "https://")
+		targetURL = strings.TrimPrefix(targetURL, "http://")
+		if len(targetURL) > 30 {
+			targetURL = targetURL[:27] + "..."
 		}
-		rows[i] = []string{
+		
+		statusStr := e.Status
+		if statusStr == "BLOCKED" {
+			statusStr = ui.ErrorStyle.Render("✗ BLOCK")
+		} else if statusStr == "OK" {
+			statusStr = ui.SuccessStyle.Render("✓ OK")
+		} else {
+			statusStr = "✓ OK" // backward compat for old logs
+		}
+
+		reasonStr := e.Reason
+		if reasonStr == "" {
+			reasonStr = "-"
+		}
+		if e.Redacted {
+			statusStr += " " + ui.ErrorStyle.Render("(REDACTED)")
+		}
+
+		rows[len(events)-1-i] = []string{
 			e.Timestamp.Format("15:04:05"),
+			statusStr,
 			e.Method,
 			targetURL,
 			strings.Join(e.SecretKeys, ", "),
 			strings.Join(e.AuthStyles, ", "),
 			fmt.Sprintf("%d", e.StatusCode),
+			reasonStr,
 			fmt.Sprintf("%dms", e.DurationMs),
 		}
 	}

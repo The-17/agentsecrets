@@ -249,6 +249,61 @@ func DeleteSecret(projectID, key string) error {
 // We maintain a comma-separated list of keys per project so we can iterate them 
 // since go-keyring lacks a list/iterate feature.
 
+func workspaceAllowlistKeyName(workspaceID string) string {
+	return fmt.Sprintf("agentsecrets:allowlist:%s", workspaceID)
+}
+
+// SetWorkspaceAllowlist stores the allowlist for a workspace in the OS keychain.
+func SetWorkspaceAllowlist(workspaceID string, domains []string) error {
+	name := workspaceAllowlistKeyName(workspaceID)
+	
+	valBytes, err := json.Marshal(domains)
+	if err != nil {
+		return fmt.Errorf("serialize allowlist: %w", err)
+	}
+	val := string(valBytes)
+
+	if useFileBackend {
+		encoded := base64.StdEncoding.EncodeToString([]byte(val))
+		return fileSet(name, encoded, "")
+	}
+	
+	if err := gokeyring.Set(serviceName, name, val); err != nil {
+		return fmt.Errorf("set allowlist %s: %w", name, err)
+	}
+	return nil
+}
+
+// GetWorkspaceAllowlist retrieves the allowlist for a workspace from the OS keychain.
+func GetWorkspaceAllowlist(workspaceID string) ([]string, error) {
+	name := workspaceAllowlistKeyName(workspaceID)
+	var val string
+
+	if useFileBackend {
+		v, err := fileGetKey(name, "private")
+		if err != nil {
+			return nil, fmt.Errorf("get allowlist: %w", err)
+		}
+		val = string(v)
+	} else {
+		v, err := gokeyring.Get(serviceName, name)
+		if err != nil {
+			return nil, fmt.Errorf("get allowlist: %w", err)
+		}
+		val = v
+	}
+
+	if val == "" {
+		return []string{}, nil
+	}
+
+	var domains []string
+	if err := json.Unmarshal([]byte(val), &domains); err != nil {
+		return nil, fmt.Errorf("parse allowlist: %w", err)
+	}
+	return domains, nil
+}
+
 func projectIndexName(projectID string) string {
 	return fmt.Sprintf("ProjectKeys_%s", projectID)
 }

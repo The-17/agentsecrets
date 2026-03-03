@@ -1,33 +1,122 @@
-# `agentsecrets init`
+# agentsecrets init
 
-The `init` command is the absolute entry point for establishing a new project environment within the AgentSecrets ecosystem.
+> Initialize AgentSecrets in the current project directory.
 
-## Overview
-When triggered, `init` walks you through an interactive sequence to authenticate (either by creating a new account or logging in to an existing one), establishes your preferred credential storage mechanism, and creates the foundational configuration files needed to link your current directory to an AgentSecrets remote project.
+## Usage
 
-## Workflow
+```bash
+agentsecrets init [--storage-mode 0|1]
+```
 
-1. **Authentication (Login/Signup):** 
-   If you do not have an active session cached in `~/.agentsecrets/token.json`, the CLI prompts you to select either `[Login]` or `[Create Account]`.
-   - **Login**: Expects existing credentials. It pulls down your encrypted workspace keys from the API and decrypts them using your password.
-   - **Signup**: Registers a brand new account, generates a local cryptographic keypair, encrypts your private key with your password, and immediately links a "personal" workspace to your account.
+## Description
 
-2. **Storage Mode Selection:**
-   AgentSecrets manages environment variables differently depending on your security preferences. `init` interactsively asks you to choose a **Storage Mode**:
-   - `Keychain (Recommended)`: Secrets are read/written exclusively to the encrypted OS-level keyring (macOS Keychain, Windows Credential Manager, Secret Service). The local `.env` file is intentionally kept blank, and only a `.env.example` mapping is generated.
-   - `Standard Local Dev`: Secrets are written in plaintext to a local `.env` file, matching traditional workflows.
+`init` is the entry point. Run it once per machine (to create your account) and once per project directory (to link it to a remote project).
 
-   You can skip the interactive prompt using the `--storage-mode` integer flag:
-   ```bash
-   # Initialize with OS Keychain storage (Mode 1)
-   agentsecrets init --storage-mode 1
-   
-   # Initialize with Standard .env storage (Mode 2)
-   agentsecrets init --storage-mode 2
-   ```
+It does four things:
 
-3. **Project Binding Context:**
-   If the chosen `StorageMode` succeeds, `init` automatically generates an `.agentsecrets/project.json` file in the current directory. This file tracks the remote `project_id` and tracks synchronisation timestamps like `last_pull` and `last_push`.
+1. **Authenticates you** — create a new account or log in
+2. **Sets up encryption** — generates your local keypair, downloads your workspace key
+3. **Chooses a storage mode** — keychain or `.env` file
+4. **Writes local config** — `.agentsecrets/project.json` and `.agent/workflows/agentsecrets.md`
 
-4. **Integration Scaffolding:**
-   The `init` command also writes helper workflows into `.github/workflows/agentsecrets.yml` and explicitly drops an `.agents/workflows/agentsecrets.md` file designed to provide contextual system prompts about the CLI for other AI agents to digest.
+## What Happens Step by Step
+
+### If you don't have an account (signup)
+
+1. Prompts for email + password
+2. Generates an X25519 keypair client-side
+3. Derives a key from your password with Argon2id
+4. Encrypts your private key with the password-derived key
+5. Sends public key + encrypted private key to the API
+6. API creates your account, generates a workspace key, encrypts it with your public key, returns the encrypted copy
+7. CLI decrypts the workspace key with your private key, caches it in `~/.agentsecrets/config.json`
+
+Your private key never leaves your machine in plaintext.
+
+### If you already have an account (login)
+
+1. Prompts for email + password
+2. Downloads your encrypted private key from the server
+3. Derives the key from your password with Argon2id, decrypts the private key
+4. Downloads your encrypted workspace keys, decrypts them with your private key
+5. Caches workspace keys in `~/.agentsecrets/config.json`
+
+### Storage Mode
+
+```bash
+agentsecrets init --storage-mode 1   # Keychain (recommended)
+agentsecrets init --storage-mode 0   # Standard .env
+```
+
+| Mode | Secrets Go To | `.env` File Behavior |
+|---|---|---|
+| `1` — Keychain (default) | OS keychain (macOS Keychain / Windows Credential Manager / Secret Service) | `.env.example` created with key names only |
+| `2` — Standard | Plaintext `.env` file | `.env` created and updated with values |
+
+Keychain mode is more secure because secrets are tied to your OS user session, encrypted at rest by the OS, and never written to any file in your project.
+
+### Files Written
+
+**Global (once per machine):**
+```
+~/.agentsecrets/
+  config.json          # workspace keys, active context, JWT token
+  proxy.log            # audit log (appended by proxy/call/env)
+```
+
+**Project-local (once per directory):**
+```
+.agentsecrets/
+  project.json         # project_id, workspace_id, storage_mode, last sync timestamps
+.agent/
+  workflows/
+    agentsecrets.md    # AI assistant workflow file (teaches the agent how to use AgentSecrets)
+```
+
+`.agentsecrets/project.json` is safe to commit — it contains no credentials. It's the link between the directory and the remote project, just like a `.git/config` file.
+
+`.agent/workflows/agentsecrets.md` is picked up automatically by any AI tool that reads workflow files (Claude, Gemini, Copilot, Cursor, etc.).
+
+## Examples
+
+```bash
+# Interactive (prompts for all choices)
+agentsecrets init
+
+# Keychain mode, skip storage mode prompt (default)
+agentsecrets init --storage-mode 1
+
+# Standard .env mode, skip storage mode prompt
+agentsecrets init --storage-mode 2
+
+# Force reinitialize without confirmation prompt
+agentsecrets init --force
+
+# After running, verify state
+agentsecrets status
+```
+
+## What It Does NOT Do
+
+- It does not create a project — that's `agentsecrets project create`
+- It does not store any secrets — that's `agentsecrets secrets set` or `agentsecrets secrets push`
+- It does not configure the proxy or MCP — that's `agentsecrets proxy start` or `agentsecrets mcp install`
+
+## Re-running on an Existing Install
+
+If `~/.agentsecrets/config.json` already exists, `init` detects it and prompts:
+
+```
+⚠ AgentSecrets is already initialized.
+Reinitialize? This will reset your config files.
+  Yes
+  No
+```
+
+Choosing **No** keeps everything as-is. Choosing **Yes** clears the existing session and config, then runs the full init flow again.
+
+To skip the prompt and force reinitialize non-interactively:
+
+```bash
+agentsecrets init --force
+```

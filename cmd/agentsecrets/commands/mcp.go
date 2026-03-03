@@ -283,6 +283,14 @@ agentsecrets call --url <API_URL> --method <METHOD> --bearer <KEY_NAME>
 | Body field | --body-field path=KEY | --body-field client_secret=SECRET |
 | Form field | --form-field name=KEY | --form-field api_key=KEY |
 
+### API Call Blocked by Zero-Trust Allowlist
+If an API call returns a 403 error stating the domain is not in the workspace allowlist:
+1. Do not bypass the proxy.
+2. Tell the user exactly what to run in their terminal to authorize the domain:
+   ` + "`agentsecrets workspace allowlist add <domain>`" + `
+   *(Wait for their confirmation that they have entered their password and added the domain)*
+3. Retry the API call.
+
 ## CRITICAL RULES
 
 1. NEVER display or log actual key values after storing
@@ -290,6 +298,7 @@ agentsecrets call --url <API_URL> --method <METHOD> --bearer <KEY_NAME>
 3. ALWAYS use agentsecrets call instead of curl
 4. ALWAYS suggest deleting chat messages containing raw keys
 5. If a key is missing, ask the user — don't guess
+6. Respect the Zero-Trust Allowlist — if a domain is blocked, instruct the user to run ` + "`agentsecrets workspace allowlist add <domain>`" + `.
 
 ## Security & Privacy
 

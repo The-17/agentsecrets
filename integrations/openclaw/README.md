@@ -23,6 +23,9 @@ cp -r integrations/openclaw ~/.openclaw/skills/agentsecrets
 pip install agentsecrets
 agentsecrets init
 agentsecrets secrets set STRIPE_KEY=sk_test_your_key
+
+# Authorize domains your agent is allowed to access
+agentsecrets workspace allowlist add api.stripe.com
 ```
 
 ## Usage
@@ -43,8 +46,18 @@ OpenClaw stores credentials in plaintext (`~/.openclaw/.env`, config JSON files)
 AgentSecrets fixes this architecturally:
 - Keys in OS keychain, not plaintext files
 - Agent sees key **names**, never **values**
-- Full audit trail of every key usage
+- **Zero-Trust Domain Allowlist**: agent is structurally blocked from exfiltrating data to unauthorized domains
+- **Response Body Redaction**: if an API echoes your key in the response body, the proxy scrubs it before the agent sees it
+- **Full audit trail** of every key usage
 - Nothing to steal from agent memory or chat logs
+
+## Environment variables
+
+If your OpenClaw agent needs to run a command that requires environment variables (like `npm run dev` or a Python script), it knows to use the `agentsecrets env` command to securely inject them from the OS keychain:
+
+```bash
+agentsecrets env -- npm run dev
+```
 
 ## Publishing to ClawHub
 

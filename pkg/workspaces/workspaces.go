@@ -158,6 +158,8 @@ func (s *Service) Invite(workspaceID, email, role string) error {
 
 // WorkspaceMember represents a member of a workspace.
 type WorkspaceMember struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	Status string `json:"status"`
@@ -201,6 +203,128 @@ func (s *Service) RemoveMember(workspaceID, email string) error {
 	}
 
 	return nil
+}
+
+// UpdateRole updates the role of a member in a workspace.
+func (s *Service) UpdateRole(workspaceID, userID, action string) error {
+	resp, err := s.API.Call("workspaces.role_update", "POST", map[string]string{
+		"action": action,
+	}, map[string]string{
+		"workspace_id": workspaceID,
+		"user_id":      userID,
+	})
+	if err != nil {
+		return fmt.Errorf("update role: API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return s.API.DecodeError(resp)
+	}
+
+	return nil
+}
+
+// --- Workspace Allowlist ---
+
+// AddAllowlist adds one or more domains to the workspace allowlist.
+func (s *Service) AddAllowlist(workspaceID string, domains ...string) error {
+	resp, err := s.API.Call("workspaces.allowlist_add", "POST", map[string]interface{}{
+		"domains": domains,
+	}, map[string]string{
+		"workspace_id": workspaceID,
+	})
+	if err != nil {
+		return fmt.Errorf("add allowlist: API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return s.API.DecodeError(resp)
+	}
+
+	return nil
+}
+
+// RemoveAllowlist removes a domain from the workspace allowlist.
+func (s *Service) RemoveAllowlist(workspaceID, domain string) error {
+	resp, err := s.API.Call("workspaces.allowlist_remove", "DELETE", nil, map[string]string{
+		"workspace_id": workspaceID,
+		"domain":       domain,
+	})
+	if err != nil {
+		return fmt.Errorf("remove allowlist: API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return s.API.DecodeError(resp)
+	}
+
+	return nil
+}
+
+// AllowlistDomain represents a domain in the workspace allowlist.
+type AllowlistDomain struct {
+	Domain    string `json:"domain"`
+	AddedBy   string `json:"added_by_email"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListAllowlist retrieves the allowlist for a workspace.
+func (s *Service) ListAllowlist(workspaceID string) ([]AllowlistDomain, error) {
+	resp, err := s.API.Call("workspaces.allowlist_list", "GET", nil, map[string]string{
+		"workspace_id": workspaceID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list allowlist: API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, s.API.DecodeError(resp)
+	}
+
+	var res struct {
+		Data []AllowlistDomain `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("list allowlist: failed to parse response: %w", err)
+	}
+
+	return res.Data, nil
+}
+
+// AllowlistLogEntry represents an entry in the allowlist audit log.
+type AllowlistLogEntry struct {
+	CreatedAt string `json:"performed_at"`
+	UserEmail string `json:"performed_by_email"`
+	Action    string `json:"action"` // ADDED or REMOVED
+	Domain    string `json:"domain"`
+}
+
+// LogAllowlist retrieves the audit log for the workspace allowlist.
+func (s *Service) LogAllowlist(workspaceID string) ([]AllowlistLogEntry, error) {
+	resp, err := s.API.Call("workspaces.allowlist_log", "GET", nil, map[string]string{
+		"workspace_id": workspaceID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("log allowlist: API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, s.API.DecodeError(resp)
+	}
+
+	var res struct {
+		Data []AllowlistLogEntry `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("log allowlist: failed to parse response: %w", err)
+	}
+
+	return res.Data, nil
 }
 
 // b64Enc is a shorthand for base64 standard encoding.

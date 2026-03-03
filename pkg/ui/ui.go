@@ -13,32 +13,33 @@ import (
 
 // Brand colors
 var (
-	Teal    = lipgloss.Color("#2DD4BF")
-	Cyan    = lipgloss.Color("#22D3EE")
-	Green   = lipgloss.Color("#4ADE80")
-	Red     = lipgloss.Color("#F87171")
-	Yellow  = lipgloss.Color("#FBBF24")
-	Dim     = lipgloss.Color("#6B7280")
-	White   = lipgloss.Color("#F9FAFB")
-	DimText = lipgloss.Color("#9CA3AF")
+	PrimaryColor = lipgloss.Color("#7DD3FC") // Sky Blue
+	Secondary    = lipgloss.Color("#BAE6FD") // Light Sky Blue
+	SuccessColor = lipgloss.Color("#34D399") // Emerald
+	ErrorColor   = lipgloss.Color("#FB7185") // Rose
+	WarningColor = lipgloss.Color("#FCD34D") // Soft Amber
+	Dim          = lipgloss.Color("#71717A") // Zinc 500 (Clean grey)
+	White        = lipgloss.Color("#F4F4F5") // Zinc 100
+	DimText      = lipgloss.Color("#A1A1AA") // Zinc 400
+	FaintBorder  = lipgloss.Color("#27272A") // Zinc 800 (Faint Border)
 )
 
 // Reusable styles
 var (
 	BrandStyle = lipgloss.NewStyle().
-			Foreground(Teal).
+			Foreground(PrimaryColor).
 			Bold(true)
 
 	SuccessStyle = lipgloss.NewStyle().
-			Foreground(Green).
+			Foreground(SuccessColor).
 			Bold(true)
 
 	ErrorStyle = lipgloss.NewStyle().
-			Foreground(Red).
+			Foreground(ErrorColor).
 			Bold(true)
 
 	WarningStyle = lipgloss.NewStyle().
-			Foreground(Yellow).
+			Foreground(WarningColor).
 			Bold(true)
 
 	DimStyle = lipgloss.NewStyle().
@@ -53,7 +54,7 @@ var (
 
 	// Banner for init/welcome screens
 	BannerStyle = lipgloss.NewStyle().
-			Foreground(Teal).
+			Foreground(PrimaryColor).
 			Bold(true).
 			MarginBottom(1)
 
@@ -123,8 +124,8 @@ func BannerStr(text string) string {
 // RenderTable returns a styled table as a string.
 func RenderTable(headers []string, rows [][]string) string {
 	t := table.New().
-		Border(lipgloss.ThickBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(Dim)).
+		Border(lipgloss.RoundedBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(FaintBorder)).
 		Headers(headers...).
 		Rows(rows...)
 
@@ -132,7 +133,7 @@ func RenderTable(headers []string, rows [][]string) string {
 	t.StyleFunc(func(row, col int) lipgloss.Style {
 		style := lipgloss.NewStyle().Padding(0, 1).Align(lipgloss.Left)
 		if row == 0 {
-			style = style.Foreground(Teal).Bold(true)
+			style = style.Foreground(PrimaryColor).Bold(true)
 		}
 		return style
 	})

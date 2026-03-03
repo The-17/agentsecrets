@@ -4,11 +4,21 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 )
+
+func redactSecretFromResponse(body []byte, secretValue string) []byte {
+	if secretValue == "" {
+		return body
+	}
+	return bytes.ReplaceAll(body, []byte(secretValue), []byte("[REDACTED_BY_AGENTSECRETS]"))
+}
 
 // CallRequest is the input to the engine — used by both MCP and HTTP paths.
 type CallRequest struct {
@@ -41,9 +51,11 @@ type SecretResolver func(key string) (string, error)
 // Engine coordinates keyring lookup, injection, forwarding, and auditing.
 type Engine struct {
 	ProjectID     string
+	WorkspaceID   string
 	Audit         *AuditLogger
 	Client        *http.Client
 	ResolveSecret SecretResolver
+	SkipAllowlist bool
 }
 
 // NewEngine creates an engine wired to the real keyring for the given project.
@@ -58,9 +70,15 @@ func NewEngine(projectID string) (*Engine, error) {
 		audit = nil
 	}
 
+	pc, err := config.LoadProjectConfig()
+	if err != nil || pc.WorkspaceID == "" {
+		return nil, fmt.Errorf("project config error, please run 'agentsecrets project use' first")
+	}
+
 	return &Engine{
-		ProjectID: projectID,
-		Audit:     audit,
+		ProjectID:     projectID,
+		WorkspaceID:   pc.WorkspaceID,
+		Audit:         audit,
 		Client: &http.Client{
 			Timeout: DefaultTimeout,
 		},
@@ -85,6 +103,78 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 		method = "GET"
 	}
 
+	// --- Check Allowlist ---
+	u, err := url.Parse(req.TargetURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target URL: %w", err)
+	}
+	targetDomain := strings.ToLower(u.Hostname())
+
+	var allowlist []string
+	if !e.SkipAllowlist {
+		allowlist, err = keyring.GetWorkspaceAllowlist(e.WorkspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read allowlist from keyring: %w", err)
+		}
+	}
+
+	secretKeys := make([]string, 0, len(req.Injections))
+	authStyles := make([]string, 0, len(req.Injections))
+	for _, inj := range req.Injections {
+		secretKeys = append(secretKeys, inj.SecretKey)
+		authStyles = append(authStyles, inj.Style)
+	}
+
+	logBlocked := func(reason, msg string) (*CallResult, error) {
+		if e.Audit != nil {
+			_ = e.Audit.Log(AuditEvent{
+				Timestamp:  time.Now().UTC(),
+				SecretKeys: secretKeys,
+				AgentID:    req.AgentID,
+				Method:     method,
+				TargetURL:  req.TargetURL,
+				Domain:     targetDomain,
+				AuthStyles: authStyles,
+				StatusCode: 403,
+				DurationMs: 0,
+				Status:     "BLOCKED",
+				Reason:     reason,
+			})
+		}
+		
+		bodyJSON := fmt.Sprintf(`{"error":"%s","domain":"%s","message":"%s"}`, reason, targetDomain, msg)
+		headers := make(map[string][]string)
+		headers["Content-Type"] = []string{"application/json"}
+		return &CallResult{
+			StatusCode: 403,
+			Headers:    headers,
+			Body:       []byte(bodyJSON),
+		}, nil
+	}
+
+	if !e.SkipAllowlist {
+		if len(allowlist) == 0 {
+			msg := "Your workspace allowlist is empty. No credential injections are allowed until you add at least one domain.\nRun: agentsecrets workspace allowlist add <domain>"
+			return logBlocked("empty_allowlist", string(bytes.ReplaceAll([]byte(msg), []byte("\n"), []byte(" "))))
+		}
+
+		allowed := false
+		for _, raw := range allowlist {
+			if strings.ToLower(raw) == targetDomain {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
+			msg := fmt.Sprintf("%s is not in your workspace allowlist. To authorize it, run: agentsecrets workspace allowlist add %s", targetDomain, targetDomain)
+			return logBlocked("domain_not_in_allowlist", msg)
+		}
+	}
+
+	secretKeys = secretKeys[:0] // reset for normal accumulation
+	authStyles = authStyles[:0]
+
 	// --- Build outbound request ---
 	var bodyReader *bytes.Reader
 	if len(req.Body) > 0 {
@@ -104,8 +194,7 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 	}
 
 	// --- Resolve secrets and inject ---
-	secretKeys := make([]string, 0, len(req.Injections))
-	authStyles := make([]string, 0, len(req.Injections))
+	secretValues := make([]string, 0, len(req.Injections))
 
 	for _, inj := range req.Injections {
 		cred, err := e.ResolveSecret(inj.SecretKey)
@@ -119,12 +208,40 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 
 		secretKeys = append(secretKeys, inj.SecretKey)
 		authStyles = append(authStyles, inj.Style)
+		secretValues = append(secretValues, cred)
 	}
 
 	// --- Forward ---
 	result, err := Forward(e.Client, outbound)
 	if err != nil {
 		return nil, err
+	}
+
+	// --- Redact ---
+	redacted := false
+	if len(result.Body) > 0 {
+		contentType := ""
+		if len(result.Headers["Content-Type"]) > 0 {
+			contentType = result.Headers["Content-Type"][0]
+		}
+		
+		if contentType != "" && !strings.Contains(contentType, "application/json") && !strings.Contains(contentType, "text/") {
+			fmt.Fprintf(os.Stderr, "Warning: redacting unexpected content type: %s\n", contentType)
+		}
+
+		for _, val := range secretValues {
+			if val == "" {
+				continue
+			}
+			if bytes.Contains(result.Body, []byte(val)) {
+				result.Body = redactSecretFromResponse(result.Body, val)
+				redacted = true
+			}
+		}
+
+		if redacted {
+			result.Headers["Content-Length"] = []string{fmt.Sprintf("%d", len(result.Body))}
+		}
 	}
 
 	// --- Audit ---
@@ -135,9 +252,13 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 			AgentID:    req.AgentID,
 			Method:     method,
 			TargetURL:  req.TargetURL,
+			Domain:     targetDomain,
 			AuthStyles: authStyles,
 			StatusCode: result.StatusCode,
 			DurationMs: result.Duration.Milliseconds(),
+			Status:     "OK",
+			Reason:     func() string { if redacted { return "credential_echo" }; return "-" }(),
+			Redacted:   redacted,
 		})
 	}
 

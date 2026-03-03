@@ -201,14 +201,59 @@ agentsecrets proxy logs --secret STRIPE_KEY # Filter by key
   "target_url": "https://api.stripe.com/v1/charges",
   "auth_styles": ["bearer"],
   "status_code": 200,
+  "status": "OK",
+  "reason": "-",
+  "redacted": false,
   "duration_ms": 245
+}
+```
+
+When a response body contains an echoed credential, the log shows:
+
+```json
+{
+  "status": "OK",
+  "reason": "credential_echo",
+  "redacted": true
 }
 ```
 
 ---
 
+## Response Body Redaction
+
+If an external API echoes back the injected credential in its response body, the proxy automatically replaces the value with `[REDACTED_BY_AGENTSECRETS]` before the response reaches the agent.
+
+This prevents **credential echo exfiltration** — a class of attack where a malicious API is designed to reflect secrets back into agent context.
+
+- The `Content-Length` header is recalculated after redaction
+- The audit log records `redacted: true` and `reason: "credential_echo"`
+- The CLI shows `(REDACTED)` in the proxy logs table
+
+---
+
+## Environment Variable Injection
+
+For tools that require secrets as environment variables (Stripe CLI, SDKs, dev servers):
+
+```bash
+agentsecrets env -- stripe mcp
+agentsecrets env -- node server.js
+agentsecrets env -- npm run dev
+```
+
+- Values are injected from the OS keychain into the child process environment
+- Nothing is written to disk
+- Secrets exist only in the child process memory during its lifetime
+- Signal forwarding (SIGINT/SIGTERM) and exit code passthrough are handled
+- Key names (never values) are logged to the audit log with method `ENV`
+
+---
+
 ## Security
 
+- **Zero-Trust Workspace Allowlist**: The proxy enforces a deny-by-default domain allowlist synced from your workspace. Unauthorized domains are blocked with 403 Forbidden. Add domains via `agentsecrets workspace allowlist add <domain> [domain...]`. Allowlist modifications require admin role and password.
+- **Response Body Redaction**: If an API echoes back the injected credential, the proxy replaces it with `[REDACTED_BY_AGENTSECRETS]` before the response reaches the agent. Logged as `credential_echo`.
 - Secret values are **resolved at execution time** from the OS keychain — they exist in memory only during the request
 - The AI agent **never receives** secret values in any response
 - The audit log records **key names and metadata**, never values

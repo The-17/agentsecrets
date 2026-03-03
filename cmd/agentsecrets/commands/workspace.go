@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -56,6 +57,18 @@ func init() {
 			Short: "Remove a member from the workspace",
 			Args:  cobra.ExactArgs(1),
 			RunE:  runWorkspaceRemove,
+		},
+		&cobra.Command{
+			Use:   "promote [email]",
+			Short: "Promote a member to admin",
+			Args:  cobra.ExactArgs(1),
+			RunE:  runWorkspacePromote,
+		},
+		&cobra.Command{
+			Use:   "demote [email]",
+			Short: "Demote an admin to member",
+			Args:  cobra.ExactArgs(1),
+			RunE:  runWorkspaceDemote,
 		},
 	)
 }
@@ -300,6 +313,85 @@ func runWorkspaceRemove(_ *cobra.Command, args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Removed %s from workspace.", email))
+	return nil
+}
+
+func getMemberUserID(workspaceID, email string) (string, error) {
+	members, err := workspaceService.Members(workspaceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch members: %w", err)
+	}
+
+	for _, m := range members {
+		if strings.EqualFold(m.Email, email) {
+			if m.ID != "" {
+				return m.ID, nil
+			}
+			if m.UserID != "" {
+				return m.UserID, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("User is not a member of this workspace.")
+}
+
+func runWorkspacePromote(_ *cobra.Command, args []string) error {
+	email := args[0]
+
+	workspaceID, err := requireWorkspaceID()
+	if err != nil {
+		return err
+	}
+
+	cfg, _ := config.LoadGlobalConfig()
+
+	if err := ui.Spinner(fmt.Sprintf("Promoting %s...", email), func() error {
+		userID, err := getMemberUserID(workspaceID, email)
+		if err != nil {
+			return err
+		}
+		if err := workspaceService.UpdateRole(workspaceID, userID, "promote"); err != nil {
+			if strings.Contains(err.Error(), "403") {
+				return fmt.Errorf("Only admins can change member roles.")
+			}
+			return err
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	ui.Success(fmt.Sprintf("%s is now an admin of %s", email, cfg.Workspaces[workspaceID].Name))
+	return nil
+}
+
+func runWorkspaceDemote(_ *cobra.Command, args []string) error {
+	email := args[0]
+
+	workspaceID, err := requireWorkspaceID()
+	if err != nil {
+		return err
+	}
+
+	cfg, _ := config.LoadGlobalConfig()
+
+	if err := ui.Spinner(fmt.Sprintf("Demoting %s...", email), func() error {
+		userID, err := getMemberUserID(workspaceID, email)
+		if err != nil {
+			return err
+		}
+		if err := workspaceService.UpdateRole(workspaceID, userID, "demote"); err != nil {
+			if strings.Contains(err.Error(), "403") {
+				return fmt.Errorf("Only admins can change member roles.")
+			}
+			return err // Will display exactly the message from the API on 400
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	ui.Success(fmt.Sprintf("%s is now a member of %s", email, cfg.Workspaces[workspaceID].Name))
 	return nil
 }
 

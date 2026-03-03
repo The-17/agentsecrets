@@ -8,8 +8,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/api"
+	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/secrets"
 	"github.com/The-17/agentsecrets/pkg/ui"
+	"github.com/The-17/agentsecrets/pkg/workspaces"
 )
 
 var (
@@ -229,14 +232,29 @@ func runSecretsPull(cmd *cobra.Command, args []string) error {
 		pullCount = len(targetKeys)
 	}
 
-	if err := ui.Spinner(fmt.Sprintf("Pulling %d secrets...", pullCount), func() error {
-		return secretsService.Pull(targetKeys)
+	if err := ui.Spinner(fmt.Sprintf("Pulling %d secrets and allowlist...", pullCount), func() error {
+		if err := secretsService.Pull(targetKeys); err != nil {
+			return err
+		}
+		
+		pc, err := config.LoadProjectConfig()
+		if err == nil && pc.WorkspaceID != "" {
+			domainsResp, err := workspaceService.ListAllowlist(pc.WorkspaceID)
+			if err == nil {
+				var domains []string
+				for _, d := range domainsResp {
+					domains = append(domains, d.Domain)
+				}
+				_ = keyring.SetWorkspaceAllowlist(pc.WorkspaceID, domains)
+			}
+		}
+		return nil
 	}); err != nil {
 		ui.Error(fmt.Sprintf("Pull: %v", err))
 		return nil
 	}
 
-	ui.Success("Successfully synced cloud secrets.")
+	ui.Success("Successfully synced cloud secrets and allowlist domains.")
 	return nil
 }
 
@@ -344,7 +362,7 @@ func runSecretsDelete(cmd *cobra.Command, args []string) error {
 func runSecretsDiff(cmd *cobra.Command, args []string) error {
 	var diff *secrets.DiffResult
 
-	if err := ui.Spinner("Comparing secrets...", func() error {
+	if err := ui.Spinner("Comparing secrets & allowlist...", func() error {
 		var e error
 		diff, e = secretsService.Diff()
 		return e
@@ -353,23 +371,96 @@ func runSecretsDiff(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	pc, _ := config.LoadProjectConfig()
+	var allowlistRemote []workspaces.AllowlistDomain
+	var allowlistLocal []string
+	if pc != nil && pc.WorkspaceID != "" {
+		if remote, err := workspaceService.ListAllowlist(pc.WorkspaceID); err == nil {
+			allowlistRemote = remote
+		}
+		if local, err := keyring.GetWorkspaceAllowlist(pc.WorkspaceID); err == nil {
+			allowlistLocal = local
+		}
+	}
+
 	fmt.Printf("\n%s\n", ui.BannerStr("Secret Diff"))
 
-	if len(diff.Added) == 0 && len(diff.Removed) == 0 && len(diff.Changed) == 0 {
-		ui.Success("Local and cloud secrets are in sync!")
+	allowlistDrift := false
+    // Calculate remote only allowlist drift
+	var remoteOnlyAllowlist []string
+	for _, r := range allowlistRemote {
+		found := false
+		for _, l := range allowlistLocal {
+			if strings.ToLower(l) == strings.ToLower(r.Domain) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			remoteOnlyAllowlist = append(remoteOnlyAllowlist, fmt.Sprintf("%s (added by %s)", r.Domain, r.AddedBy))
+			allowlistDrift = true
+		}
+	}
+	// Calculate local only allowlist drift
+	var localOnlyAllowlist []string
+	for _, l := range allowlistLocal {
+		found := false
+		for _, r := range allowlistRemote {
+			if strings.ToLower(l) == strings.ToLower(r.Domain) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			localOnlyAllowlist = append(localOnlyAllowlist, l)
+			allowlistDrift = true
+		}
+	}
+
+	if len(diff.Added) == 0 && len(diff.Removed) == 0 && len(diff.Changed) == 0 && !allowlistDrift {
+		ui.Success("Local and cloud secrets/allowlist are in sync!")
 		return nil
 	}
 
-	for _, k := range diff.Added {
-		fmt.Printf("  %s %s %s\n", ui.SuccessStyle.Render("+"), ui.BrandStyle.Render(k), ui.DimStyle.Render("(new)"))
+	if len(diff.Added) > 0 || len(diff.Removed) > 0 || len(diff.Changed) > 0 {
+		fmt.Printf("SECRETS:\n")
+		if len(diff.Changed) > 0 {
+			var keys []string
+			for k := range diff.Changed {
+				keys = append(keys, ui.BrandStyle.Render(k))
+			}
+			fmt.Printf("  %s %s\n", strings.TrimSpace(ui.LabelStyle.Render("OUT OF SYNC:")), strings.Join(keys, ", "))
+		}
+		if len(diff.Added) > 0 {
+			var keys []string
+			for _, k := range diff.Added {
+				keys = append(keys, ui.BrandStyle.Render(k))
+			}
+			fmt.Printf("  %s  %s\n", strings.TrimSpace(ui.SuccessStyle.Render("LOCAL ONLY:")), strings.Join(keys, ", "))
+		}
+		if len(diff.Removed) > 0 {
+			var keys []string
+			for _, k := range diff.Removed {
+				keys = append(keys, ui.BrandStyle.Render(k))
+			}
+			fmt.Printf("  %s %s\n", strings.TrimSpace(ui.ErrorStyle.Render("REMOTE ONLY:")), strings.Join(keys, ", "))
+		}
+		fmt.Println()
 	}
-	for _, k := range diff.Removed {
-		fmt.Printf("  %s %s %s\n", ui.ErrorStyle.Render("-"), ui.BrandStyle.Render(k), ui.DimStyle.Render("(missing locally)"))
-	}
-	for k := range diff.Changed {
-		fmt.Printf("  %s %s %s\n", ui.LabelStyle.Render("~"), ui.BrandStyle.Render(k), ui.DimStyle.Render("(mismatch)"))
-	}
-	fmt.Println()
+
+	if allowlistDrift {
+		fmt.Printf("ALLOWLIST:\n")
+		if len(remoteOnlyAllowlist) > 0 {
+			fmt.Printf("  %s %s\n", strings.TrimSpace(ui.ErrorStyle.Render("REMOTE ONLY:")), strings.Join(remoteOnlyAllowlist, ", "))
+		}
+		if len(localOnlyAllowlist) > 0 {
+			fmt.Printf("  %s  %s\n", strings.TrimSpace(ui.SuccessStyle.Render("LOCAL ONLY:")), strings.Join(localOnlyAllowlist, ", "))
+		}
+		fmt.Println()
+		fmt.Printf("Run %s to sync both.\n\n", ui.BrandStyle.Render("agentsecrets secrets pull"))
+	} else if len(diff.Added) > 0 || len(diff.Removed) > 0 || len(diff.Changed) > 0 {
+        fmt.Printf("Run %s to sync both.\n\n", ui.BrandStyle.Render("agentsecrets secrets pull"))
+    }
 
 	return nil
 }

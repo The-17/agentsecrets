@@ -9,7 +9,9 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -138,9 +140,23 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		}
 	}
 
-	// 3. Store credentials
 	if err := config.SetEmail(email); err != nil {
 		return fmt.Errorf("login: failed to save email: %w", err)
+	}
+
+	// Compute and store local password hash for allowlist verification
+	hasher := sha256.New()
+	hasher.Write([]byte(email + ":" + password))
+	passwordHash := hex.EncodeToString(hasher.Sum(nil))
+	
+	globalCfg, _ := config.LoadGlobalConfig()
+	if globalCfg == nil {
+		globalCfg = &config.GlobalConfig{}
+	}
+	globalCfg.Email = email
+	globalCfg.PasswordHash = passwordHash
+	if err := config.SaveGlobalConfig(globalCfg); err != nil {
+		return fmt.Errorf("login: failed to save global config: %w", err)
 	}
 
 	accessToken := coalesce(loginResp.AccessToken, loginResp.Data.Access)

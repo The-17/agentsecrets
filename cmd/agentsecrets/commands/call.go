@@ -50,6 +50,7 @@ var callCmd = &cobra.Command{
 	# Multiple injections
 	agentsecrets call --url https://api.example.com/data \
 		--bearer AUTH_TOKEN --header X-Org-ID=ORG_SECRET`,
+	SilenceUsage: true,
 	RunE: runCall,
 }
 

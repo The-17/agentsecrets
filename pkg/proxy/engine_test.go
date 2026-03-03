@@ -36,6 +36,7 @@ func TestEngineExecuteBearer(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        upstream.Client(),
 		ResolveSecret: mockResolver(map[string]string{"STRIPE_KEY": "sk_test_123"}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -78,6 +79,7 @@ func TestEngineExecuteMultipleInjections(t *testing.T) {
 			"ORG_ID":  "org-abc",
 			"API_KEY": "key-xyz",
 		}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -111,6 +113,7 @@ func TestEngineExecuteQueryInjection(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        upstream.Client(),
 		ResolveSecret: mockResolver(map[string]string{"GMAP_KEY": "gmap-key-123"}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -134,6 +137,7 @@ func TestEngineExecuteMissingSecret(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        http.DefaultClient,
 		ResolveSecret: mockResolver(map[string]string{}), // no secrets
+		SkipAllowlist: true,
 	}
 
 	_, err := engine.Execute(CallRequest{
@@ -154,6 +158,7 @@ func TestEngineExecuteMissingURL(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        http.DefaultClient,
 		ResolveSecret: mockResolver(map[string]string{}),
+		SkipAllowlist: true,
 	}
 
 	_, err := engine.Execute(CallRequest{
@@ -172,6 +177,7 @@ func TestEngineExecuteNoInjections(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        http.DefaultClient,
 		ResolveSecret: mockResolver(map[string]string{}),
+		SkipAllowlist: true,
 	}
 
 	_, err := engine.Execute(CallRequest{
@@ -198,6 +204,7 @@ func TestEngineExecuteExtraHeaders(t *testing.T) {
 		ProjectID:     "test-project",
 		Client:        upstream.Client(),
 		ResolveSecret: mockResolver(map[string]string{"KEY": "val"}),
+		SkipAllowlist: true,
 	}
 
 	result, err := engine.Execute(CallRequest{
@@ -245,6 +252,7 @@ func TestAuditNeverLogsSecretValues(t *testing.T) {
 		Client:        upstream.Client(),
 		Audit:         audit,
 		ResolveSecret: mockResolver(map[string]string{"STRIPE_KEY": secretValue}),
+		SkipAllowlist: true,
 	}
 
 	_, err = engine.Execute(CallRequest{
@@ -281,3 +289,49 @@ func TestAuditNeverLogsSecretValues(t *testing.T) {
 		t.Error("expected agent ID to appear in audit log")
 	}
 }
+
+func TestEngineExecuteRedactBody(t *testing.T) {
+	secretValue := "sk_live_ECHO_SECRET_12345"
+	originalResponse := fmt.Sprintf(`{"auth": "Bearer %s", "data": "hello"}`, secretValue)
+	
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(originalResponse))
+	}))
+	defer upstream.Close()
+
+	engine := &Engine{
+		ProjectID:     "test-project",
+		SkipAllowlist: true,
+		Client:        upstream.Client(),
+		ResolveSecret: mockResolver(map[string]string{"STRIPE_KEY": secretValue}),
+	}
+
+	result, err := engine.Execute(CallRequest{
+		TargetURL: upstream.URL + "/data",
+		Method:    "GET",
+		Injections: []Injection{
+			{Style: "bearer", SecretKey: "STRIPE_KEY"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+
+	if result.StatusCode != 200 {
+		t.Errorf("StatusCode = %d, want 200", result.StatusCode)
+	}
+
+	bodyStr := string(result.Body)
+	if strings.Contains(bodyStr, secretValue) {
+		t.Fatal("SECURITY: secret VALUE was found in response body!")
+	}
+
+	if !strings.Contains(bodyStr, "[REDACTED_BY_AGENTSECRETS]") {
+		t.Error("expected response body to contain [REDACTED_BY_AGENTSECRETS]")
+	}
+}
+
+// alright one lasy lol! we need to update the docs to explain the zero-trust in depth, the env command, both to the bots and the workflow content in the init command.. 

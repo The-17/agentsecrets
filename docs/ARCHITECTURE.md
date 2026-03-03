@@ -1,511 +1,303 @@
-# AgentSecrets Architecture
+# Architecture
 
-This document explains the technical design of AgentSecrets, the first secrets manager built for AI-assisted development.
-
-## Design Goals
-
-1. **Zero-Knowledge Security**: Server never sees plaintext secrets
-2. **AI-Native**: Works seamlessly with AI assistants
-3. **Universal Compatibility**: Single binary works for all languages
-4. **Simple UX**: One command to pull secrets
-5. **Team-Friendly**: Built-in collaboration features
-
-## High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        User's Machine                        │
-│                                                               │
-│  ┌──────────────┐         ┌──────────────┐                  │
-│  │ AI Assistant │         │     User     │                  │
-│  │ (Claude/GPT) │         │              │                  │
-│  └──────┬───────┘         └──────┬───────┘                  │
-│         │                        │                           │
-│         │  Commands (no values)  │  Commands                │
-│         └────────────┬───────────┘                           │
-│                      │                                       │
-│              ┌───────▼────────┐                              │
-│              │  agentsecrets  │                              │
-│              │      CLI       │                              │
-│              └───────┬────────┘                              │
-│                      │                                       │
-│         ┌────────────┼────────────┐                          │
-│         │            │            │                          │
-│    ┌────▼─────┐ ┌───▼────┐ ┌────▼─────┐                    │
-│    │ Keyring  │ │ Config │ │ .env     │                    │
-│    │ (Keys)   │ │        │ │ (Secrets)│                    │
-│    └──────────┘ └────────┘ └──────────┘                    │
-│                                                               │
-└───────────────────────────┬───────────────────────────────────┘
-                            │
-                            │ HTTPS (TLS)
-                            │
-                    ┌───────▼───────┐
-                    │               │
-                    │  AgentSecrets │
-                    │     API       │
-                    │               │
-                    └───────┬───────┘
-                            │
-                    ┌───────▼───────┐
-                    │   Database    │
-                    │  (Encrypted   │
-                    │   Secrets)    │
-                    └───────────────┘
-```
-
-## Component Breakdown
-
-### 1. CLI (`cmd/agentsecrets/`)
-
-**Purpose**: User-facing command-line interface
-
-**Key Responsibilities**:
-- Parse commands and flags
-- Coordinate between packages
-- Handle user interaction
-- Output formatting
-
-**Technology**: 
-- Cobra (command framework)
-- Supports subcommands: `init`, `login`, `workspace`, `project`, `secrets`
-
-**Example**:
-```go
-var secretsPullCmd = &cobra.Command{
-    Use:   "pull",
-    Short: "Download secrets to .env file",
-    Run: func(cmd *cobra.Command, args []string) {
-        // 1. Load config
-        // 2. Get current project
-        // 3. Fetch encrypted secrets from API
-        // 4. Decrypt locally
-        // 5. Write to .env
-    },
-}
-```
-
-### 2. Crypto Package (`pkg/crypto/`)
-
-**Purpose**: All encryption/decryption operations
-
-**Key Responsibilities**:
-- Generate key pairs (X25519)
-- Encrypt/decrypt secrets (AES-256-GCM)
-- Encrypt/decrypt workspace keys for team sharing (NaCl SealedBox)
-- Derive password keys (Argon2id)
-
-**Algorithms**:
-- **X25519**: Elliptic curve keypair for asymmetric encryption
-- **AES-256-GCM**: Symmetric encryption for secrets (replaces Fernet)
-- **NaCl SealedBox**: Asymmetric encryption for workspace key wrapping
-- **Argon2id**: Password-based key derivation (replaces PBKDF2)
-
-**Key Hierarchy**:
-```
-Password → (Argon2id) → Password-Derived Key → decrypts Private Key
-Private Key → (NaCl SealedBox) → decrypts Workspace Key
-Workspace Key → (AES-256-GCM) → encrypts/decrypts Secrets
-```
-
-**Example**:
-```go
-// Encrypt a secret with workspace key
-ciphertext, nonce, err := crypto.EncryptSecret("my-secret-value", workspaceKey)
-
-// Decrypt a secret
-plaintext, err := crypto.DecryptSecret(ciphertext, nonce, workspaceKey)
-```
-
-### 3. API Client (`pkg/api/`)
-
-**Purpose**: Communication with the backend API
-
-**API Strategy**: Reusing the existing SecretsCLI API (`https://secrets-api-orpin.vercel.app/api`) and modifying it as needed, rather than building a new API from scratch. The API is fundamentally "dumb storage" — it stores encrypted blobs and never sees plaintext. The only server-side crypto is personal workspace key creation during signup.
-
-**Key Responsibilities**:
-- Make HTTP requests
-- Handle JWT authentication (access + refresh tokens)
-- Serialize/deserialize JSON
-- Endpoint resolution via dot-notation map (e.g., `"secrets.get"`)
-
-**Example**:
-```go
-client := api.NewClient(config.GetAccessToken)
-resp, err := client.Call("secrets.get", "GET", nil, map[string]string{
-    "project_id": projectID,
-    "key": "DATABASE_URL",
-})
-```
-
-### 4. Config Package (`pkg/config/`)
-
-**Purpose**: Local configuration management
-
-**Stores**:
-- API endpoint
-- Current workspace ID
-- Current project ID
-- User email
-
-**Location**: `~/.agentsecrets/config.json`
-
-**Format**:
-```json
-{
-  "api_endpoint": "https://api.agentsecrets.com/v1",
-  "current_workspace": "ws_abc123",
-  "current_project": "proj_xyz789",
-  "user_email": "user@example.com"
-}
-```
-
-### 5. Keyring Integration (`pkg/auth/`)
-
-**Purpose**: Secure key storage using OS keychain
-
-**Technology**: 
-- macOS: Keychain
-- Linux: Secret Service (GNOME Keyring, KWallet)
-- Windows: Credential Manager
-
-**Stores**:
-- Private encryption key
-- Authentication token
-
-**Example**:
-```go
-import "github.com/zalando/go-keyring"
-
-// Store private key
-err := keyring.Set("agentsecrets", "private_key", encodedKey)
-
-// Retrieve private key
-key, err := keyring.Get("agentsecrets", "private_key")
-```
-
-## Security Architecture
-
-### Encryption Flow
-
-#### Uploading Secrets (Push)
-
-```
-1. User: agentsecrets secrets set DATABASE_URL=postgresql://...
-                      ↓
-2. Get workspace key from local cache
-                      ↓
-3. Encrypt secret with AES-256-GCM using workspace key
-                      ↓
-4. Upload encrypted blob + nonce to API
-                      ↓
-5. API stores blob — cannot decrypt (no workspace key)
-```
-
-#### Downloading Secrets (Pull)
-
-```
-1. User: agentsecrets secrets pull
-                      ↓
-2. Fetch encrypted blobs from API
-                      ↓
-3. Get workspace key from local cache
-                      ↓
-4. Decrypt each secret with AES-256-GCM
-                      ↓
-5. Write to .env file
-```
-
-### Key Management
-
-**Key Hierarchy**:
-- **User keypair** (X25519): Generated during `agentsecrets init`, private key stored in OS keychain
-- **Workspace key** (random bytes): Encrypts/decrypts secrets, wrapped per-user with their public key
-- **Password-derived key** (Argon2id): Encrypts private key for server-side backup/recovery
-
-**Key Storage**:
-- Private key → OS keychain (encrypted at rest by OS)
-- Workspace keys → cached in `~/.agentsecrets/config.json` (decrypted at login)
-- Never in .env files, never in plaintext on server
-
-**Key Recovery**:
-- 12-word mnemonic recovery code derived from private key
-- Allows account recovery on new machines
-
-### Zero-Knowledge Guarantee
-
-The server **cannot** decrypt secrets because:
-1. Secrets encrypted client-side with workspace key (AES-256-GCM)
-2. Workspace key is wrapped per-user with their public key (NaCl SealedBox)
-3. Server only stores encrypted blobs
-4. Even with full database access, server can't decrypt
-
-The one exception: the API creates and encrypts the personal workspace key during signup, using the user's public key. After this, all crypto is client-side.
-
-## AI Integration Architecture
-
-### How AI Uses AgentSecrets
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     AI Assistant (Claude)                   │
-│                                                             │
-│  "Pull production secrets for deployment"                   │
-│                                                             │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-         ┌───────────────▼────────────────┐
-         │  Execute bash command:         │
-         │  agentsecrets secrets pull     │
-         └───────────────┬────────────────┘
-                         │
-         ┌───────────────▼────────────────┐
-         │  .env file created             │
-         │  DATABASE_URL=postgresql://... │
-         │  API_KEY=sk_live_...           │
-         └───────────────┬────────────────┘
-                         │
-         ┌───────────────▼────────────────┐
-         │  AI references by key:         │
-         │  const db = process.env.       │
-         │    DATABASE_URL                │
-         └────────────────────────────────┘
-```
-
-**What AI Knows**: 
-- Command to run (`agentsecrets secrets pull`)
-- Secrets exist by key name (`DATABASE_URL`, `API_KEY`)
-- .env file was created
-
-**What AI Doesn't Know**:
-- Actual secret values
-- Contents of .env file
-- Decryption keys
-
-### Claude Skill Integration
-
-The Claude skill teaches:
-1. When to use AgentSecrets (deployment, setup, etc.)
-2. Which commands to run
-3. How to verify secrets are loaded
-4. How to write code using secrets
-5. **Never** to display secret values
-
-See `skills/claude/SKILL.md` for full details.
-
-## Data Models
-
-### Workspace
-
-```go
-type Workspace struct {
-    ID        string    `json:"id"`
-    Name      string    `json:"name"`
-    CreatedAt time.Time `json:"created_at"`
-    Members   []Member  `json:"members"`
-}
-
-type Member struct {
-    Email string `json:"email"`
-    Role  string `json:"role"` // owner, admin, member
-}
-```
-
-### Project
-
-```go
-type Project struct {
-    ID          string    `json:"id"`
-    Name        string    `json:"name"`
-    WorkspaceID string    `json:"workspace_id"`
-    CreatedAt   time.Time `json:"created_at"`
-}
-```
-
-### Secret
-
-```go
-type Secret struct {
-    Key       string    `json:"key"`        // e.g., "DATABASE_URL"
-    Value     string    `json:"value"`      // Encrypted blob
-    ProjectID string    `json:"project_id"`
-    UpdatedAt time.Time `json:"updated_at"`
-}
-```
-
-**Note**: `Value` is always encrypted. Server never sees plaintext.
-
-## Building and Distribution
-
-### Cross-Compilation
-
-Go makes it easy to build for multiple platforms:
-
-```bash
-# macOS (Intel)
-GOOS=darwin GOARCH=amd64 go build -o agentsecrets-darwin-amd64
-
-# macOS (Apple Silicon)
-GOOS=darwin GOARCH=arm64 go build -o agentsecrets-darwin-arm64
-
-# Linux
-GOOS=linux GOARCH=amd64 go build -o agentsecrets-linux-amd64
-
-# Windows
-GOOS=windows GOARCH=amd64 go build -o agentsecrets-windows-amd64.exe
-```
-
-### Distribution Channels
-
-1. **Direct Download**: GitHub Releases
-2. **Homebrew**: `brew install agentsecrets`
-3. **Python**: `pip install agentsecrets` (includes binary)
-4. **npm**: `npm install -g @agentsecrets/cli` (includes binary)
-5. **Docker**: `docker run agentsecrets/cli`
-
-### Python/Node Wrappers
-
-The Python/Node packages will:
-1. Download appropriate binary for OS/arch
-2. Provide thin wrapper around binary
-3. Allow programmatic use if needed
-
-```python
-# Python wrapper
-import agentsecrets
-
-agentsecrets.login()
-agentsecrets.secrets.pull("my-app")
-```
-
-## Performance Considerations
-
-### Encryption Speed
-
-AES-256-GCM is extremely fast (hardware-accelerated on modern CPUs):
-- Encrypt 1000 secrets: ~5ms
-- Decrypt 1000 secrets: ~5ms
-
-No performance bottleneck for typical use (< 100 secrets).
-
-### API Latency
-
-Typical operations:
-- Login: ~200ms
-- Pull secrets: ~300ms (fetch + decrypt)
-- Push secrets: ~400ms (encrypt + upload)
-
-All acceptable for CLI use.
-
-### Caching
-
-Currently: No caching (always fetch fresh)
-
-Future: Cache encrypted secrets locally, only fetch if changed (ETag support)
-
-## Future Enhancements
-
-### 1. Secret Rotation
-
-```bash
-agentsecrets secrets rotate DATABASE_URL
-# Generates new value, updates everywhere
-```
-
-### 2. Audit Logging
-
-```bash
-agentsecrets audit log
-# Shows who accessed what, when
-```
-
-### 3. Team Permissions
-
-```go
-type Member struct {
-    Email string `json:"email"`
-    Role  string `json:"role"`
-    Permissions []Permission `json:"permissions"`
-}
-```
-
-### 4. Web Dashboard
-
-Visual interface for:
-- Managing workspaces
-- Viewing audit logs
-- Inviting team members
-- Rotating secrets
-
-### 5. Git Integration
-
-```bash
-agentsecrets git protect
-# Scans repo for exposed secrets
-# Sets up pre-commit hooks
-```
-
-### 6. 1Password/Vault Import
-
-```bash
-agentsecrets import 1password
-agentsecrets import vault
-```
-
-## Testing Strategy
-
-### Unit Tests
-
-Test each package in isolation:
-- `pkg/crypto`: Encryption/decryption
-- `pkg/config`: Load/save config
-- `pkg/api`: HTTP client (mocked)
-
-```bash
-go test ./pkg/crypto
-```
-
-### Integration Tests
-
-Test full workflows:
-- `tests/integration/`: End-to-end scenarios
-
-```bash
-go test ./tests/integration
-```
-
-### Security Tests
-
-- Verify encryption is actually happening
-- Verify keys never leak
-- Verify API can't decrypt
-- Fuzzing for crypto functions
-
-## Monitoring and Observability
-
-Future:
-- Client-side telemetry (opt-in)
-- Error reporting (Sentry)
-- Usage analytics
-- Performance metrics
-
-## Contributing
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for development workflow.
-
-Key points:
-- All crypto changes require security review
-- Test coverage: 80%+ target
-- Benchmark performance-critical code
-- Document public APIs
+> How AgentSecrets works under the hood: the encryption model, the proxy engine, and the zero-trust enforcement layer.
 
 ---
 
-This architecture enables:
-✅ Zero-knowledge security
-✅ AI-native workflows  
-✅ Universal compatibility
-✅ Simple UX
-✅ Team collaboration
+## The Core Guarantee
 
-All while keeping secrets secure and developers productive.
+AgentSecrets makes two structural guarantees:
+
+1. **The server cannot decrypt your secrets** — the server only stores encrypted blobs. Even with full database access, decryption is impossible without your private key, which never leaves your device.
+
+2. **AI agents cannot read your secrets** — at no point during any operation does a secret value travel into agent context. Agents see key names, endpoints, and API responses. Never values.
+
+These aren't policy decisions, they're enforced by the architecture.
+
+---
+
+## Encryption Model
+
+### Key Hierarchy
+
+```
+Password
+  └─(Argon2id)─→ Password-Derived Key
+                    └─(AES-256-GCM decrypt)─→ Private Key (X25519)
+                                                └─(NaCl SealedBox decrypt)─→ Workspace Key
+                                                                               └─(AES-256-GCM)─→ Secrets
+```
+
+Three layers, each with a specific role:
+
+| Layer | Algorithm | Purpose |
+|---|---|---|
+| Password → Key | Argon2id | Memory-hard key derivation — expensive to brute-force |
+| Private Key | X25519 | Asymmetric keypair — enables team sharing without server involvement |
+| Workspace Key | AES-256-GCM | AEAD symmetric encryption for actual secret values |
+
+### Key Storage
+
+| Key | Where Stored | Who Can Access |
+|---|---|---|
+| Private Key | OS keychain (encrypted by OS + password-derived key) | You only |
+| Workspace Key | `~/.agentsecrets/config.json` (decrypted at login) | You + team members (each with their own encrypted copy) |
+| Password-Derived Key | Never stored — derived on demand | You only (requires password) |
+
+The OS keychain itself is protected by the operating system:
+- **macOS**: Keychain Access — protected by login password + Secure Enclave on Apple Silicon
+- **Windows**: Windows Credential Manager — protected by Windows login and DPAPI
+- **Linux**: Secret Service (GNOME Keyring / KWallet) — protected by user session
+
+### How Secrets Are Encrypted
+
+When you run `agentsecrets secrets set API_KEY=sk_live_...`:
+
+1. The CLI retrieves the workspace key from `~/.agentsecrets/config.json`
+2. Generates a random 12-byte nonce
+3. Encrypts the value with AES-256-GCM: `ciphertext = AES-GCM(workspace_key, nonce, plaintext)`
+4. Sends `{key: "API_KEY", value: base64(nonce + ciphertext)}` to the API
+5. The API stores the encrypted blob. It has no access to the workspace key, so it cannot decrypt
+
+When you run `agentsecrets secrets pull`:
+
+1. The CLI fetches all encrypted blobs for the project
+2. For each blob: splits ciphertext and nonce, decrypts with workspace key
+3. Writes plaintext values to OS keychain (StorageMode 1) or `.env` file (StorageMode 0)
+
+The server at no point sees a plaintext value.
+
+### Team Sharing
+
+When you invite someone to a workspace:
+
+1. Their public key (X25519) is fetched from the server
+2. The workspace key is encrypted with their public key using NaCl SealedBox
+3. This encrypted copy is sent to the server to be stored for them
+4. When they log in, they download and decrypt their copy using their private key
+
+The server stores one encrypted copy of the workspace key per user. It cannot combine them or derive the plaintext workspace key,  only the user's private key (which never leaves their device) can decrypt it.
+
+---
+
+## Proxy Architecture
+
+The proxy is the layer that allows AI agents to make authenticated API calls without ever receiving credential values.
+
+### How a Proxied Request Works
+
+```
+Agent (Claude / bot / script)
+  │
+  │  POST http://localhost:8765/proxy
+  │  X-AS-Target-URL: https://api.stripe.com/v1/charges
+  │  X-AS-Inject-Bearer: STRIPE_KEY          ← key name, not value
+  │
+  ▼
+AgentSecrets Proxy (localhost:8765)
+  1. Validates session token
+  2. Checks domain against workspace allowlist  ← zero-trust enforcement
+  3. Looks up "STRIPE_KEY" in OS keychain       ← resolves value from keychain
+  4. Builds outbound request:
+     Authorization: Bearer sk_live_51H...      ← actual value injected here
+  5. Forwards to api.stripe.com/v1/charges
+  6. Receives response
+  7. Scans response body for echoed credential  ← redaction layer
+  8. Returns response to agent                  ← agent never saw the value
+  │
+  ▼
+Agent sees: HTTP 200 + response body (scrubbed if credential was echoed)
+Agent never sees: sk_live_51H...
+```
+
+The proxy listens on `localhost:8765` — it is not accessible from the network, only from processes on the same machine.
+
+### Zero-Trust Domain Allowlist
+
+Every outbound proxy request is checked against a workspace-level domain allowlist **before** the secret is resolved from the keychain. This is the enforcement order deliberately, secrets are never even accessed if the domain isn't authorized.
+
+```
+Incoming proxy request
+  │
+  ├─ Extract target domain from X-AS-Target-URL
+  ├─ Check domain against workspace allowlist
+  │
+  ├─ NOT ALLOWED → return 403, log "not_allowed", stop
+  │
+  └─ ALLOWED → resolve secret from keychain, inject, forward
+```
+
+The allowlist is workspace-level (shared across all team members) and can only be modified by workspace admins. Modifications require password verification, the admin must be present and authenticated.
+
+```bash
+agentsecrets workspace allowlist add api.stripe.com api.openai.com
+agentsecrets workspace allowlist list
+agentsecrets workspace allowlist log    # view blocked attempts
+```
+
+This prevents:
+- **Prompt injection attacks** — a compromised prompt cannot redirect a secret to an exfiltration endpoint
+- **SSRF** — agents cannot proxy requests to internal network endpoints unless explicitly allowed
+- **Exfiltration via DNS** — subdomains must match (e.g., `api.stripe.com` does not automatically allow `evil.api.stripe.com`)
+
+### Response Body Redaction
+
+Some APIs echo back authentication headers in their response body (a common pattern in debugging APIs, or in adversarial scenarios). If the proxy detects the injected secret value anywhere in the response body, it replaces every occurrence with `[REDACTED_BY_AGENTSECRETS]` before returning the response.
+
+```
+Response from api.example.com:
+{"authenticated": true, "token": "sk_live_51H..."}
+                                   ↑ matched as echoed credential
+
+After redaction:
+{"authenticated": true, "token": "[REDACTED_BY_AGENTSECRETS]"}
+
+Audit log:
+{"reason": "credential_echo", "redacted": true}
+```
+
+The `Content-Length` header is recalculated after substitution. From the agent's perspective, the credential was never in the response.
+
+### Authentication Styles
+
+The proxy supports 6 injection styles via `X-AS-Inject-*` headers:
+
+| Header | Resolves To |
+|---|---|
+| `X-AS-Inject-Bearer: KEY` | `Authorization: Bearer <value>` |
+| `X-AS-Inject-Basic: KEY` | `Authorization: Basic base64(<value>)` (format: `user:pass`) |
+| `X-AS-Inject-Header-X-Name: KEY` | `X-Name: <value>` |
+| `X-AS-Inject-Query-param: KEY` | `?param=<value>` appended to URL |
+| `X-AS-Inject-Body-json.path: KEY` | Value set at JSON body path (dots = nesting) |
+| `X-AS-Inject-Form-field: KEY` | Value set in form-encoded body |
+
+Multiple injection headers can be combined in a single request.
+
+### MCP Interface
+
+The MCP server wraps the same proxy engine behind the Model Context Protocol, exposing two tools:
+
+- `list_secrets` — returns key names for the active project (never values)
+- `api_call` — takes URL, method, body, headers, and an injections map (`{"bearer": "STRIPE_KEY"}`) — routes through the same proxy engine
+
+Communication is over stdio, not HTTP — no network port is opened.
+
+---
+
+## Environment Injection (`agentsecrets env`)
+
+`agentsecrets env` is a process wrapper that reads secrets from the OS keychain and passes them directly to the child process's environment at spawn time. The parent process (`agentsecrets`) never uses the values — it passes them to the OS's process creation API which sets them in the child's address space.
+
+```
+agentsecrets env -- python manage.py runserver
+  │
+  ├─ Load active project from .agentsecrets/project.json
+  ├─ keyring.GetAllProjectSecrets(projectID) → [{key: "DB_PASSWORD", value: "..."}, ...]
+  ├─ Build env: os.Environ() + project secrets (project overrides on conflict)
+  ├─ exec.Command("python", "manage.py", "runserver").Env = builtEnv
+  ├─ Wire stdin/stdout/stderr through
+  ├─ Forward SIGINT/SIGTERM to child
+  ├─ Write audit log: method=ENV, secret_keys=[...], target="python manage.py runserver"
+  └─ Exit with child's exit code
+```
+
+The child process reads `os.environ["DB_PASSWORD"]` (Python) or `process.env.DB_PASSWORD` (Node.js) normally — it has no knowledge that the values came from a keychain.
+
+---
+
+## Audit Logging
+
+Every proxied call (proxy, MCP, `agentsecrets call`, or `agentsecrets env`) is logged to `~/.agentsecrets/proxy.log` in JSON Lines format.
+
+### Log Entry Schema
+
+```go
+type AuditEvent struct {
+    Timestamp  time.Time `json:"timestamp"`
+    SecretKeys []string  `json:"secret_keys"`   // key names only
+    AgentID    string    `json:"agent_id"`
+    Method     string    `json:"method"`         // GET, POST, ENV, etc.
+    TargetURL  string    `json:"target_url"`
+    AuthStyles []string  `json:"auth_styles"`
+    StatusCode int       `json:"status_code"`
+    Status     string    `json:"status"`         // "OK", "BLOCKED"
+    Reason     string    `json:"reason"`         // "-", "credential_echo", "not_allowed"
+    Redacted   bool      `json:"redacted"`
+    DurationMs int64     `json:"duration_ms"`
+}
+```
+
+There is no `Value` field. This is intentional, the struct itself cannot carry credential values.
+
+---
+
+## Config Files
+
+### Global config — `~/.agentsecrets/config.json`
+
+```json
+{
+  "api_endpoint": "https://api.agentsecrets.com",
+  "user_email": "you@example.com",
+  "current_workspace_id": "ws_abc123",
+  "workspaces": {
+    "ws_abc123": {
+      "name": "My Workspace",
+      "workspace_key": "<encrypted workspace key>",
+      "allowlist": ["api.stripe.com", "api.openai.com"]
+    }
+  },
+  "token": "<JWT access token>"
+}
+```
+
+The workspace key stored here is the **decrypted** workspace key, it was decrypted at login using your private key (from the OS keychain) and is cached here for performance. This file should be protected by OS file permissions (read only by your user).
+
+### Project config — `.agentsecrets/project.json`
+
+```json
+{
+  "project_id": "proj_xyz789",
+  "project_name": "my-app",
+  "workspace_id": "ws_abc123",
+  "storage_mode": 1,
+  "last_pull": "2026-03-03T22:00:00Z",
+  "last_push": "2026-03-03T21:00:00Z"
+}
+```
+
+This file lives in the project directory (alongside your code). It links the directory to the remote project and is safe to commit, it contains no credentials.
+
+---
+
+## Package Overview
+
+| Package | Responsibility |
+|---|---|
+| `cmd/agentsecrets/commands/` | CLI command implementations (Cobra) |
+| `pkg/api/` | HTTP API client with dot-notation endpoint routing |
+| `pkg/auth/` | JWT management + automatic token refresh middleware |
+| `pkg/config/` | Global and project config load/save/validation |
+| `pkg/crypto/` | All encryption/decryption: X25519, AES-256-GCM, Argon2id |
+| `pkg/keyring/` | OS keychain read/write for secrets and auth tokens |
+| `pkg/mcp/` | MCP server implementation (tools: api_call, list_secrets) |
+| `pkg/projects/` | Project API wrappers |
+| `pkg/proxy/` | HTTP proxy engine, injector, allowlist enforcement, redaction, audit |
+| `pkg/secrets/` | Secret management, dotenv parsing, diff computation |
+| `pkg/ui/` | Terminal UI components (spinner, table, prompts) |
+| `pkg/workspaces/` | Workspace API wrappers + allowlist management |
+
+---
+
+## Security Properties
+
+| Property | How It's Enforced |
+|---|---|
+| Server can't decrypt secrets | Secrets encrypted client-side with workspace key; server only stores ciphertext |
+| Agent can't read secret values | No code path puts a value into agent context; proxy resolves at injection time |
+| Prompt injection can't exfiltrate | Domain allowlist enforced before secret is resolved from keychain |
+| API echoed credential is scrubbed | Response body scanned post-response, before returning to agent |
+| Team member can't modify allowlist | Admin role required + password verification for allowlist writes |
+| Audit log can't contain values | `AuditEvent` struct has no value field |
+| Proxy not exposed to network | Binds to `127.0.0.1` only |
+| MCP not exposed to network | Uses stdio transport, no TCP port |
