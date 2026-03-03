@@ -12,6 +12,94 @@ The `--` separator is required. Everything after it is passed verbatim as the co
 
 ---
 
+## Makefile Integration
+
+The lowest-friction way to use `agentsecrets env` in a project is to define a `RUN` variable at the top of your Makefile and prefix commands with it. This way you type `make dev` and not `agentsecrets env -- npm run dev`.
+
+### Pattern 1: `RUN` prefix variable (recommended)
+
+Define once, use everywhere:
+
+```makefile
+RUN := agentsecrets env --
+
+dev:
+	$(RUN) npm run dev
+
+test:
+	$(RUN) npm test
+
+migrate:
+	$(RUN) python manage.py migrate
+
+server:
+	$(RUN) python manage.py runserver
+
+worker:
+	$(RUN) celery -A myapp worker --loglevel=info
+
+build:
+	$(RUN) go build ./...
+```
+
+Now `make dev` runs with secrets injected. The `RUN` variable acts as a transparent prefix.
+
+**Bonus:** You can override `RUN` from the shell to strip injection entirely (useful for debugging without the keychain):
+
+```bash
+make dev RUN=           # runs: npm run dev (no injection)
+make dev               # runs: agentsecrets env -- npm run dev
+```
+
+### Pattern 2: Named targets (explicit)
+
+If you prefer each target to be completely self-contained:
+
+```makefile
+dev:
+	agentsecrets env -- npm run dev
+
+test:
+	agentsecrets env -- pytest
+
+migrate:
+	agentsecrets env -- python manage.py migrate
+
+shell:
+	agentsecrets env -- python manage.py shell
+```
+
+### Django project example (full Makefile)
+
+```makefile
+RUN := agentsecrets env --
+
+.PHONY: dev test migrate shell celery
+
+dev:
+	$(RUN) python manage.py runserver
+
+test:
+	$(RUN) python manage.py test
+
+migrate:
+	$(RUN) python manage.py migrate
+
+shell:
+	$(RUN) python manage.py shell
+
+celery:
+	$(RUN) celery -A myapp worker --loglevel=info
+
+# Run without injection (for debugging env setup)
+dev-raw:
+	python manage.py runserver
+```
+
+`make dev`, `make test`, `make migrate` — that's it. No `.env` files, no `export`, no `source`.
+
+---
+
 ## How It Works
 
 `agentsecrets env` is a **process wrapper**. It resolves all secrets for the active project from the OS keychain, then spawns the specified command as a child process with those secrets available in its environment.
