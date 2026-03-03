@@ -124,7 +124,7 @@ func BannerStr(text string) string {
 // RenderTable returns a styled table as a string.
 func RenderTable(headers []string, rows [][]string) string {
 	t := table.New().
-		Border(lipgloss.NormalBorder()).
+		Border(lipgloss.RoundedBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(FaintBorder)).
 		Headers(headers...).
 		Rows(rows...)

@@ -118,7 +118,6 @@ func runProxyStatus(cmd *cobra.Command, args []string) error {
 func runProxyLogs(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	ui.Banner("Proxy Audit Log")
-	ui.Divider()
 
 	logPath, err := proxy.DefaultLogPath()
 	if err != nil {
