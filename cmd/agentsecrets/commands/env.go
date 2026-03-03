@@ -61,7 +61,11 @@ func runEnv(cmd *cobra.Command, args []string) error {
 		for k := range secrets {
 			secretKeys = append(secretKeys, k)
 		}
-		ui.Info(fmt.Sprintf("Injecting %d secret(s): %s", len(secrets), strings.Join(secretKeys, ", ")))
+		if len(secretKeys) == 1 {
+			ui.Info(fmt.Sprintf("Injecting 1 secret: %s", secretKeys[0]))
+		} else {
+			ui.Info(fmt.Sprintf("Injecting %d secrets: %s + %d more", len(secretKeys), secretKeys[0], len(secretKeys)-1))
+		}
 	}
 
 	// Build environment: parent env + injected secrets

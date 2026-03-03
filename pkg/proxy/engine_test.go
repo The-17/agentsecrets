@@ -333,3 +333,5 @@ func TestEngineExecuteRedactBody(t *testing.T) {
 		t.Error("expected response body to contain [REDACTED_BY_AGENTSECRETS]")
 	}
 }
+
+// alright one lasy lol! we need to update the docs to explain the zero-trust in depth, the env command, both to the bots and the workflow content in the init command.. 

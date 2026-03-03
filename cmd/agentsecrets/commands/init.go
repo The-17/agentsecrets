@@ -383,7 +383,21 @@ agentsecrets proxy logs --last 20
 agentsecrets proxy logs --secret STRIPE_KEY
 ` + "```" + `
 
-You will see: timestamp, method, target URL, key name, status code, duration. Never values.
+You will see: timestamp, method, target URL, key name, status code, duration, and redaction status. Never values.
+
+If you see (REDACTED) in the logs, the proxy detected an echoed credential and scrubbed it. This is expected security behavior.
+
+## ENVIRONMENT VARIABLE INJECTION
+
+When a tool needs secrets as env vars (Stripe CLI, Node.js, dev servers):
+
+` + "```" + `bash
+agentsecrets env -- stripe mcp
+agentsecrets env -- node server.js
+agentsecrets env -- npm run dev
+` + "```" + `
+
+Values exist only in the child process memory. Nothing is written to disk.
 
 ## MCP
 
@@ -397,8 +411,17 @@ If ` + "`agentsecrets call`" + ` returns a 403 error stating the domain is not i
 1. Do not ask the user to bypass the proxy.
 2. Instruct the user to authorize the domain by running this in their terminal:
    ` + "`agentsecrets workspace allowlist add <domain>`" + `
+   Multiple domains: ` + "`agentsecrets workspace allowlist add api.stripe.com api.openai.com`" + `
 3. Wait for their confirmation.
 4. Retry the API call.
+
+## ZERO-TRUST SECURITY MODEL
+
+AgentSecrets enforces a deny-by-default security posture:
+- Every outbound request goes through domain allowlist enforcement
+- Response bodies are scanned for echoed credentials and redacted automatically
+- Only workspace admins can modify the allowlist (requires password)
+- Use ` + "`agentsecrets workspace promote/demote`" + ` to manage admin roles
 
 ## CRITICAL RULES
 
@@ -408,7 +431,9 @@ If ` + "`agentsecrets call`" + ` returns a 403 error stating the domain is not i
 4. ALWAYS run agentsecrets status at the start of a new session
 5. ALWAYS run agentsecrets secrets diff before deployment workflows
 6. You are the operator — manage the lifecycle autonomously
-7. Respect the Zero-Trust allowlist — if a domain is blocked, guide the user to explicitly allow it using the allowlist add command.
+7. Respect the Zero-Trust allowlist — if a domain is blocked, guide the user to explicitly allow it
+8. When wrapping CLI tools that need env vars, use agentsecrets env -- <command>
+9. If you see (REDACTED) in proxy logs, explain that AgentSecrets detected and scrubbed a credential echo
 `
 
 func writeWorkflowFile() error {

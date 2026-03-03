@@ -4,7 +4,7 @@
 ---
 name: agentsecrets
 description: Zero-knowledge secrets infrastructure — AI agents operate the complete credential lifecycle without ever seeing values
-version: "1.0.4"
+version: "1.1.0"
 tags:
   - security
   - credentials
@@ -341,10 +341,31 @@ agentsecrets proxy logs --last 20
 agentsecrets proxy logs --secret STRIPE_KEY
 ```
 
-Output shows: timestamp, method, target URL, key name, status code, duration.
+Output shows: timestamp, method, target URL, key name, status code, duration, and redaction status.
 Never shows values.
 
+If you see `(REDACTED)` in the logs, it means AgentSecrets detected that an API echoed back the injected credential and automatically replaced it with `[REDACTED_BY_AGENTSECRETS]` before the response reached you. The audit reason will show `credential_echo`. This is expected security behavior.
+
 Raw log location: `~/.agentsecrets/proxy.log` (JSONL format)
+
+---
+
+## STEP 10: Environment Variable Injection
+
+When a tool needs secrets as environment variables (Stripe CLI, Node.js, dev servers, SDKs), use `agentsecrets env` instead of `agentsecrets call`:
+
+```bash
+agentsecrets env -- stripe mcp
+agentsecrets env -- node server.js
+agentsecrets env -- npm run dev
+```
+
+This resolves all secrets from the active project's keychain and injects them as environment variables into the child process. Values exist only in the child process memory — nothing is written to disk.
+
+Use this when:
+- The user wants to run a CLI tool that reads credentials from env vars
+- You need to wrap a native MCP server (e.g., Stripe MCP)
+- The user says "inject secrets into my app" or "run X with my API keys"
 
 ---
 
@@ -412,6 +433,23 @@ agentsecrets mcp serve                     # Start MCP server
 agentsecrets mcp install                   # Auto-configure Claude Desktop + Cursor
 ```
 
+### Environment Injection
+```bash
+agentsecrets env -- <command> [args...]     # Inject secrets as env vars into child process
+agentsecrets env -- stripe mcp              # Wrap Stripe MCP
+agentsecrets env -- node server.js          # Wrap Node.js
+agentsecrets env -- npm run dev             # Wrap any dev server
+```
+
+### Workspace Security
+```bash
+agentsecrets workspace allowlist add <domain> [domain...]  # Authorize domains (multi-domain)
+agentsecrets workspace allowlist list                      # List allowed domains
+agentsecrets workspace allowlist log                       # View blocked attempts
+agentsecrets workspace promote user@email.com              # Grant admin role
+agentsecrets workspace demote user@email.com               # Revoke admin role
+```
+
 ---
 
 ## HANDLING COMMON SCENARIOS
@@ -457,8 +495,15 @@ If an API call returns a 403 error stating the domain is not in the workspace al
 1. Do not bypass the proxy.
 2. Tell the user exactly what to run in their terminal to authorize the domain:
    `agentsecrets workspace allowlist add <domain>`
+   You can also suggest adding multiple domains at once:
+   `agentsecrets workspace allowlist add api.stripe.com api.openai.com`
    *(Wait for their confirmation that they have entered their password and added the domain)*
 3. Retry the API call.
+
+### User Needs Secrets as Environment Variables
+1. `agentsecrets status` — verify context
+2. `agentsecrets secrets list` — verify key exists
+3. `agentsecrets env -- <command>` — wrap the command
 
 ---
 
@@ -472,16 +517,21 @@ If an API call returns a 403 error stating the domain is not in the workspace al
 6. ALWAYS suggest the user delete any chat message where they mentioned a raw key value
 7. You are the operator — manage the lifecycle autonomously, do not delegate commands back to the user unless it involves installing software, entering a password, or modifying the Zero-Trust Allowlist.
 8. Respect the Zero-Trust Allowlist — if a domain is blocked, instruct the user to run `agentsecrets workspace allowlist add <domain>`.
+9. When wrapping CLI tools that need env vars, use `agentsecrets env -- <command>` instead of exporting values manually.
+10. If you see `(REDACTED)` in proxy logs, explain that AgentSecrets detected and scrubbed a credential echo — this is expected security behavior.
 
 ---
 
 ## Security Model
 
 - Zero-knowledge: credential values never enter your context at any step
+- Zero-trust: deny-by-default domain allowlist blocks unauthorized outbound requests
+- Response body redaction: if an API echoes back the injected credential, the proxy scrubs it with `[REDACTED_BY_AGENTSECRETS]` before it reaches you
 - OS keychain: macOS Keychain, Windows Credential Manager, Linux Secret Service
 - Server: stores encrypted blobs only — cannot decrypt
 - Audit trail: key names only, no value field exists in the log struct
 - Encryption: X25519 + AES-256-GCM + Argon2id
+- Role management: only workspace admins can modify the allowlist (requires password)
 
 ## Trust Statement
 

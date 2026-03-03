@@ -29,10 +29,12 @@ agentsecrets/
 │       ├── logout.go              # Clear session
 │       ├── status.go              # Current context
 │       ├── workspace.go           # Workspace management
+│       ├── allowlist.go           # Zero-trust domain allowlist
 │       ├── project.go             # Project management
 │       ├── secrets.go             # Secrets CRUD + sync
 │       ├── proxy.go               # HTTP proxy + logs
 │       ├── call.go                # One-shot authenticated calls
+│       ├── env.go                 # Env var injection into child processes
 │       ├── mcp.go                 # MCP server + install
 │       └── exec.go                # OpenClaw exec provider
 ├── pkg/
@@ -43,7 +45,7 @@ agentsecrets/
 │   ├── keyring/                   # OS keychain integration
 │   ├── mcp/                       # MCP server implementation
 │   ├── projects/                  # Project API wrappers
-│   ├── proxy/                     # HTTP proxy implementation
+│   ├── proxy/                     # HTTP proxy + audit logging
 │   ├── secrets/                   # Secret management + dotenv
 │   ├── ui/                        # Terminal UI components
 │   └── workspaces/                # Workspace API wrappers
@@ -89,9 +91,18 @@ The zero-knowledge guarantee is architectural, not policy-based. At every step i
 - `secrets diff` returns sync status only
 - `secrets pull` writes values to OS keychain — not to any variable or file
 - `agentsecrets call` sends key name to proxy — proxy resolves from keychain, injects at transport layer, returns API response only
+- `agentsecrets env` injects keychain values into child process environment — values never enter the calling process or any log
 - `proxy logs` records key name, endpoint, status code, duration — no value field exists in the struct
 
 There is no code path that puts a credential value into agent context.
+
+### Zero-Trust Proxy Enforcement
+
+The proxy enforces a **deny-by-default** security posture:
+
+- **Domain Allowlist:** Every outbound request must target a domain explicitly authorized in the workspace allowlist. Unauthorized domains are blocked with 403 Forbidden.
+- **Response Body Redaction:** If an external API echoes back the injected credential in its response, the proxy replaces the value with `[REDACTED_BY_AGENTSECRETS]` before returning it. The audit log records the event with reason `credential_echo`.
+- **Admin-Only Allowlist:** Only workspace admins can modify the allowlist (requires password verification). Use `agentsecrets workspace promote/demote` to manage roles.
 
 ### Storage Modes
 
@@ -154,7 +165,7 @@ Global config at `~/.agentsecrets/config.json` — stores active workspace, auth
 
 ### `pkg/proxy`
 
-HTTP proxy implementation. Handles the 6 auth injection styles, SSRF protection, redirect stripping, session token validation, JSONL audit logging.
+HTTP proxy implementation. Handles the 6 auth injection styles, domain allowlist enforcement, response body redaction, SSRF protection, redirect stripping, session token validation, JSONL audit logging.
 
 ---
 
@@ -174,6 +185,15 @@ agentsecrets workspace create "Name"
 agentsecrets workspace list
 agentsecrets workspace switch "Name"
 agentsecrets workspace invite user@email.com
+agentsecrets workspace promote user@email.com   # Grant admin role
+agentsecrets workspace demote user@email.com     # Revoke admin role
+```
+
+### Workspace Allowlist
+```bash
+agentsecrets workspace allowlist add <domain> [domain...]  # Authorize domains
+agentsecrets workspace allowlist list                      # List allowed domains
+agentsecrets workspace allowlist log                       # View allowlist audit log
 ```
 
 ### Projects
@@ -212,6 +232,13 @@ agentsecrets proxy logs [--last N] [--secret KEY]
 agentsecrets exec
 agentsecrets mcp serve
 agentsecrets mcp install
+```
+
+### Environment Injection
+```bash
+agentsecrets env -- <command> [args...]  # Inject secrets as env vars into child process
+agentsecrets env -- stripe mcp           # Wrap Stripe MCP
+agentsecrets env -- node server.js       # Wrap Node.js
 ```
 
 ---
@@ -263,6 +290,15 @@ Any agent or framework that makes HTTP requests can use the proxy at `localhost:
 ### Workflow File
 
 `.agent/workflows/agentsecrets.md` is written to the project directory on `agentsecrets init`. Any AI assistant that reads workflow files picks up the full operational instructions automatically.
+
+### Environment Variable Injection
+
+`agentsecrets env -- <command>` injects all secrets from the active project's keychain into a child process as environment variables. Secrets exist only in the child process memory — nothing is written to disk. Use for wrapping CLI tools like Stripe, or running dev servers that read from env vars.
+
+```bash
+agentsecrets env -- stripe mcp
+agentsecrets env -- node server.js
+```
 
 ---
 
