@@ -23,6 +23,7 @@ type AuditEvent struct {
 	DurationMs int64     `json:"duration_ms"`
 	Status     string    `json:"status"`                 // "OK" or "BLOCKED"
 	Reason     string    `json:"reason,omitempty"`       // "domain_not_in_allowlist" or "-"
+	Redacted   bool      `json:"redacted"`
 }
 
 // AuditLogger writes AuditEvents as JSONL to an append-only log file.

@@ -289,3 +289,47 @@ func TestAuditNeverLogsSecretValues(t *testing.T) {
 		t.Error("expected agent ID to appear in audit log")
 	}
 }
+
+func TestEngineExecuteRedactBody(t *testing.T) {
+	secretValue := "sk_live_ECHO_SECRET_12345"
+	originalResponse := fmt.Sprintf(`{"auth": "Bearer %s", "data": "hello"}`, secretValue)
+	
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(originalResponse))
+	}))
+	defer upstream.Close()
+
+	engine := &Engine{
+		ProjectID:     "test-project",
+		SkipAllowlist: true,
+		Client:        upstream.Client(),
+		ResolveSecret: mockResolver(map[string]string{"STRIPE_KEY": secretValue}),
+	}
+
+	result, err := engine.Execute(CallRequest{
+		TargetURL: upstream.URL + "/data",
+		Method:    "GET",
+		Injections: []Injection{
+			{Style: "bearer", SecretKey: "STRIPE_KEY"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+
+	if result.StatusCode != 200 {
+		t.Errorf("StatusCode = %d, want 200", result.StatusCode)
+	}
+
+	bodyStr := string(result.Body)
+	if strings.Contains(bodyStr, secretValue) {
+		t.Fatal("SECURITY: secret VALUE was found in response body!")
+	}
+
+	if !strings.Contains(bodyStr, "[REDACTED_BY_AGENTSECRETS]") {
+		t.Error("expected response body to contain [REDACTED_BY_AGENTSECRETS]")
+	}
+}

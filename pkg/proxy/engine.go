@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 )
+
+func redactSecretFromResponse(body []byte, secretValue string) []byte {
+	if secretValue == "" {
+		return body
+	}
+	return bytes.ReplaceAll(body, []byte(secretValue), []byte("[REDACTED_BY_AGENTSECRETS]"))
+}
 
 // CallRequest is the input to the engine — used by both MCP and HTTP paths.
 type CallRequest struct {
@@ -186,6 +194,7 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 	}
 
 	// --- Resolve secrets and inject ---
+	secretValues := make([]string, 0, len(req.Injections))
 
 	for _, inj := range req.Injections {
 		cred, err := e.ResolveSecret(inj.SecretKey)
@@ -199,12 +208,40 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 
 		secretKeys = append(secretKeys, inj.SecretKey)
 		authStyles = append(authStyles, inj.Style)
+		secretValues = append(secretValues, cred)
 	}
 
 	// --- Forward ---
 	result, err := Forward(e.Client, outbound)
 	if err != nil {
 		return nil, err
+	}
+
+	// --- Redact ---
+	redacted := false
+	if len(result.Body) > 0 {
+		contentType := ""
+		if len(result.Headers["Content-Type"]) > 0 {
+			contentType = result.Headers["Content-Type"][0]
+		}
+		
+		if contentType != "" && !strings.Contains(contentType, "application/json") && !strings.Contains(contentType, "text/") {
+			fmt.Fprintf(os.Stderr, "Warning: redacting unexpected content type: %s\n", contentType)
+		}
+
+		for _, val := range secretValues {
+			if val == "" {
+				continue
+			}
+			if bytes.Contains(result.Body, []byte(val)) {
+				result.Body = redactSecretFromResponse(result.Body, val)
+				redacted = true
+			}
+		}
+
+		if redacted {
+			result.Headers["Content-Length"] = []string{fmt.Sprintf("%d", len(result.Body))}
+		}
 	}
 
 	// --- Audit ---
@@ -221,6 +258,7 @@ func (e *Engine) Execute(req CallRequest) (*CallResult, error) {
 			DurationMs: result.Duration.Milliseconds(),
 			Status:     "OK",
 			Reason:     "-",
+			Redacted:   redacted,
 		})
 	}
 

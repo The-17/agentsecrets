@@ -203,6 +203,9 @@ func runProxyLogs(cmd *cobra.Command, args []string) error {
 		reasonStr := e.Reason
 		if reasonStr == "" {
 			reasonStr = "-"
+		statusStr := fmt.Sprintf("%d", e.StatusCode)
+		if e.Redacted {
+			statusStr += " " + ui.ErrorStyle.Render("(REDACTED)")
 		}
 
 		rows[len(events)-1-i] = []string{
@@ -214,6 +217,7 @@ func runProxyLogs(cmd *cobra.Command, args []string) error {
 			strings.Join(e.AuthStyles, ", "),
 			fmt.Sprintf("%d", e.StatusCode),
 			reasonStr,
+			statusStr,
 			fmt.Sprintf("%dms", e.DurationMs),
 		}
 	}
