@@ -383,8 +383,7 @@ response = as_client.call(
 You pass a key name. The SDK resolves from the OS keychain, injects at the transport layer, and returns only the API response. Every user of every tool built on the SDK gets zero-knowledge credential management automatically — without knowing AgentSecrets exists.
 
 **Built on the SDK:**
-- [AgentSecrets MCP Server Template](https://github.com/The-17/agentsecrets-mcp-template) — scaffold for building MCP servers with zero credential storage *(coming soon)*
-- [AgentSecrets for LangChain](https://github.com/The-17/agentsecrets-langchain) — zero-knowledge API calls in any LangChain agent *(coming soon)*
+- [Zero-knowledge MCP](https://github.com/The-17/zero-knowledge-mcp) — scaffold for building MCP servers with zero credential storage
 
 ---
 
