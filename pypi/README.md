@@ -10,6 +10,17 @@ Every other secrets tool was built for humans to provision credentials to agents
 
 ---
 
+> **Package rename notice**
+> The `agentsecrets` PyPI package is now the [AgentSecrets SDK](https://github.com/The-17/agentsecrets-sdk) — for developers building tools and agents on AgentSecrets infrastructure.
+> This CLI wrapper is now `agentsecrets-cli`.
+> If you previously installed `pip install agentsecrets` for CLI access, run:
+> ```bash
+> pip install agentsecrets-cli
+> ```
+> The `agentsecrets` CLI command itself is unchanged. Only the PyPI package name changed.
+
+---
+
 ## What This Is
 
 Most secrets tools treat AI agents as consumers — something that receives a credential and uses it. AgentSecrets treats the agent as an operator.
@@ -61,9 +72,21 @@ You cannot steal what was never there.
 
 ## Installation
 
-**pip:**
 ```bash
-pip install agentsecrets
+pip install agentsecrets-cli
+```
+
+Or install the full binary directly — recommended for production use:
+
+```bash
+# Homebrew (macOS / Linux)
+brew install the-17/tap/agentsecrets
+
+# npm
+npm install -g @the-17/agentsecrets
+
+# pip
+pip install agentsecrets-cli
 ```
 
 ---
@@ -343,6 +366,33 @@ Works with LangChain, CrewAI, AutoGen, and any agent that makes HTTP requests.
 
 ---
 
+## Build on AgentSecrets
+
+The [AgentSecrets SDK](https://github.com/The-17/agentsecrets-sdk) lets you build tools, MCP servers, and AI agents where credential values never enter your code — or the code of anyone using what you build.
+
+```python
+pip install agentsecrets
+```
+
+```python
+from agentsecrets import AgentSecrets
+
+as_client = AgentSecrets()
+
+response = as_client.call(
+    url="https://api.stripe.com/v1/balance",
+    bearer="STRIPE_KEY"
+)
+```
+
+You pass a key name. The SDK resolves from the OS keychain, injects at the transport layer, returns only the API response. Every user of every tool built on the SDK gets zero-knowledge credential management automatically.
+
+**Built on the SDK:**
+- [AgentSecrets MCP Server Template](https://github.com/The-17/agentsecrets-mcp-template) — scaffold for building MCP servers with zero credential storage
+- [AgentSecrets for LangChain](https://github.com/The-17/agentsecrets-langchain) — zero-knowledge API calls in any LangChain agent
+
+---
+
 ## Full Command Reference
 
 ### Account
@@ -422,6 +472,7 @@ agentsecrets workspace demote user@email.com               # Revoke admin role
 | **Prompt injection protection** | ✅ Structural | ❌ | ❌ | ❌ | ❌ |
 | **Env var injection (`run --`)** | ✅ `agentsecrets env` | ❌ | ❌ | ✅ `doppler run` | ✅ `op run` |
 | **AI-native workflow** | ✅ Built for it | ❌ | ❌ | ❌ | ❌ |
+| **SDK for building on top** | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Team workspaces** | ✅ Built-in | ⚠️ Complex | ⚠️ IAM roles | ✅ | ✅ Vaults |
 | **OS keychain storage** | ✅ | ❌ | ❌ | ❌ | ✅ |
 | **Setup time** | ⚡ 1 minute | ⏱️ Hours | ⏱️ 30+ min | ⏱️ 10 min | ⏱️ 5 min |
@@ -501,10 +552,15 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROXY.md](docs/PROXY.md) for de
 - [x] Response body redaction (echo exfiltration defense)
 - [x] Workspace role management (promote/demote)
 - [x] `agentsecrets env` — environment variable injection
+- [x] Python SDK (`pip install agentsecrets`)
+- [ ] AgentSecrets MCP Server Template
+- [ ] AgentSecrets for LangChain
+- [ ] AgentSecrets for CrewAI
 - [ ] Secret rotation
 - [ ] Environment support (dev/staging/prod)
 - [ ] Web dashboard
-- [ ] LangChain + CrewAI first-party integrations
+- [ ] Cloud resolver (serverless + production deployments)
+- [ ] AgentSecrets Connect (multi-tenant credential delegation)
 
 ---
 
@@ -534,6 +590,7 @@ make test
 ## Links
 
 - **GitHub**: [github.com/The-17/agentsecrets](https://github.com/The-17/agentsecrets)
+- **SDK**: [github.com/The-17/agentsecrets-sdk](https://github.com/The-17/agentsecrets-sdk)
 - **ClawHub**: [clawhub.ai/SteppaCodes/agentsecrets](https://clawhub.ai/SteppaCodes/agentsecrets)
 - **Related**: [SecretsCLI](https://github.com/The-17/SecretsCLI) — original Python implementation
 
@@ -543,7 +600,7 @@ make test
 
 MIT — see [LICENSE](LICENSE)
 
-Built by [The Seventeen](https://github.com/The-17)
+Built by [The Seventeen](https://theseventeen.co)
 
 ---
 

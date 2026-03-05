@@ -20,13 +20,13 @@ def _get_version():
             return "1.1.0"
 
         try:
-            return get_distribution("agentsecrets").version
+            return get_distribution("agentsecrets-cli").version
         except DistributionNotFound:
             # Fallback if package not found
             return "1.1.0"
 
     try:
-        return version("agentsecrets")
+        return version("agentsecrets-cli")
     except PackageNotFoundError:
         # Fallback if package not found
         return "1.1.0"
