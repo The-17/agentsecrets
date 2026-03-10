@@ -169,6 +169,9 @@ func (s *Service) bindLocally(project *Project) error {
 		}
 	}
 
+	// Save globally so exec provider can find it regardless of working directory
+	_ = config.SetSelectedProjectID(project.ID)
+
 	return config.SaveProjectConfig(local)
 }
 
