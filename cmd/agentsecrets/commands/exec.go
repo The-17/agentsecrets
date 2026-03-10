@@ -74,8 +74,13 @@ func runExec(cmd *cobra.Command, args []string) {
 
 	project, err := config.LoadProjectConfig()
 	if err != nil || project == nil || project.ProjectID == "" {
-		fmt.Fprintln(os.Stderr, "no project configured in current directory")
-		os.Exit(1)
+		// Fall back to globally selected project (set by `agentsecrets project use`)
+		globalProjectID := config.GetSelectedProjectID()
+		if globalProjectID == "" {
+			fmt.Fprintln(os.Stderr, "no project configured in current directory")
+			os.Exit(1)
+		}
+		project = &config.ProjectConfig{ProjectID: globalProjectID}
 	}
 
 	for _, id := range req.IDs {
@@ -103,3 +108,4 @@ func runExec(cmd *cobra.Command, args []string) {
 	fmt.Println(string(out))
 	os.Exit(0)
 }
+
