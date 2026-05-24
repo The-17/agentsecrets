@@ -1,0 +1,20 @@
+name: Debug macOS
+on:
+  push:
+    branches:
+      - 'debug/mac-tests'
+
+jobs:
+  debug:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Start Interactive SSH Session
+        uses: mxschmitt/action-tmate@v3
