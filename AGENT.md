@@ -221,7 +221,6 @@ agentsecrets project delete NAME
 ### Secrets
 ```bash
 agentsecrets secrets set KEY=value
-agentsecrets secrets get KEY
 agentsecrets secrets list [--project NAME]
 agentsecrets secrets push
 agentsecrets secrets pull

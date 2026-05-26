@@ -304,7 +304,6 @@ If not initialized or logged out, tell the user to run ` + "`agentsecrets login`
 agentsecrets secrets set KEY_NAME=value
 
 # You can run these
-agentsecrets secrets get KEY_NAME # Shows value to user
 agentsecrets secrets list
 agentsecrets secrets diff
 agentsecrets secrets push

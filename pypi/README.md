@@ -436,7 +436,6 @@ agentsecrets environment clean                # Delete all secrets in current en
 ### Secrets
 ```bash
 agentsecrets secrets set KEY=value        # Store a secret
-agentsecrets secrets get KEY              # Retrieve a value (you see it, agent doesn't)
 agentsecrets secrets list                 # List key names — never values
 agentsecrets secrets push                 # Upload .env to cloud (encrypted)
 agentsecrets secrets pull                 # Download cloud secrets to keychain

@@ -432,7 +432,6 @@ agentsecrets environment clean
 ### Secrets
 ```bash
 agentsecrets secrets set KEY=value
-agentsecrets secrets get KEY
 agentsecrets secrets list
 agentsecrets secrets push
 agentsecrets secrets pull
