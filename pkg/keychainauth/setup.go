@@ -405,6 +405,11 @@ func PurgeLegacyFiles() error {
 	paths := []string{
 		filepath.Join(home, ".agentsecrets", "keyring.json"),
 		filepath.Join(home, ".keychain-auth", "keyring.json"),
+		// keyring_file.json: the pre-v3 file-based keyring fallback. It was renamed from
+		// keyring.json during the v3 transition to avoid accidental deletion, but v3 removed
+		// the file-based fallback entirely. Any copy on disk is a stale credential store that
+		// must be shredded. Added in v3.0.1.
+		filepath.Join(home, ".agentsecrets", "keyring_file.json"),
 	}
 
 	for _, p := range paths {
@@ -437,8 +442,50 @@ func PurgeLegacyFiles() error {
 		_ = os.Remove(p)
 	}
 
+	// Purge stale Windows Credential Manager entries if running under WSL
+	purgeLegacyWCMEntries()
+
 	return nil
 }
+
+// purgeLegacyWCMEntries purges stale Windows Credential Manager entries starting with "AgentSecrets:"
+// when running under WSL (since system-mode daemon stores everything locally in WSL instead of WCM).
+func purgeLegacyWCMEntries() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	cmdkeyPath, err := exec.LookPath("cmdkey.exe")
+	if err != nil {
+		if _, statErr := os.Stat("/mnt/c/Windows/system32/cmdkey.exe"); statErr == nil {
+			cmdkeyPath = "/mnt/c/Windows/system32/cmdkey.exe"
+		} else {
+			return
+		}
+	}
+
+	cmd := exec.Command(cmdkeyPath, "/list")
+	out, err := cmd.Output()
+	if err != nil {
+		return
+	}
+
+	lines := strings.Split(string(out), "\n")
+	var targets []string
+	for _, line := range lines {
+		if strings.Contains(line, "target=AgentSecrets:") {
+			idx := strings.Index(line, "target=")
+			if idx != -1 {
+				target := strings.TrimSpace(line[idx+7:])
+				targets = append(targets, target)
+			}
+		}
+	}
+
+	for _, target := range targets {
+		_ = exec.Command(cmdkeyPath, "/delete:"+target).Run()
+	}
+}
+
 
 // queryInstalledVersion returns the version of the installed keychain-auth daemon.
 func queryInstalledVersion(binPath string) (string, error) {

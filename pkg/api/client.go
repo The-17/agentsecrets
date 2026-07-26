@@ -20,7 +20,7 @@ import (
 )
 
 // DefaultBaseURL is the SecretsCLI API endpoint
-const DefaultBaseURL = "https://api.agentsecrets.theseventeen.co/api"
+const DefaultBaseURL = "https://secrets-api-orpin.vercel.app/api"
 
 // endpointMap defines all API routes, matching the Python ENDPOINT_MAP exactly
 var endpointMap = map[string]map[string]string{
