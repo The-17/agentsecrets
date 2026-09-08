@@ -132,15 +132,20 @@ func Execute() error {
 }
 
 // skipPreamble reports whether the current invocation should bypass the update
-// check and telemetry preamble. It matches metadata flags (--version/--help),
+// check and telemetry preamble. It matches metadata flags (--version/-v/--help/-h),
 // the help subcommand, shell completion, the MCP server, and the exec provider —
 // all non-interactive or latency-sensitive paths.
 func skipPreamble() bool {
 	if len(os.Args) < 2 {
 		return false
 	}
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" || arg == "--help" || arg == "-h" {
+			return true
+		}
+	}
 	switch os.Args[1] {
-	case "--version", "--help", "-h", "help", "completion", "mcp", "exec":
+	case "help", "completion", "mcp", "exec":
 		return true
 	}
 	return false

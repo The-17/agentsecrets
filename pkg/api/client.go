@@ -47,6 +47,7 @@ var endpointMap = map[string]map[string]string{
 		"update": "projects/{workspace_id}/{project_name}/",
 		"delete": "projects/{workspace_id}/{project_name}/",
 		"invite": "projects/{workspace_id}/{project_name}/invite/",
+		"transfer": "projects/{project_name}/transfer/",
 	},
 	"workspaces": {
 		"list":             "workspaces/",
@@ -85,6 +86,10 @@ var endpointMap = map[string]map[string]string{
 	},
 	"audit": {
 		"sync": "internal/audit/logs/",
+	},
+	"forensic": {
+		"sync":   "internal/forensic/logs/",
+		"replay": "forensic/logs/{log_id}/replay/",
 	},
 	"telemetry": {
 		"sync": "/telemetry/sync/",

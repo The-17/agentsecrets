@@ -398,3 +398,130 @@ func (s *Service) Invite(email, role string) error {
 
 	return nil
 }
+
+// ProjectTransferResult holds the result of a project transfer between workspaces.
+type ProjectTransferResult struct {
+	ProjectID           string `json:"project_id"`
+	ProjectName         string `json:"project_name"`
+	SourceWorkspaceID   string `json:"source_workspace_id"`
+	SourceWorkspaceName string `json:"source_workspace_name"`
+	TargetWorkspaceID   string `json:"target_workspace_id"`
+	TargetWorkspaceName string `json:"target_workspace_name"`
+	SecretsTransferred int    `json:"secrets_transferred"`
+}
+
+// Transfer re-encrypts all secrets in a project from source to target workspace key and executes the transfer on the server.
+func (s *Service) Transfer(projectName, targetWorkspaceID string) (*ProjectTransferResult, error) {
+	sourceWsID := config.GetSelectedWorkspaceID()
+	if sourceWsID == "" {
+		return nil, fmt.Errorf("no workspace currently selected; run 'agentsecrets workspace switch' first")
+	}
+	if sourceWsID == targetWorkspaceID {
+		return nil, fmt.Errorf("project is already in this workspace")
+	}
+
+	// 1. Load source and destination workspace keys
+	sourceKey, err := config.GetWorkspaceKey(sourceWsID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load source workspace key: %w", err)
+	}
+
+	targetKey, err := config.GetWorkspaceKey(targetWorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load target workspace key: %w", err)
+	}
+
+	// 2. Resolve target project
+	projs, err := s.List()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+	var targetProject *Project
+	for _, p := range projs {
+		if strings.EqualFold(p.Name, projectName) || p.ID == projectName {
+			targetProject = &p
+			break
+		}
+	}
+	if targetProject == nil {
+		return nil, fmt.Errorf("project %q not found in current workspace", projectName)
+	}
+
+	// 3. Fetch secrets across all environments and re-encrypt under target key
+	reencryptedSecrets := []map[string]string{}
+	for _, env := range config.ValidEnvironments {
+		scrtResp, err := s.API.Call("secrets.list", "GET", nil, map[string]string{"project_id": targetProject.ID}, map[string]string{"environment": env})
+		if err != nil {
+			continue
+		}
+		var scrtRes struct {
+			Data struct {
+				Secrets []struct {
+					ID    string `json:"id"`
+					Key   string `json:"key"`
+					Value string `json:"value"`
+				} `json:"secrets"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(scrtResp.Body).Decode(&scrtRes); err != nil {
+			scrtResp.Body.Close()
+			continue
+		}
+		scrtResp.Body.Close()
+
+		for _, scrt := range scrtRes.Data.Secrets {
+			if scrt.Value == "" {
+				continue
+			}
+			plaintext, err := crypto.DecryptSecret(scrt.Value, sourceKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt secret %s: %w", scrt.Key, err)
+			}
+			newEnc, err := crypto.EncryptSecret(plaintext, targetKey)
+			if err != nil {
+				return nil, fmt.Errorf("failed to re-encrypt secret %s: %w", scrt.Key, err)
+			}
+			reencryptedSecrets = append(reencryptedSecrets, map[string]string{
+				"id":    scrt.ID,
+				"value": newEnc,
+			})
+		}
+	}
+
+	// 4. Send transfer request to server
+	payload := map[string]interface{}{
+		"target_workspace_id": targetWorkspaceID,
+		"secrets":             reencryptedSecrets,
+	}
+
+	resp, err := s.API.Call("projects.transfer", "POST", payload, map[string]string{
+		"project_name": targetProject.Name,
+	}, map[string]string{
+		"source_workspace_id": sourceWsID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to transfer project: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, s.API.DecodeError(resp)
+	}
+
+	var res struct {
+		Data ProjectTransferResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("failed to decode transfer response: %w", err)
+	}
+
+	// 5. Update local project binding if current folder is linked
+	localProj, _ := config.LoadProjectConfig()
+	if localProj != nil && (localProj.ProjectID == targetProject.ID || strings.EqualFold(localProj.ProjectName, targetProject.Name)) {
+		localProj.WorkspaceID = targetWorkspaceID
+		localProj.WorkspaceName = res.Data.TargetWorkspaceName
+		_ = config.SaveProjectConfig(localProj)
+	}
+
+	return &res.Data, nil
+}

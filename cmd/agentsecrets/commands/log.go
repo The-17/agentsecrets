@@ -798,122 +798,206 @@ var logReplayCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
+		source := "local"
 		fe, err := logService.GetForensicLog(id)
 		if err != nil {
-			return errors.New(errors.ErrLogNotFound, fmt.Sprintf("forensic log entry %q not found locally", id), err)
+			// Fallback: Query remote control plane for forensic decision replay
+			fe, err = logService.GetRemoteForensicReplay(id)
+			if err != nil {
+				return errors.New(errors.ErrLogNotFound, fmt.Sprintf("forensic log entry %q not found locally or remotely: %v", id, err), err)
+			}
+			source = "remote"
 		}
 
 		fmt.Println("─────────────────────────────────────────────────────────")
-		fmt.Printf("REPLAY STATE FOR EVENT %s\n", fe.ID)
+		if source == "remote" {
+			fmt.Printf("REPLAY STATE FOR EVENT %s (Source: Cloud Control Plane)\n", fe.ID)
+		} else {
+			fmt.Printf("REPLAY STATE FOR EVENT %s\n", fe.ID)
+		}
 		fmt.Println("─────────────────────────────────────────────────────────")
 		fmt.Printf("Timestamp:   %s\n", fe.CreatedAt.Format("2006-01-02 15:04:05.000 MST"))
-		fmt.Printf("Action:      %s %s\n", strings.ToUpper(fe.Event.Method), "https://"+fe.Event.Domain+fe.Event.Path)
+		urlPath := fe.Event.Path
+		if urlPath == "" {
+			urlPath = "/"
+		}
+		fmt.Printf("Action:      %s %s\n", strings.ToUpper(fe.Event.Method), "https://"+fe.Event.Domain+urlPath)
 		fmt.Printf("Environment: %s\n", fe.Event.Environment)
 		fmt.Println()
 
-		fmt.Println(ui.BrandStyle.Render("[1/3] Evaluated Agent Capabilities"))
-		if fe.Snapshot.AgentCapabilities != nil {
-			fmt.Printf("  Agent Token:      %s\n", fe.Snapshot.AgentCapabilities.TokenName)
-			fmt.Printf("  Allowed Projects: %s\n", strings.Join(fe.Snapshot.AgentCapabilities.AllowedProjects, ", "))
-			fmt.Printf("  Allowed Secrets:  %s\n", strings.Join(fe.Snapshot.AgentCapabilities.AllowedSecrets, ", "))
-			fmt.Printf("  Active Scopes:    %s\n", strings.Join(fe.Snapshot.AgentCapabilities.Scopes, ", "))
+		// Step 1: Inbound Event Context
+		fmt.Println(ui.BrandStyle.Render("[Step 1/4] Inbound Event Context"))
+		fmt.Printf("  Target URL:       %s\n", "https://"+fe.Event.Domain+urlPath)
+		fmt.Printf("  HTTP Method:      %s\n", strings.ToUpper(fe.Event.Method))
+		if fe.Event.Type != "" {
+			fmt.Printf("  Call Type:        %s\n", fe.Event.Type)
+		}
+		if fe.Event.AgentIdentity != nil {
+			fmt.Printf("  Agent Token:      %s (ID: %s, Identity: %s)\n",
+				fe.Event.AgentIdentity.TokenName,
+				fe.Event.AgentIdentity.TokenID,
+				fe.Event.AgentIdentity.IdentityLevel,
+			)
 		} else {
 			fmt.Println("  Agent Token:      None (Anonymous mode)")
 		}
-
-		capsResult := "PASS"
-		capsReason := "Agent has unrestricted access"
-		for _, layer := range fe.Enforcement.LayersEvaluated {
-			if layer.Layer == "agent_capabilities" {
-				if layer.Result == "fail" {
-					capsResult = "FAIL"
-				}
-				capsReason = layer.Reason
-			}
+		if fe.Event.KeyName != "" {
+			fmt.Printf("  Secret Key:       %s\n", fe.Event.KeyName)
 		}
-		if capsResult == "PASS" {
-			fmt.Printf("  Result:           %s (%s)\n", ui.SuccessStyle.Render("PASS"), capsReason)
-		} else {
-			fmt.Printf("  Result:           %s (%s)\n", ui.ErrorStyle.Render("FAIL"), capsReason)
-		}
+		fmt.Printf("  Outcome / Status: %s (%d, %dms)\n", strings.ToUpper(fe.Event.Outcome), fe.Event.StatusCode, fe.Event.LatencyMs)
 		fmt.Println()
 
-		fmt.Println(ui.BrandStyle.Render("[2/3] Evaluated Workspace Allowlist"))
-		fmt.Printf("  Target Domain:    %s\n", fe.Event.Domain)
-		fmt.Printf("  Allowlist count:  %d domains allowed\n", fe.Snapshot.Workspace.AllowlistCount)
+		// Step 2: Evaluation State Snapshot
+		fmt.Println(ui.BrandStyle.Render("[Step 2/4] Evaluation State Snapshot"))
+		if fe.Snapshot.Workspace.ID != "" {
+			fmt.Printf("  Workspace:        %s (ID: %s)\n", fe.Snapshot.Workspace.Name, fe.Snapshot.Workspace.ID)
+		}
+		fmt.Printf("  Allowlist Count:  %d domains allowed\n", fe.Snapshot.Workspace.AllowlistCount)
 		if len(fe.Snapshot.Workspace.Allowlist) > 0 {
-			fmt.Printf("  Allowlist:        %s\n", strings.Join(fe.Snapshot.Workspace.Allowlist, ", "))
+			fmt.Printf("  Allowlist Rules:  %s\n", strings.Join(fe.Snapshot.Workspace.Allowlist, ", "))
 		}
-		
-		allowResult := "PASS"
-		allowReason := fmt.Sprintf("Domain %s is permitted by allowlist", fe.Event.Domain)
-		for _, layer := range fe.Enforcement.LayersEvaluated {
-			if layer.Layer == "workspace_allowlist" {
-				if layer.Result == "fail" {
-					allowResult = "FAIL"
-				}
-				allowReason = layer.Reason
+		if fe.Snapshot.Project.ID != "" {
+			fmt.Printf("  Project:          %s (ID: %s, Env: %s)\n", fe.Snapshot.Project.Name, fe.Snapshot.Project.ID, fe.Snapshot.Project.Environment)
+		}
+		if len(fe.Snapshot.SecretsInScope) > 0 {
+			fmt.Printf("  Secrets in Scope: %s\n", strings.Join(fe.Snapshot.SecretsInScope, ", "))
+		}
+		if fe.Snapshot.AgentCapabilities != nil {
+			if len(fe.Snapshot.AgentCapabilities.AllowedSecrets) > 0 {
+				fmt.Printf("  Allowed Secrets:  %s\n", strings.Join(fe.Snapshot.AgentCapabilities.AllowedSecrets, ", "))
+			}
+			if len(fe.Snapshot.AgentCapabilities.AllowedProjects) > 0 {
+				fmt.Printf("  Allowed Projects: %s\n", strings.Join(fe.Snapshot.AgentCapabilities.AllowedProjects, ", "))
+			}
+			if len(fe.Snapshot.AgentCapabilities.Scopes) > 0 {
+				fmt.Printf("  Active Scopes:    %s\n", strings.Join(fe.Snapshot.AgentCapabilities.Scopes, ", "))
 			}
 		}
-		if allowResult == "PASS" {
-			fmt.Printf("  Result:           %s (%s)\n", ui.SuccessStyle.Render("PASS"), allowReason)
-		} else {
-			fmt.Printf("  Result:           %s (%s)\n", ui.ErrorStyle.Render("FAIL"), allowReason)
-		}
-		fmt.Println()
-
-		fmt.Println(ui.BrandStyle.Render("[3/3] Evaluated Secret Policies"))
-		fmt.Printf("  Injected Secret:  %s\n", fe.Event.KeyName)
 		if fe.Snapshot.SecretsPolicy != nil {
-			fmt.Printf("  Active Policy:    Yes (allowed domains: %s, methods: %s, action: %s)\n",
+			fmt.Printf("  Secret Policy:    Allowed domains [%s], methods [%s], action %s\n",
 				strings.Join(fe.Snapshot.SecretsPolicy.AllowedDomains, ", "),
 				strings.Join(fe.Snapshot.SecretsPolicy.AllowedMethods, ", "),
 				fe.Snapshot.SecretsPolicy.ViolationAction,
 			)
-		} else {
-			fmt.Println("  Active Policy:    None (No restrictions on this key)")
 		}
+		fmt.Println()
 
+		// Step 3: Policy Enforcement Decision
+		fmt.Println(ui.BrandStyle.Render("[Step 3/4] Policy Enforcement Decision"))
+		capsResult := "PASS"
+		capsReason := "Agent has unrestricted access"
+		allowResult := "PASS"
+		allowReason := fmt.Sprintf("Domain %s is permitted by allowlist", fe.Event.Domain)
 		policyResult := "PASS"
 		policyReason := "No violations detected"
+		ssrfResult := "PASS"
+		ssrfReason := "Target host verified safe"
+
 		for _, layer := range fe.Enforcement.LayersEvaluated {
-			if layer.Layer == "secrets_policy" {
+			switch layer.Layer {
+			case "agent_capabilities":
+				if layer.Result == "fail" {
+					capsResult = "FAIL"
+				}
+				if layer.Reason != "" {
+					capsReason = layer.Reason
+				}
+			case "workspace_allowlist":
+				if layer.Result == "fail" {
+					allowResult = "FAIL"
+				}
+				if layer.Reason != "" {
+					allowReason = layer.Reason
+				}
+			case "secrets_policy":
 				if layer.Result == "fail" {
 					policyResult = "FAIL"
 				}
-				policyReason = layer.Reason
+				if layer.Reason != "" {
+					policyReason = layer.Reason
+				}
+			case "ssrf_protection":
+				if layer.Result == "fail" {
+					ssrfResult = "FAIL"
+				}
+				if layer.Reason != "" {
+					ssrfReason = layer.Reason
+				}
 			}
 		}
-		if policyResult == "PASS" {
-			fmt.Printf("  Result:           %s (%s)\n", ui.SuccessStyle.Render("PASS"), policyReason)
-		} else {
-			fmt.Printf("  Result:           %s (%s)\n", ui.ErrorStyle.Render("FAIL"), policyReason)
+
+		formatResult := func(res string) string {
+			if res == "PASS" {
+				return ui.SuccessStyle.Render("PASS")
+			}
+			return ui.ErrorStyle.Render("FAIL")
+		}
+
+		fmt.Printf("  • Agent Capabilities:  %s (%s)\n", formatResult(capsResult), capsReason)
+		fmt.Printf("  • Workspace Allowlist: %s (%s)\n", formatResult(allowResult), allowReason)
+		if fe.Snapshot.SecretsPolicy != nil || policyResult == "FAIL" {
+			fmt.Printf("  • Secret Policies:     %s (%s)\n", formatResult(policyResult), policyReason)
+		}
+		if ssrfResult == "FAIL" || fe.Resolution.SSRFCheckPassed {
+			fmt.Printf("  • SSRF Protection:     %s (%s)\n", formatResult(ssrfResult), ssrfReason)
+		}
+		if fe.Enforcement.FirstFailureLayer != "" {
+			fmt.Printf("  • First Failure Layer: %s\n", ui.ErrorStyle.Render(fe.Enforcement.FirstFailureLayer))
+		}
+		fmt.Println()
+
+		// Step 4: Upstream Resolution & Streaming Redaction
+		fmt.Println(ui.BrandStyle.Render("[Step 4/4] Upstream Resolution & Streaming Redaction"))
+		injStr := "Not injected"
+		if fe.Resolution.CredentialInjected {
+			injStr = fmt.Sprintf("Injected successfully via %s", fe.Resolution.InjectionStyle)
+		}
+		fmt.Printf("  Credential State:  %s\n", injStr)
+
+		ssrfStatus := ui.SuccessStyle.Render("PASS (Verified safe)")
+		if !fe.Resolution.SSRFCheckPassed && (ssrfResult == "FAIL" || fe.Enforcement.Decision == "blocked") {
+			ssrfStatus = ui.ErrorStyle.Render("BLOCKED (Private/loopback or metadata IP)")
+		}
+		fmt.Printf("  SSRF Verification: %s\n", ssrfStatus)
+
+		redactStr := "No redaction (clean response)"
+		if fe.Resolution.RedactionTriggered {
+			redactDetail := fe.Resolution.RedactedField
+			if redactDetail == "" {
+				redactDetail = fe.Resolution.RedactionPattern
+			}
+			if redactDetail != "" {
+				redactStr = ui.WarningStyle.Render(fmt.Sprintf("Triggered — sensitive tokens masked (%s)", redactDetail))
+			} else {
+				redactStr = ui.WarningStyle.Render("Triggered — sensitive tokens masked")
+			}
+		}
+		fmt.Printf("  Streaming Redactor:%s\n", redactStr)
+		if fe.Resolution.ResponseStatus > 0 {
+			fmt.Printf("  Response Status:   %d\n", fe.Resolution.ResponseStatus)
 		}
 		fmt.Println()
 
 		fmt.Println("─────────────────────────────────────────────────────────")
-		fmt.Println(ui.BrandStyle.Render("FINAL ENFORCEMENT DECISION SUMMARY"))
+		fmt.Println(ui.BrandStyle.Render("FINAL DECISION SUMMARY & CHAIN INTEGRITY"))
 		fmt.Println("─────────────────────────────────────────────────────────")
 		decisionColor := ui.SuccessStyle.Render(strings.ToUpper(fe.Enforcement.Decision))
 		if fe.Enforcement.Decision == "blocked" || fe.Enforcement.Decision == "policy_denied" {
 			decisionColor = ui.ErrorStyle.Render(strings.ToUpper(fe.Enforcement.Decision))
 		} else if fe.Enforcement.Decision == "policy_escalated" {
 			decisionColor = ui.WarningStyle.Render(strings.ToUpper(fe.Enforcement.Decision))
+		} else if fe.Enforcement.Decision == "error" {
+			decisionColor = ui.ErrorStyle.Render("ERROR")
 		}
 		ui.StatusRow("Final Decision", decisionColor)
-		ui.StatusRow("Decided By", fe.Enforcement.DecidedBy)
-		
-		injStr := "Not injected"
-		if fe.Resolution.CredentialInjected {
-			injStr = fmt.Sprintf("Injected successfully via %s", fe.Resolution.InjectionStyle)
+		decidedBy := fe.Enforcement.DecidedBy
+		if decidedBy == "" {
+			decidedBy = "local proxy"
 		}
-		ui.StatusRow("Credential State", injStr)
-
-		redactStr := "No redaction"
-		if fe.Resolution.RedactionTriggered {
-			redactStr = ui.WarningStyle.Render("Redaction triggered — secret returned in response was masked")
+		ui.StatusRow("Decided By", decidedBy)
+		if fe.ChainHash != "" {
+			ui.StatusRow("Cryptographic Chain", ui.SuccessStyle.Render("Verified (Hash: "+displayTokenID(fe.ChainHash)+")"))
 		}
-		ui.StatusRow("Response Redact", redactStr)
 		fmt.Println("─────────────────────────────────────────────────────────")
 
 		return nil

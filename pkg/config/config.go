@@ -741,6 +741,15 @@ func GetProjectWorkspaceKey() ([]byte, error) {
 	return GetWorkspaceKey(p.WorkspaceID)
 }
 
+// GetSelectedWorkspaceKey returns the workspace key for the currently active/selected workspace.
+func GetSelectedWorkspaceKey() ([]byte, error) {
+	wsID := GetSelectedWorkspaceID()
+	if wsID == "" {
+		return nil, fmt.Errorf("no workspace selected")
+	}
+	return GetWorkspaceKey(wsID)
+}
+
 // IsAuthenticated checks if the user has a valid session (token + email present).
 func IsAuthenticated() bool {
 	return GetAccessToken() != "" && GetEmail() != ""

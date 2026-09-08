@@ -55,6 +55,16 @@ var projectDeleteCmd = &cobra.Command{
 	RunE:  runProjectDelete,
 }
 
+var targetWorkspaceFlag string
+
+var projectTransferCmd = &cobra.Command{
+	Use:   "transfer [project-name]",
+	Short: "Transfer a project to another workspace",
+	Long:  `Transfer a project and all its secrets to another workspace. Re-encrypts secrets with destination workspace key.`,
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runProjectTransfer,
+}
+
 var projectInviteCmd = &cobra.Command{
 	Use:   "invite [email]",
 	Short: "Invite a user to the current project",
@@ -73,6 +83,9 @@ func init() {
 	projectCmd.AddCommand(projectUpdateCmd)
 	projectCmd.AddCommand(projectDeleteCmd)
 	projectCmd.AddCommand(projectInviteCmd)
+	projectTransferCmd.Flags().StringVarP(&targetWorkspaceFlag, "to-workspace", "w", "", "Target workspace name or ID")
+	projectTransferCmd.ValidArgsFunction = autocompleteProjects
+	projectCmd.AddCommand(projectTransferCmd)
 }
 
 func runProjectList(cmd *cobra.Command, args []string) error {
@@ -429,4 +442,129 @@ func autocompleteProjects(cmd *cobra.Command, args []string, toComplete string) 
 		}
 	}
 	return completions, cobra.ShellCompDirectiveNoFileComp
+}
+
+func runProjectTransfer(cmd *cobra.Command, args []string) error {
+	var projectName string
+	if len(args) > 0 {
+		projectName = args[0]
+	}
+
+	// 1. Prompt for project name if omitted
+	if projectName == "" {
+		var projs []projects.Project
+		if err := ui.Spinner("Fetching projects...", func() error {
+			var e error
+			projs, e = app.Projects().List()
+			return e
+		}); err != nil {
+			return fmt.Errorf("failed to fetch projects: %w", err)
+		}
+		if len(projs) == 0 {
+			ui.Info("No projects found in the current workspace.")
+			return nil
+		}
+
+		options := make([]huh.Option[string], len(projs))
+		for i, p := range projs {
+			options[i] = huh.NewOption(p.Name, p.Name)
+		}
+
+		err := huh.NewSelect[string]().
+			Title("Select Project").
+			Description("Which project do you want to transfer?").
+			Options(options...).
+			Value(&projectName).
+			Run()
+		if err != nil {
+			return nil
+		}
+	}
+
+	// 2. Resolve eligible target workspaces (where user is owner or admin)
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load global configuration: %w", err)
+	}
+
+	currentWsID := config.GetSelectedWorkspaceID()
+	type wsChoice struct {
+		ID   string
+		Name string
+	}
+	var eligible []wsChoice
+
+	for id, ws := range cfg.Workspaces {
+		if id != currentWsID && (strings.EqualFold(ws.Role, "owner") || strings.EqualFold(ws.Role, "admin")) {
+			eligible = append(eligible, wsChoice{ID: id, Name: ws.Name})
+		}
+	}
+
+	if len(eligible) == 0 {
+		ui.Error("You don't have any other workspace where you are an Owner or Admin.")
+		return nil
+	}
+
+	targetWsID := targetWorkspaceFlag
+	if targetWsID != "" {
+		for _, ew := range eligible {
+			if strings.EqualFold(ew.Name, targetWsID) {
+				targetWsID = ew.ID
+				break
+			}
+		}
+	}
+
+	if targetWsID == "" {
+		wsOptions := make([]huh.Option[string], len(eligible))
+		for i, ew := range eligible {
+			wsOptions[i] = huh.NewOption(ew.Name, ew.ID)
+		}
+
+		err := huh.NewSelect[string]().
+			Title("Destination Workspace").
+			Description("Select workspace to transfer project to:").
+			Options(wsOptions...).
+			Value(&targetWsID).
+			Run()
+		if err != nil {
+			return nil
+		}
+	}
+
+	targetWsName := targetWsID
+	for _, ew := range eligible {
+		if ew.ID == targetWsID {
+			targetWsName = ew.Name
+			break
+		}
+	}
+
+	// 3. Confirm with user
+	var confirmed bool
+	err = huh.NewConfirm().
+		Title(fmt.Sprintf("Transfer project '%s' to workspace '%s'?", projectName, targetWsName)).
+		Description("Secrets will be re-encrypted using the destination workspace's zero-knowledge key.").
+		Value(&confirmed).
+		Run()
+	if err != nil || !confirmed {
+		return nil
+	}
+
+	// 4. Execute transfer with spinner
+	var result *projects.ProjectTransferResult
+	err = ui.Spinner(fmt.Sprintf("Re-encrypting and transferring project '%s'...", projectName), func() error {
+		var e error
+		result, e = app.Projects().Transfer(projectName, targetWsID)
+		return e
+	})
+	if err != nil {
+		ui.Error("Failed to transfer project: " + err.Error())
+		return nil
+	}
+
+	fmt.Println()
+	ui.Success(fmt.Sprintf("Project '%s' successfully transferred to workspace '%s'!", result.ProjectName, result.TargetWorkspaceName))
+	ui.Info(fmt.Sprintf("Re-encrypted and migrated %d secret(s).", result.SecretsTransferred))
+	return nil
 }

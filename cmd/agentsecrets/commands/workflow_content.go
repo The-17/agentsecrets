@@ -96,7 +96,7 @@ __BT____BT____BT__
 Wait for confirmation, then verify with __BT__agentsecrets secrets list__BT__.
 
 Standard naming: SERVICE_KEY or SERVICE_TOKEN (uppercase, underscores)
-Examples: STRIPE_KEY, OPENAI_KEY, GITHUB_TOKEN, PAYSTACK_KEY, SENDGRID_KEY
+Examples: STRIPE_KEY, OPENAI_KEY, GITHUB_TOKEN, POLAR_KEY, SENDGRID_KEY
 
 ## AGENT IDENTITY
 

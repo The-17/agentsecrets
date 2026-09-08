@@ -703,9 +703,9 @@ func startDirect(keychainAuthPath string) error {
 	return waitForSocketPath(sockPath)
 }
 
-// waitForSocketPath polls for a specific socket file/named pipe to appear and be dialable, with an 8-second timeout.
+// waitForSocketPath polls for a specific socket file/named pipe to appear and be dialable, with a 12-second timeout.
 func waitForSocketPath(sockPath string) error {
-	for i := 0; i < 80; i++ {
+	for i := 0; i < 120; i++ {
 		c, err := dialCLOEXEC(sockPath)
 		if err == nil {
 			c.Close()
@@ -713,7 +713,7 @@ func waitForSocketPath(sockPath string) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("keychain-auth daemon started but socket/pipe at %s not available after 8 seconds", sockPath)
+	return fmt.Errorf("keychain-auth daemon started but socket/pipe at %s not available after 12 seconds", sockPath)
 }
 
 // waitForSocket polls for the default socket file/named pipe to appear and be dialable.

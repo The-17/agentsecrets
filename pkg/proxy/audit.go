@@ -338,11 +338,10 @@ func (a *AuditLogger) SyncUnpushedLogs() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	var payload []map[string]interface{}
+	var legacyPayload []map[string]interface{}
 	var legacyIDs []string
-	var forensicIDs []string
 
-	// 1. Fetch legacy audit events
+	// 1. Fetch legacy / Tier 2 audit events
 	rowsLegacy, err := a.db.Query(`
 		SELECT id, timestamp, environment, agent_id, identity_level, method, target_url,
 		       domain, status_code, duration_ms, status, reason, redacted, resolution_path,
@@ -377,33 +376,36 @@ func (a *AuditLogger) SyncUnpushedLogs() error {
 			}
 
 			mapped := map[string]interface{}{
-				"id":               e.ID,
-				"schema_version":   1,
-				"timestamp":        e.Timestamp.UTC().Format(time.RFC3339Nano),
-				"environment":      e.Environment,
-				"workspace_id":     e.WorkspaceID,
-				"project_id":       e.ProjectID,
-				"agent_id":         e.AgentID,
-				"token_id":         e.TokenID,
-				"identity_level":   e.IdentityLevel,
-				"credential_ref":   strings.Join(e.SecretKeys, ","),
-				"injection_style":  strings.Join(e.AuthStyles, ","),
-				"target_domain":    e.Domain,
-				"target_url":       e.TargetURL,
-				"target_path":      targetPath,
-				"method":           e.Method,
-				"status_code":      e.StatusCode,
-				"duration_ms":      e.DurationMs,
-				"redacted":         e.Redacted,
-				"resolution_path":  e.ResolutionPath,
-				"caller_role":      e.CallerRole,
+				"id":              e.ID,
+				"schema_version":  1,
+				"timestamp":       e.Timestamp.UTC().Format(time.RFC3339Nano),
+				"environment":     e.Environment,
+				"workspace_id":    e.WorkspaceID,
+				"project_id":      e.ProjectID,
+				"agent_id":        e.AgentID,
+				"token_id":        e.TokenID,
+				"identity_level":  e.IdentityLevel,
+				"credential_ref":  strings.Join(e.SecretKeys, ","),
+				"injection_style": strings.Join(e.AuthStyles, ","),
+				"target_domain":   e.Domain,
+				"target_url":      e.TargetURL,
+				"target_path":     targetPath,
+				"method":          e.Method,
+				"status_code":     e.StatusCode,
+				"duration_ms":     e.DurationMs,
+				"redacted":        e.Redacted,
+				"resolution_path": e.ResolutionPath,
+				"caller_role":     e.CallerRole,
 			}
-			payload = append(payload, mapped)
+			legacyPayload = append(legacyPayload, mapped)
 			legacyIDs = append(legacyIDs, e.ID)
 		}
 	}
 
-	// 2. Fetch forensic audit events
+	// 2. Fetch Tier 3 forensic audit events
+	var forensicPayload []map[string]interface{}
+	var forensicIDs []string
+
 	rowsForensic, err := a.db.Query(`
 		SELECT id, version, created_at, workspace_id, project_id, environment, agent_id, 
 		       token_id, domain, method, status_code, outcome, latency_ms, chain_hash,
@@ -457,101 +459,77 @@ func (a *AuditLogger) SyncUnpushedLogs() error {
 			_ = json.Unmarshal([]byte(enforcementJSON), &fe.Enforcement)
 			_ = json.Unmarshal([]byte(resolutionJSON), &fe.Resolution)
 
-			var agID, tokID, identLevel string
-			if fe.Event.AgentIdentity != nil {
-				agID = fe.Event.AgentIdentity.TokenName
-				tokID = fe.Event.AgentIdentity.TokenID
-				identLevel = fe.Event.AgentIdentity.IdentityLevel
-			} else {
-				identLevel = "anonymous"
+			h := sha256.New()
+			h.Write([]byte(eventJSON))
+			h.Write([]byte(snapshotJSON))
+			h.Write([]byte(enforcementJSON))
+			h.Write([]byte(resolutionJSON))
+			entryHash := fmt.Sprintf("%x", h.Sum(nil))
+
+			chStr := ""
+			if chainHash.Valid {
+				chStr = chainHash.String
 			}
 
-			allowlistSnap := map[string]interface{}{
-				"domains": fe.Snapshot.Workspace.Allowlist,
+			mappedForensic := map[string]interface{}{
+				"id":               fe.ID,
+				"workspace_id":     fe.WorkspaceID,
+				"project_id":       fe.ProjectID,
+				"created_at":       fe.CreatedAt.UTC().Format(time.RFC3339Nano),
+				"stream_id":        "cli_" + fe.WorkspaceID,
+				"stream_seq":       0,
+				"chain_hash":       chStr,
+				"entry_hash":       entryHash,
+				"event_json":       fe.Event,
+				"snapshot_json":    fe.Snapshot,
+				"enforcement_json": fe.Enforcement,
+				"resolution_json":  fe.Resolution,
 			}
-
-			var policyID string
-			if fe.Snapshot.SecretsPolicy != nil {
-				policyID = fe.Snapshot.SecretsPolicy.PolicyVersion
-			}
-
-			var errorVal interface{}
-			if fe.Event.Outcome == "blocked" {
-				errorVal = map[string]interface{}{
-					"decision":      fe.Enforcement.Decision,
-					"decided_by":    fe.Enforcement.DecidedBy,
-					"first_failure": fe.Enforcement.FirstFailureLayer,
-				}
-			}
-
-			targetURL := "https://" + fe.Event.Domain + fe.Event.Path
-
-			mapped := map[string]interface{}{
-				"id":                 fe.ID,
-				"schema_version":     2,
-				"timestamp":          fe.CreatedAt.UTC().Format(time.RFC3339Nano),
-				"environment":        fe.Event.Environment,
-				"workspace_id":       fe.WorkspaceID,
-				"project_id":         fe.ProjectID,
-				"agent_id":           agID,
-				"token_id":           tokID,
-				"identity_level":     identLevel,
-				"credential_ref":     fe.Event.KeyName,
-				"injection_style":    fe.Resolution.InjectionStyle,
-				"target_domain":      fe.Event.Domain,
-				"target_url":         targetURL,
-				"target_path":        fe.Event.Path,
-				"method":             fe.Event.Method,
-				"status_code":        fe.Event.StatusCode,
-				"duration_ms":        fe.Event.LatencyMs,
-				"proxy_duration_ms":  fe.Event.LatencyMs,
-				"redacted":           fe.Resolution.RedactionTriggered,
-				"redaction_reason":   fe.Resolution.RedactedField,
-				"resolution_path":    "local proxy",
-				"allowlist_snapshot": allowlistSnap,
-				"policy_snapshot_id": policyID,
-				"error":              errorVal,
-			}
-			payload = append(payload, mapped)
+			forensicPayload = append(forensicPayload, mappedForensic)
 			forensicIDs = append(forensicIDs, fe.ID)
 		}
 	}
 
-	if len(payload) == 0 {
-		return nil
-	}
+	var syncErrors []error
 
-	// 3. POST to Cloud Backend
-	if err := a.APIClient.CallNoContent("audit.sync", "POST", payload, nil, nil); err != nil {
-		return fmt.Errorf("audit.sync API call failed: %w", err)
-	}
-
-	// 4. Update sync status for standard logs
-	if len(legacyIDs) > 0 {
-		placeholders := make([]string, len(legacyIDs))
-		args := make([]interface{}, len(legacyIDs))
-		for i, id := range legacyIDs {
-			placeholders[i] = "?"
-			args[i] = id
-		}
-		query := fmt.Sprintf("UPDATE audit_events SET synced = 1 WHERE id IN (%s)", strings.Join(placeholders, ","))
-		if _, err := a.db.Exec(query, args...); err != nil {
-			return fmt.Errorf("failed to mark legacy audit logs as synced: %w", err)
+	// 3. Push Tier 2 metadata to /api/internal/audit/logs/ ("audit.sync")
+	if len(legacyPayload) > 0 {
+		if err := a.APIClient.CallNoContent("audit.sync", "POST", legacyPayload, nil, nil); err != nil {
+			syncErrors = append(syncErrors, fmt.Errorf("audit.sync API call failed: %w", err))
+		} else if len(legacyIDs) > 0 {
+			placeholders := make([]string, len(legacyIDs))
+			args := make([]interface{}, len(legacyIDs))
+			for i, id := range legacyIDs {
+				placeholders[i] = "?"
+				args[i] = id
+			}
+			query := fmt.Sprintf("UPDATE audit_events SET synced = 1 WHERE id IN (%s)", strings.Join(placeholders, ","))
+			if _, err := a.db.Exec(query, args...); err != nil {
+				syncErrors = append(syncErrors, fmt.Errorf("failed to mark legacy audit logs as synced: %w", err))
+			}
 		}
 	}
 
-	// 5. Update sync status for forensic logs
-	if len(forensicIDs) > 0 {
-		placeholders := make([]string, len(forensicIDs))
-		args := make([]interface{}, len(forensicIDs))
-		for i, id := range forensicIDs {
-			placeholders[i] = "?"
-			args[i] = id
+	// 4. Push Tier 3 forensic records to /api/internal/forensic/logs/ ("forensic.sync")
+	if len(forensicPayload) > 0 {
+		if err := a.APIClient.CallNoContent("forensic.sync", "POST", forensicPayload, nil, nil); err != nil {
+			syncErrors = append(syncErrors, fmt.Errorf("forensic.sync API call failed: %w", err))
+		} else if len(forensicIDs) > 0 {
+			placeholders := make([]string, len(forensicIDs))
+			args := make([]interface{}, len(forensicIDs))
+			for i, id := range forensicIDs {
+				placeholders[i] = "?"
+				args[i] = id
+			}
+			query := fmt.Sprintf("UPDATE forensic_audit_events SET synced = 1 WHERE id IN (%s)", strings.Join(placeholders, ","))
+			if _, err := a.db.Exec(query, args...); err != nil {
+				syncErrors = append(syncErrors, fmt.Errorf("failed to mark forensic audit logs as synced: %w", err))
+			}
 		}
-		query := fmt.Sprintf("UPDATE forensic_audit_events SET synced = 1 WHERE id IN (%s)", strings.Join(placeholders, ","))
-		if _, err := a.db.Exec(query, args...); err != nil {
-			return fmt.Errorf("failed to mark forensic audit logs as synced: %w", err)
-		}
+	}
+
+	if len(syncErrors) > 0 {
+		return fmt.Errorf("sync errors: %v", syncErrors)
 	}
 
 	return nil

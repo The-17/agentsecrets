@@ -145,7 +145,7 @@ agentsecrets status
 ### Notice drift and sync
 ```bash
 agentsecrets secrets diff
-# LOCAL ONLY:  PAYSTACK_KEY
+# LOCAL ONLY:  POLAR_KEY
 # REMOTE ONLY: SENDGRID_KEY
 # OUT OF SYNC: STRIPE_KEY (remote is newer)
 

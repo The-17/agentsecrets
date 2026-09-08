@@ -456,95 +456,106 @@ func RecordTypo(typo string) {
 
 // SyncIfDue checks if 24 hours have passed and flushes telemetry to the cloud.
 func SyncIfDue(client *api.Client, cliVersion string) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Ensure pending in-memory telemetry is saved to disk before CLI exits
-	defer func() { _ = flushLocked() }()
+	// Always ensure pending in-memory telemetry is saved to disk before CLI exits
+	defer Flush()
 
 	if client == nil {
 		return
 	}
 
+	mu.Lock()
 	_ = loadLocked()
 
-	if time.Since(data.LastSync) >= 24*time.Hour {
-		if len(data.Daily) == 0 {
-			data.LastSync = time.Now()
-			_ = saveLocked()
-			return
-		}
+	if time.Since(data.LastSync) < 24*time.Hour {
+		mu.Unlock()
+		return
+	}
 
-		// Update metadata for today's bucket before syncing
-		d := currentDayLocked()
-		d.CliVersion = cliVersion
-		if ResolveEnvironmentFunc != nil {
-			d.ActiveEnvironment = ResolveEnvironmentFunc()
-		} else {
-			d.ActiveEnvironment = "development"
-		}
-		if KeychainInitializedFunc != nil {
-			d.KeychainInitialized = KeychainInitializedFunc()
-		}
+	if len(data.Daily) == 0 {
+		data.LastSync = time.Now()
+		_ = saveLocked()
+		mu.Unlock()
+		return
+	}
 
-		wsType := "personal"
-		wsMemberCount := 1 // default, can be recorded via RecordWorkspaceMemberCount
-		if LoadGlobalConfigFunc != nil {
-			_, _, wType := LoadGlobalConfigFunc()
-			if wType != "" {
-				wsType = wType
-			}
+	// Update metadata for today's bucket before syncing
+	d := currentDayLocked()
+	d.CliVersion = cliVersion
+	if ResolveEnvironmentFunc != nil {
+		d.ActiveEnvironment = ResolveEnvironmentFunc()
+	} else {
+		d.ActiveEnvironment = "development"
+	}
+	if KeychainInitializedFunc != nil {
+		d.KeychainInitialized = KeychainInitializedFunc()
+	}
+
+	wsType := "personal"
+	wsMemberCount := 1 // default, can be recorded via RecordWorkspaceMemberCount
+	if LoadGlobalConfigFunc != nil {
+		_, _, wType := LoadGlobalConfigFunc()
+		if wType != "" {
+			wsType = wType
 		}
-		d.WorkspaceType = wsType
-		// Keep the recorded WorkspaceMemberCount if set, otherwise default to 1.
-		if d.WorkspaceMemberCount == 0 {
-			d.WorkspaceMemberCount = wsMemberCount
+	}
+	d.WorkspaceType = wsType
+	// Keep the recorded WorkspaceMemberCount if set, otherwise default to 1.
+	if d.WorkspaceMemberCount == 0 {
+		d.WorkspaceMemberCount = wsMemberCount
+	}
+
+	// Prepare snapshots. Each snapshot is the Day struct marshaled directly
+	// (its json tags already define the wire format) with the bucket's date
+	// promoted alongside the embedded fields. Marshaling the struct instead
+	// of hand-copying every field keeps the wire format in lockstep with the
+	// Day definition — adding a field to Day now needs no edit here.
+	var snapshots []daySnapshot
+	var syncedDates []string
+	currentDate := today()
+
+	for date, dayData := range data.Daily {
+		if date == currentDate {
+			// Don't send incomplete telemetry for the current day
+			continue
 		}
+		snapshots = append(snapshots, daySnapshot{Day: dayData, Date: date})
+		syncedDates = append(syncedDates, date)
+	}
 
-		// Prepare snapshots. Each snapshot is the Day struct marshaled directly
-		// (its json tags already define the wire format) with the bucket's date
-		// promoted alongside the embedded fields. Marshaling the struct instead
-		// of hand-copying every field keeps the wire format in lockstep with the
-		// Day definition — adding a field to Day now needs no edit here.
-		var snapshots []daySnapshot
-		var syncedDates []string
-		currentDate := today()
+	if len(snapshots) == 0 {
+		data.LastSync = time.Now()
+		_ = saveLocked()
+		mu.Unlock()
+		return
+	}
 
-		for date, dayData := range data.Daily {
-			if date == currentDate {
-				// Don't send incomplete telemetry for the current day
-				continue
-			}
-			snapshots = append(snapshots, daySnapshot{Day: dayData, Date: date})
-			syncedDates = append(syncedDates, date)
-		}
+	payload := map[string]interface{}{
+		"snapshots": snapshots,
+	}
 
-		if len(snapshots) == 0 {
-			data.LastSync = time.Now()
-			_ = saveLocked()
-			return
-		}
+	// Release mutex BEFORE the network call so re-entrant calls (e.g., token reading
+	// triggering RecordProcessVerificationsPassed) don't deadlock!
+	mu.Unlock()
 
-		payload := map[string]interface{}{
-			"snapshots": snapshots,
-		}
+	// Use a short-timeout clone of the client for telemetry sync to prevent
+	// broken DNS/network hangs. Cloning avoids mutating the shared client's
+	// timeout, which would otherwise race with concurrent API calls.
+	syncClient := client.Clone()
+	syncClient.HTTPClient.Timeout = 2500 * time.Millisecond
 
-		// Use a short-timeout clone of the client for telemetry sync to prevent
-		// broken DNS/network hangs. Cloning avoids mutating the shared client's
-		// timeout, which would otherwise race with concurrent API calls.
-		syncClient := client.Clone()
-		syncClient.HTTPClient.Timeout = 1500 * time.Millisecond
-
-		// Fire off the API call synchronously to ensure it completes before CLI exits.
-		if err := syncClient.CallNoContent("telemetry.sync", "POST", payload, nil, nil); err != nil {
+	// Fire off the API call synchronously to ensure it completes before CLI exits.
+	if err := syncClient.CallNoContent("telemetry.sync", "POST", payload, nil, nil); err != nil {
+		if os.Getenv("AGENTSECRETS_DEBUG") != "" {
 			fmt.Println("\n[DEBUG] Telemetry Sync Rejected by Backend:", err)
-		} else {
-			// Success! Clear only the synced daily buckets
-			for _, date := range syncedDates {
-				delete(data.Daily, date)
-			}
-			data.LastSync = time.Now()
-			_ = saveLocked()
 		}
+	} else {
+		// Success! Clear only the synced daily buckets under mutex lock
+		mu.Lock()
+		for _, date := range syncedDates {
+			delete(data.Daily, date)
+		}
+		data.LastSync = time.Now()
+		_ = saveLocked()
+		mu.Unlock()
 	}
 }

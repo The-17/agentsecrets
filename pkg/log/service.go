@@ -750,3 +750,63 @@ func (s *Service) GetRemoteLog(logID string) (*proxy.AuditEvent, error) {
 	return &ev, nil
 }
 
+// ForensicReplayResponse represents the remote API response for Tier 3 forensic decision replay.
+type ForensicReplayResponse struct {
+	ID            string                 `json:"id"`
+	WorkspaceID   string                 `json:"workspace_id"`
+	ProjectID     string                 `json:"project_id"`
+	StreamID      string                 `json:"stream_id"`
+	StreamSeq     int64                  `json:"stream_seq"`
+	PrevChainHash string                 `json:"prev_chain_hash"`
+	ChainHash     string                 `json:"chain_hash"`
+	EntryHash     string                 `json:"entry_hash"`
+	CreatedAt     string                 `json:"created_at"`
+	Event         map[string]interface{} `json:"event"`
+	Snapshot      map[string]interface{} `json:"snapshot"`
+	Enforcement   map[string]interface{} `json:"enforcement"`
+	Resolution    map[string]interface{} `json:"resolution"`
+	Steps         map[string]interface{} `json:"steps"`
+	Verified      bool                   `json:"verified"`
+}
+
+// GetRemoteForensicReplay fetches a forensic decision replay from the remote control plane.
+func (s *Service) GetRemoteForensicReplay(logID string) (*proxy.ForensicAuditEvent, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("API client not configured")
+	}
+
+	replay, err := api.CallJSON[ForensicReplayResponse](s.client, "forensic.replay", "GET", nil, map[string]string{"log_id": logID}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("remote forensic replay failed: %w", err)
+	}
+
+	var fe proxy.ForensicAuditEvent
+	fe.ID = replay.ID
+	fe.WorkspaceID = replay.WorkspaceID
+	fe.ProjectID = replay.ProjectID
+	fe.ChainHash = replay.ChainHash
+	if t, err := time.Parse(time.RFC3339, replay.CreatedAt); err == nil {
+		fe.CreatedAt = t
+	} else if t, err := time.Parse("2006-01-02T15:04:05.999999Z07:00", replay.CreatedAt); err == nil {
+		fe.CreatedAt = t
+	} else if t, err := time.Parse(time.RFC3339Nano, replay.CreatedAt); err == nil {
+		fe.CreatedAt = t
+	}
+
+	if b, err := json.Marshal(replay.Event); err == nil {
+		_ = json.Unmarshal(b, &fe.Event)
+	}
+	if b, err := json.Marshal(replay.Snapshot); err == nil {
+		_ = json.Unmarshal(b, &fe.Snapshot)
+	}
+	if b, err := json.Marshal(replay.Enforcement); err == nil {
+		_ = json.Unmarshal(b, &fe.Enforcement)
+	}
+	if b, err := json.Marshal(replay.Resolution); err == nil {
+		_ = json.Unmarshal(b, &fe.Resolution)
+	}
+
+	return &fe, nil
+}
+
+
