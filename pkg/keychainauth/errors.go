@@ -73,98 +73,76 @@ func getSelfPath() string {
 	return "agentsecrets"
 }
 
-func deniedMessage(reason reasonCode) string {
+// manualRepairHint returns the exact commands that will work on this machine, for
+// the rare case where automatic repair failed and the user must intervene.
+//
+// It resolves the keychain-auth binary to an absolute path on purpose. keychain-auth
+// is commonly installed under ~/.agentsecrets/bin, which is not on PATH and is not in
+// sudo's secure_path — so a bare `sudo keychain-auth ...` fails with "command not
+// found" and strands the user. It also only suggests sudo/systemctl when the daemon
+// actually runs in system mode.
+func manualRepairHint() string {
 	selfPath := getSelfPath()
-	if runtime.GOOS == "windows" {
-		switch reason {
-		case reasonUnregisteredBinary:
-			return fmt.Sprintf("This AgentSecrets binary is not yet registered/authorized with keychain-auth.\n"+
-				"Please authorize it by running:\n"+
-				"  keychain-auth authorize \"%s\" agentsecrets\n"+
-				"And then start the daemon:\n"+
-				"  keychain-auth start", selfPath)
-		case reasonHashMismatch:
-			return fmt.Sprintf("Security check failed: the AgentSecrets binary has changed since it was registered.\n"+
-				"Please re-authorize it by running:\n"+
-				"  keychain-auth authorize \"%s\" agentsecrets\n"+
-				"And then start the daemon:\n"+
-				"  keychain-auth start", selfPath)
-		case reasonActionNotInPolicy:
-			return "keychain-auth policy does not allow this operation for AgentSecrets.\n" +
-				"Check your keychain-auth configuration."
-		case reasonServiceNotAllowed:
-			return "keychain-auth policy does not allow AgentSecrets to access this service namespace.\n" +
-				"Check your keychain-auth configuration."
-		case reasonTargetNotAllowed:
-			return "keychain-auth policy does not allow access to this secret.\n" +
-				"Check your keychain-auth configuration."
-		case reasonMalformedRequest:
-			return "keychain-auth received a malformed request. This is a bug — please report it."
-		case reasonInternalError:
-			return "keychain-auth encountered an internal error. Try restarting the daemon:\n" +
-				"  keychain-auth start"
-		default:
-			return fmt.Sprintf("keychain-auth denied the request: %s", reason)
+	kcPath := findBestDaemon()
+	if kcPath == "" {
+		return "  agentsecrets doctor\n\n" +
+			"keychain-auth could not be located. 'agentsecrets doctor' will install it."
+	}
+
+	elevate := ""
+	restart := fmt.Sprintf("  %s start", kcPath)
+	if runtime.GOOS != "windows" && requiresSudoForRegistration(kcPath) {
+		elevate = "sudo "
+		if _, err := os.Stat("/etc/systemd/system/keychain-auth.service"); err == nil {
+			restart = "  sudo systemctl restart keychain-auth"
+		} else {
+			restart = fmt.Sprintf("  sudo %s start", kcPath)
 		}
 	}
 
+	return fmt.Sprintf("  %s%s authorize %q %s\n%s", elevate, kcPath, selfPath, serviceName, restart)
+}
+
+func deniedMessage(reason reasonCode) string {
 	switch reason {
 	case reasonUnregisteredBinary:
-		return fmt.Sprintf("This AgentSecrets binary is not yet registered/authorized with keychain-auth.\n"+
-			"Please authorize it by running:\n"+
-			"  sudo keychain-auth authorize %s agentsecrets\n"+
-			"And then restart the daemon:\n"+
-			"  sudo systemctl restart keychain-auth", selfPath)
+		return "This AgentSecrets binary is not yet authorized with keychain-auth.\n\n" +
+			"Fix it automatically:\n" +
+			"  agentsecrets doctor\n\n" +
+			"Or authorize it manually:\n" + manualRepairHint()
 	case reasonHashMismatch:
-		return fmt.Sprintf("Security check failed: the AgentSecrets binary has changed since it was registered.\n"+
-			"Please re-authorize it by running:\n"+
-			"  sudo keychain-auth authorize %s agentsecrets\n"+
-			"And then restart the daemon:\n"+
-			"  sudo systemctl restart keychain-auth", selfPath)
+		return "Security check: this AgentSecrets binary changed since it was authorized.\n" +
+			"This is expected right after an upgrade.\n\n" +
+			"Fix it automatically:\n" +
+			"  agentsecrets doctor\n\n" +
+			"Or re-authorize it manually:\n" + manualRepairHint()
 	case reasonActionNotInPolicy:
 		return "keychain-auth policy does not allow this operation for AgentSecrets.\n" +
-			"Check your keychain-auth configuration."
+			"Run 'agentsecrets doctor' to inspect and repair the policy."
 	case reasonServiceNotAllowed:
 		return "keychain-auth policy does not allow AgentSecrets to access this service namespace.\n" +
-			"Check your keychain-auth configuration."
+			"Run 'agentsecrets doctor' to inspect and repair the policy."
 	case reasonTargetNotAllowed:
 		return "keychain-auth policy does not allow access to this secret.\n" +
 			"Check your keychain-auth configuration."
 	case reasonMalformedRequest:
 		return "keychain-auth received a malformed request. This is a bug — please report it."
 	case reasonInternalError:
-		return "keychain-auth encountered an internal error. Try restarting the daemon:\n" +
-			"  keychain-auth start"
+		return "keychain-auth encountered an internal error.\n" +
+			"Run 'agentsecrets doctor' to restart it."
 	default:
-		return fmt.Sprintf("keychain-auth denied the request: %s", reason)
+		return fmt.Sprintf("keychain-auth denied the request: %s\n"+
+			"Run 'agentsecrets doctor' to diagnose and repair.", reason)
 	}
 }
 
 func daemonNotRunningMessage(socketPath string) string {
-	selfPath := getSelfPath()
-	if runtime.GOOS == "windows" {
-		return fmt.Sprintf(`keychain-auth daemon is not running.
-
-AgentSecrets requires keychain-auth to read secrets securely.
-
-To start the keychain-auth daemon on Windows, please run:
-  keychain-auth start
-
-And then authorize this binary:
-  keychain-auth authorize "%s" agentsecrets`, selfPath)
-	}
-
 	return fmt.Sprintf(`keychain-auth daemon is not running.
 
 AgentSecrets requires keychain-auth to read secrets securely.
 
-To install and start the keychain-auth daemon, please run:
-  sudo keychain-auth install
-  sudo systemctl start keychain-auth
+Fix it automatically:
+  agentsecrets doctor
 
-And then authorize this binary:
-  sudo keychain-auth authorize %s agentsecrets
-  sudo systemctl restart keychain-auth
-
-Socket expected at: %s`, selfPath, socketPath)
+Socket expected at: %s`, socketPath)
 }

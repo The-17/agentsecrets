@@ -256,7 +256,6 @@ func runSecretsPolicySet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-
 func runSecretsPolicyGet(cmd *cobra.Command, args []string) error {
 	key := args[0]
 
@@ -386,7 +385,6 @@ func runSecretsPolicyDelete(cmd *cobra.Command, args []string) error {
 	ui.Success(fmt.Sprintf("Policy deleted for secret %s", key))
 	return nil
 }
-
 
 func runSecretsPolicyList(cmd *cobra.Command, _ []string) error {
 	project, err := config.LoadProjectConfig()

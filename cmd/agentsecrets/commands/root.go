@@ -19,7 +19,7 @@ import (
 )
 
 // Version is set at build time via ldflags
-var Version = "3.2.3"
+var Version = "3.3.0"
 
 // rootCmd is the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -51,6 +51,27 @@ func Execute() error {
 
 	// Ensure keychain-auth socket is closed on exit
 	defer keychainauth.Close()
+
+	// Self-healing policy for this invocation.
+	//
+	// Machine-facing paths must never trigger an interactive elevation prompt, so
+	// they opt out of request-time repair entirely and surface the denial instead;
+	// `agentsecrets doctor` remains the explicit way to fix them.
+	keychainauth.DisableAutoRepair = skipPreamble()
+
+	// Request-time repair never prompts for elevation: it runs while a command may
+	// already own the terminal with a spinner, where a hidden prompt would look like
+	// a hang. Elevation is prompted for in the middleware (before the command runs,
+	// so it is visible); here the repair reuses that credential and, if it is
+	// missing, fails fast with a re-run message.
+	keychainauth.AutoRepairNotice = func(reason string, repair func() error) error {
+		fmt.Println()
+		ui.Warning(reason)
+		if selfPath, err := keychainauth.SelfPath(); err == nil {
+			ui.Info("  Binary: " + selfPath)
+		}
+		return ui.Spinner("Re-authorizing this binary...", repair)
+	}
 
 	// Register verb-noun and singular/plural command aliases. Done here (not in
 	// an init) so every command's flags and subcommands are already registered,
@@ -90,8 +111,11 @@ func Execute() error {
 		// Run update check. It's efficient (24h interval) and has a short timeout.
 		if res, _ := config.CheckForUpdates(Version); res != nil && res.NewVersionAvailable {
 			ui.Banner(fmt.Sprintf("Update Available: %s → %s", res.CurrentVersion, res.LatestVersion))
-			ui.Info("Run 'brew upgrade agentsecrets', 'npm install -g @the-17/agentsecrets',")
-			ui.Info("or 'pip install agentsecrets-cli' to update.")
+			// Use each channel's *update* command, not its install command: an
+			// install hint confuses users who already have it installed, and a
+			// plain `pip install`/`npm install` won't reliably upgrade in place.
+			ui.Info("Run 'brew upgrade agentsecrets', 'npm update -g @the-17/agentsecrets',")
+			ui.Info("or 'pip install --upgrade agentsecrets-cli' to update.")
 			ui.Divider()
 			fmt.Println()
 		}
@@ -109,7 +133,17 @@ func Execute() error {
 		// app.API() constructs the service graph lazily; a metadata-only path that
 		// skipped the preamble never built the API client, so this path doesn't
 		// force construction either.
-		defer telemetry.SyncIfDue(app.API(), Version)
+		//
+		// The sync's token read can cold-start a keychain connection, which must not
+		// trigger a request-time repair: that would prompt for elevation at process
+		// teardown, with no terminal. So repair is suppressed for the duration of
+		// the sync and restored afterwards.
+		defer func() {
+			prevAutoRepair := keychainauth.DisableAutoRepair
+			keychainauth.DisableAutoRepair = true
+			telemetry.SyncIfDue(app.API(), Version)
+			keychainauth.DisableAutoRepair = prevAutoRepair
+		}()
 	}
 
 	if err := rootCmd.Execute(); err != nil {
@@ -206,9 +240,8 @@ func ensureSudoCached(reason string) {
 func keychainRequiredError(action string, cause error) error {
 	ui.Error(action + " failed: " + cause.Error())
 	fmt.Println()
-	ui.Info("You can set it up manually:")
-	ui.Info("  brew install The-17/tap/keychain-auth")
-	ui.Info("  keychain-auth start")
+	ui.Info("AgentSecrets could not reach its secure credential store.")
+	ui.Info("Run 'agentsecrets doctor' to diagnose and repair it automatically.")
 	fmt.Println()
 	return fmt.Errorf("keychain-auth is required for secure credentials storage")
 }
@@ -218,10 +251,10 @@ func keychainRequiredError(action string, cause error) error {
 type recoveryKind int
 
 const (
-	recoverNone       recoveryKind = iota // unrecoverable — surface to the user
-	recoverDaemon                         // daemon missing/not running — clean socket + (re)start
-	recoverProtocol                       // protocol/version mismatch — restart daemon in place
-	recoverRegister                       // binary unregistered/hash-changed/conn dropped — re-register + restart
+	recoverNone     recoveryKind = iota // unrecoverable — surface to the user
+	recoverDaemon                       // daemon missing/not running — clean socket + (re)start
+	recoverProtocol                     // protocol/version mismatch — restart daemon in place
+	recoverRegister                     // binary unregistered/hash-changed/conn dropped — re-register + restart
 )
 
 // classifyInitError maps an Init() error to the recovery action that applies.
@@ -282,16 +315,9 @@ func recoverDaemonState(kind recoveryKind) error {
 	case recoverRegister:
 		keychainauth.Close()
 		ensureSudoCached("keychain-auth binary registration is required. Please authorize when prompted.")
-		if err := ui.Spinner("Registering agentsecrets binary with daemon...", func() error {
-			kcPath, err := keychainauth.EnsureInstalled()
-			if err != nil {
-				return err
-			}
-			if err := keychainauth.EnsureRegistered(kcPath); err != nil {
-				return err
-			}
-			return keychainauth.RestartDaemon()
-		}); err != nil {
+		// RegisterAndActivate authorizes, restarts the daemon so the new policy is
+		// live, and verifies the daemon accepts us before returning.
+		if err := ui.Spinner("Registering agentsecrets binary with daemon...", keychainauth.RegisterAndActivate); err != nil {
 			return keychainRequiredError("keychain-auth registration", err)
 		}
 		return keychainauth.Init()
@@ -302,10 +328,10 @@ func recoverDaemonState(kind recoveryKind) error {
 }
 
 // ensureDaemonInitialized ensures that:
-// 1. The keychain-auth daemon is set up and running (AutoSetup if missing/outdated)
-// 2. The client is successfully initialized and connected to the daemon socket/named pipe
-// 3. Our binary is still accepted (registered) by the daemon — checked only when
-//    the binary changed since it was last accepted (e.g. right after an upgrade).
+//  1. The keychain-auth daemon is set up and running (AutoSetup if missing/outdated)
+//  2. The client is successfully initialized and connected to the daemon socket/named pipe
+//  3. Our binary is still accepted (registered) by the daemon — checked only when
+//     the binary changed since it was last accepted (e.g. right after an upgrade).
 //
 // Recovery is a bounded loop: each failure is classified into a typed recoveryKind,
 // the matching repair runs at most once per kind, and the attempt is retried. A
@@ -329,15 +355,13 @@ func ensureDaemonInitialized() error {
 		}
 	}
 
-	// Step 3: When our binary changed since it was last accepted (e.g. right after
-	// an agentsecrets upgrade), this is also when a co-released daemon upgrade is
-	// due — RequiredDaemonVersion is baked into this binary. Bring the daemon up to
-	// the required version first, before connecting, so we Init against the new
-	// daemon rather than connecting to the old one and then restarting it out from
-	// under ourselves. Gated by the same local marker as Step 5, so an unchanged
-	// binary skips this entirely and adds no per-command latency.
+	// Step 3: Keep the daemon current. Daemon freshness is its own concern, so it
+	// is checked on its own signal rather than only when this binary changed — a
+	// stale daemon left behind by an interrupted upgrade must still be repaired
+	// even when agentsecrets itself is unchanged. DaemonUpdateNeeded is a cheap
+	// stat plus one `--version` exec, so an up-to-date daemon costs almost nothing.
 	binaryChanged := binaryVerificationNeeded()
-	if binaryChanged && keychainauth.DaemonUpdateNeeded() {
+	if keychainauth.DaemonUpdateNeeded() {
 		ensureSudoCached("A keychain-auth daemon update is required. Please authorize when prompted.")
 		if err := ui.Spinner("Updating keychain-auth daemon...", keychainauth.EnsureDaemonUpToDate); err != nil {
 			return keychainRequiredError("keychain-auth update", err)

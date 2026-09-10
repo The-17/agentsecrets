@@ -23,10 +23,10 @@ var workspaceCmd = &cobra.Command{
 }
 
 var workspaceSwitchCmd = &cobra.Command{
-	Use:   "switch [name]",
-	Short: "Switch active workspace",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runWorkspaceSwitch,
+	Use:               "switch [name]",
+	Short:             "Switch active workspace",
+	Args:              cobra.MaximumNArgs(1),
+	RunE:              runWorkspaceSwitch,
 	ValidArgsFunction: autocompleteWorkspaces,
 }
 
@@ -75,10 +75,10 @@ func init() {
 			RunE:  runWorkspaceDemote,
 		},
 		&cobra.Command{
-			Use:   "delete [name]",
-			Short: "Delete a workspace",
-			Args:  cobra.MaximumNArgs(1),
-			RunE:  runWorkspaceDelete,
+			Use:               "delete [name]",
+			Short:             "Delete a workspace",
+			Args:              cobra.MaximumNArgs(1),
+			RunE:              runWorkspaceDelete,
 			ValidArgsFunction: autocompleteWorkspaces,
 		},
 	)

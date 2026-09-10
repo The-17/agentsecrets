@@ -178,6 +178,18 @@ TIME      RESULT  METHOD  URL                              KEY          AUTH    
 
 ---
 
+## Troubleshooting
+
+Something not working or hit a daemon authorization denial? Run:
+
+```bash
+agentsecrets doctor
+```
+
+The doctor inspects the full local trust chain, repairs authorization mismatches, and re-verifies your installation.
+
+---
+
 ## Next Steps
 
 - [Command Reference](commands/) — full reference for every subcommand

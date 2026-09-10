@@ -339,7 +339,23 @@ To avoid manual UAC/sudo elevation prompts when `agentsecrets` is updated (which
 *   The daemon verifies the signature against a list of trusted developer public keys in `/etc/keychain-auth/config.json`.
 *   If valid, the new hash is auto-registered silently without user intervention.
 
-### Auto-Setup
+### Auto-Setup & Self-Healing Activation (`RegisterAndActivate`)
+The first time a command requiring secrets is run (or whenever an upgrade occurs), `agentsecrets` ensures seamless operation:
+1.  **Automatic Daemon Upgrades**: On startup, the CLI detects if the installed or running daemon is older than `RequiredDaemonVersion` (v3.3.0). If outdated, it automatically upgrades and restarts the daemon.
+2.  **Atomic Activation Contract**: Rather than merely writing to disk, binary registration executes the `RegisterAndActivate` sequence:
+    * `authorize`: submits the current binary path and SHA-256 hash to the daemon trust store.
+    * `restart`: restarts the daemon to flush in-memory policy and load the new authorization.
+    * `live-verify`: reconnects and executes a live grant probe to guarantee access before returning.
+3.  **Request-Time Auto-Healing**: If a secret operation ever encounters a `DaemonDeniedError` (`[SEC-403]`), the client automatically triggers a once-per-process self-healing re-registration and retry.
+4.  **Prompt-Safe Elevation**: Prior to displaying spinners, `agentsecrets` caches required permissions up-front so password prompts are fully interactive and never corrupted.
+5.  **Hardened Trust Store Permissions**: Trust stores are maintained at `0640 root:keychain-auth`, preventing world-readability while preserving daemon access.
+
+### Self-Healing & Diagnostic Reconciler (`agentsecrets doctor`)
+`agentsecrets doctor` shares the exact same diagnostic and recovery primitives as the CLI runtime:
+- Performs 8 deterministic checks across daemon installation, running state, version currency, binary attestation, live policy grant, socket dialability, store permissions, and credential decryption.
+- Supports `--check-only` for non-modifying audits and `--json` for automated CI/CD gating (exiting `1` when broken).
+- Any fixable failure triggers immediate remediation and re-verification.
+
 The first time a command requiring secrets is run, `agentsecrets` automatically sets up the daemon:
 1.  **Installation**: Detects or installs `keychain-auth` via Homebrew or platform packages.
 2.  **Sandbox Provisioning (Linux)**: Executes `sudo keychain-auth install` to create the unprivileged system user (`keychain-auth`), the dedicated daemon group (`agentgroup`), and the systemd unit.

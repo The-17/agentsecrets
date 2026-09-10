@@ -1,6 +1,7 @@
 package errors
 
 import (
+	stderrors "errors"
 	"fmt"
 	"net"
 	"os"
@@ -9,21 +10,21 @@ import (
 type ErrorCode string
 
 const (
-	ErrSecretNotFound    ErrorCode = "SEC-404"
-	ErrKeychainLocked    ErrorCode = "KEY-501"
-	ErrKeychainHeadless  ErrorCode = "KEY-502"
-	ErrUnauthorized      ErrorCode = "AUTH-401"
+	ErrSecretNotFound     ErrorCode = "SEC-404"
+	ErrKeychainLocked     ErrorCode = "KEY-501"
+	ErrKeychainHeadless   ErrorCode = "KEY-502"
+	ErrUnauthorized       ErrorCode = "AUTH-401"
 	ErrInvalidCredentials ErrorCode = "AUTH-402"
-	ErrForbidden         ErrorCode = "AUTH-403"
-	ErrServerInternal    ErrorCode = "SRV-500"
-	ErrConnection        ErrorCode = "NET-101"
-	ErrConnectionTimeout ErrorCode = "NET-102"
-	ErrPermissionDenied  ErrorCode = "SYS-403"
-	ErrFileNotFound      ErrorCode = "SYS-404"
-	ErrBinaryUnapproved  ErrorCode = "SEC-403"
-	ErrLogNotFound       ErrorCode = "LOG-404"
-	ErrAgentNotFound     ErrorCode = "AGE-404"
-	ErrUnknown           ErrorCode = "ERR-999"
+	ErrForbidden          ErrorCode = "AUTH-403"
+	ErrServerInternal     ErrorCode = "SRV-500"
+	ErrConnection         ErrorCode = "NET-101"
+	ErrConnectionTimeout  ErrorCode = "NET-102"
+	ErrPermissionDenied   ErrorCode = "SYS-403"
+	ErrFileNotFound       ErrorCode = "SYS-404"
+	ErrBinaryUnapproved   ErrorCode = "SEC-403"
+	ErrLogNotFound        ErrorCode = "LOG-404"
+	ErrAgentNotFound      ErrorCode = "AGE-404"
+	ErrUnknown            ErrorCode = "ERR-999"
 )
 
 type CLIError struct {
@@ -53,6 +54,14 @@ func New(code ErrorCode, message string, err error) *CLIError {
 	}
 }
 
+// keychainDenial is satisfied by keychainauth.DaemonDeniedError. It is declared
+// here, at the consumer, so this package stays free of a dependency on
+// keychainauth (which would be a cycle: keychainauth -> ... -> errors).
+type keychainDenial interface {
+	IsUnregistered() bool
+	IsHashMismatch() bool
+}
+
 // FromError auto-classifies standard library errors or wraps generic errors
 func FromError(err error) *CLIError {
 	if err == nil {
@@ -62,6 +71,17 @@ func FromError(err error) *CLIError {
 	// Already wrapped
 	if cliErr, ok := err.(*CLIError); ok {
 		return cliErr
+	}
+
+	// Keychain denials are a known, actionable class — never let them fall through
+	// to the generic "unexpected error" bucket, which tells the user to email
+	// support for something the CLI can explain and usually repair itself.
+	var denial keychainDenial
+	if stderrors.As(err, &denial) {
+		if denial.IsUnregistered() || denial.IsHashMismatch() {
+			return New(ErrBinaryUnapproved, "This AgentSecrets binary is not authorized to read your secrets", err)
+		}
+		return New(ErrForbidden, "keychain-auth denied this request", err)
 	}
 
 	// Network failures

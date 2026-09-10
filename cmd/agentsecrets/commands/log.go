@@ -844,7 +844,7 @@ var logReplayCmd = &cobra.Command{
 		if len(fe.Snapshot.Workspace.Allowlist) > 0 {
 			fmt.Printf("  Allowlist:        %s\n", strings.Join(fe.Snapshot.Workspace.Allowlist, ", "))
 		}
-		
+
 		allowResult := "PASS"
 		allowReason := fmt.Sprintf("Domain %s is permitted by allowlist", fe.Event.Domain)
 		for _, layer := range fe.Enforcement.LayersEvaluated {
@@ -902,7 +902,7 @@ var logReplayCmd = &cobra.Command{
 		}
 		ui.StatusRow("Final Decision", decisionColor)
 		ui.StatusRow("Decided By", fe.Enforcement.DecidedBy)
-		
+
 		injStr := "Not injected"
 		if fe.Resolution.CredentialInjected {
 			injStr = fmt.Sprintf("Injected successfully via %s", fe.Resolution.InjectionStyle)

@@ -228,36 +228,36 @@ func runProxyStatus(cmd *cobra.Command, args []string) error {
 			ui.StatusRow("Port:", fmt.Sprintf("%d", port))
 			ui.StatusRow("Uptime:", formatUptime(startTime))
 
-		// Try to fetch live metrics from /health
-		healthURL := fmt.Sprintf("http://localhost:%d/health", port)
-		client := &http.Client{Timeout: 1 * time.Second}
-		resp, err := client.Get(healthURL)
-		if err == nil {
-			defer resp.Body.Close()
-			var health struct {
-				LastSync     string   `json:"last_sync"`
-				RevokedCount int      `json:"revoked_count"`
-				RevokedIDs   []string `json:"revoked_ids"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&health); err == nil {
-				syncVal := "never"
-				if t, err := time.Parse(time.RFC3339, health.LastSync); err == nil && !t.IsZero() {
-					syncVal = formatUptime(t) + " ago"
+			// Try to fetch live metrics from /health
+			healthURL := fmt.Sprintf("http://localhost:%d/health", port)
+			client := &http.Client{Timeout: 1 * time.Second}
+			resp, err := client.Get(healthURL)
+			if err == nil {
+				defer resp.Body.Close()
+				var health struct {
+					LastSync     string   `json:"last_sync"`
+					RevokedCount int      `json:"revoked_count"`
+					RevokedIDs   []string `json:"revoked_ids"`
 				}
-				ui.StatusRow("Last sync:", syncVal)
-				if health.RevokedCount > 0 {
-					ui.StatusRow("Revoked IDs:", fmt.Sprintf("%d (%s)", health.RevokedCount, strings.Join(health.RevokedIDs, ", ")))
+				if err := json.NewDecoder(resp.Body).Decode(&health); err == nil {
+					syncVal := "never"
+					if t, err := time.Parse(time.RFC3339, health.LastSync); err == nil && !t.IsZero() {
+						syncVal = formatUptime(t) + " ago"
+					}
+					ui.StatusRow("Last sync:", syncVal)
+					if health.RevokedCount > 0 {
+						ui.StatusRow("Revoked IDs:", fmt.Sprintf("%d (%s)", health.RevokedCount, strings.Join(health.RevokedIDs, ", ")))
+					} else {
+						ui.StatusRow("Revoked IDs:", "0")
+					}
 				} else {
-					ui.StatusRow("Revoked IDs:", "0")
+					ui.StatusRowDim("Last sync:", "(failed to parse health data)")
+					ui.StatusRowDim("Revoked IDs:", "(failed to parse health data)")
 				}
 			} else {
-				ui.StatusRowDim("Last sync:", "(failed to parse health data)")
-				ui.StatusRowDim("Revoked IDs:", "(failed to parse health data)")
+				ui.StatusRowDim("Last sync:", "(proxy unreachable for status check)")
+				ui.StatusRowDim("Revoked IDs:", "(proxy unreachable for status check)")
 			}
-		} else {
-			ui.StatusRowDim("Last sync:", "(proxy unreachable for status check)")
-			ui.StatusRowDim("Revoked IDs:", "(proxy unreachable for status check)")
-		}
 		}
 	}
 
@@ -614,8 +614,8 @@ func runProxyRotateSession(cmd *cobra.Command, args []string) error {
 	}
 
 	var rotResp struct {
-		Status  string `json:"status"`
-		Message string `json:"message"`
+		Status   string `json:"status"`
+		Message  string `json:"message"`
 		NewToken string `json:"new_token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rotResp); err != nil {

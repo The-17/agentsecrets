@@ -79,6 +79,16 @@ pip install agentsecrets-cli
 go install github.com/The-17/agentsecrets/cmd/agentsecrets@v3.0.0
 ```
 
+## Troubleshooting & Self-Healing
+
+If you encounter issues with credentials, binary registration, or the keychain daemon after an upgrade:
+
+```bash
+agentsecrets doctor
+```
+
+`agentsecrets doctor` verifies the local trust chain, checks daemon health, repairs registration mismatches, and re-verifies your installation automatically.
+
 ## Quick Start
 
 ```bash

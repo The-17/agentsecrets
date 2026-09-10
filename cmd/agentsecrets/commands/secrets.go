@@ -60,7 +60,6 @@ var secretsSetCmd = &cobra.Command{
 	RunE:  runSecretsSet,
 }
 
-
 var secretsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all secret keys in the cloud",
@@ -73,7 +72,7 @@ var secretsListCmd = &cobra.Command{
 		}
 		return nil
 	},
-	RunE:  runSecretsList,
+	RunE: runSecretsList,
 }
 
 var secretsPullCmd = &cobra.Command{
@@ -185,7 +184,6 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
-
 
 func runSecretsList(cmd *cobra.Command, args []string) error {
 	if listRemote {

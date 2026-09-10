@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/The-17/agentsecrets/pkg/capabilities"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
-	"github.com/The-17/agentsecrets/pkg/capabilities"
 
 	"github.com/The-17/agentsecrets/pkg/agents"
 	"github.com/The-17/agentsecrets/pkg/config"
@@ -22,9 +22,9 @@ var (
 )
 
 var agentCmd = &cobra.Command{
-	Use:   "agent",
-	Short: "Manage agent identities and tokens",
-	Long:  "Manage agent identities and tokens for the current workspace.\n\nAgents are named identities that can be bound to credential calls.\nEvery call through the proxy is logged with the calling agent's identity.\nIssued tokens provide cryptographically verified identity.",
+	Use:               "agent",
+	Short:             "Manage agent identities and tokens",
+	Long:              "Manage agent identities and tokens for the current workspace.\n\nAgents are named identities that can be bound to credential calls.\nEvery call through the proxy is logged with the calling agent's identity.\nIssued tokens provide cryptographically verified identity.",
 	PersistentPreRunE: keychainAuthMiddleware,
 }
 

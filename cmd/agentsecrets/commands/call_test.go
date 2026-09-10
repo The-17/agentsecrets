@@ -113,12 +113,12 @@ func TestEmitCallJSONSuccess(t *testing.T) {
 // TestEmitCallJSONError returns silent exit on >=400.
 func TestEmitCallJSONError(t *testing.T) {
 	out := callResultJSON{
-		Status:   502,
-		Headers:  map[string][]string{},
-		Body:     "Bad Gateway",
-		Redacted: false,
+		Status:     502,
+		Headers:    map[string][]string{},
+		Body:       "Bad Gateway",
+		Redacted:   false,
 		DurationMs: 0,
-		Error:    "upstream",
+		Error:      "upstream",
 	}
 	err := emitCallJSON(out)
 	if err == nil {
@@ -141,12 +141,12 @@ func TestEmitCallJSONError(t *testing.T) {
 // TestEmitCallJSONErrorZeroStatus returns silent exit on error string.
 func TestEmitCallJSONErrorZeroStatus(t *testing.T) {
 	out := callResultJSON{
-		Status:   0,
-		Headers:  map[string][]string{},
-		Body:     "",
-		Redacted: false,
+		Status:     0,
+		Headers:    map[string][]string{},
+		Body:       "",
+		Redacted:   false,
 		DurationMs: 0,
-		Error:    "something went wrong",
+		Error:      "something went wrong",
 	}
 	err := emitCallJSON(out)
 	if err == nil {

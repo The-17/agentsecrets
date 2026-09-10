@@ -113,3 +113,13 @@ For production Linux systemd deployment, Nginx/Caddy TLS setup, Kubernetes manif
 👉 **[Self-Hosting Operations Manual](https://docs.agentsecrets.tech/guides/self-hosting)**
 👉 **[Server Architecture & Deployment](https://docs.agentsecrets.tech/api/self-hosting)**
 👉 **[CLI Server Command Reference](https://docs.agentsecrets.tech/cli/server)**
+
+---
+
+## Troubleshooting
+
+If you encounter keychain authorization errors when linking to your self-hosted server:
+
+```bash
+agentsecrets doctor
+```

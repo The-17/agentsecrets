@@ -82,3 +82,13 @@ agentsecrets secrets pull             # pull secrets to keychain
 ```
 
 No need to re-run `init` unless you want to create a new project.
+
+## Troubleshooting & Diagnostic Health
+
+If `login` succeeds with the server but local credential storage reports an authorization denial or unhandled error, run:
+
+```bash
+agentsecrets doctor
+```
+
+The doctor automatically reconciles binary registration, updates daemon policy, and verifies local credential access.

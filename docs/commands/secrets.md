@@ -198,3 +198,13 @@ The storage mode is set during `agentsecrets init` and stored in `.agentsecrets/
 For complete secrets management workflows and policy guides, visit:
 👉 **[Secrets Management Guide](https://docs.agentsecrets.tech/secrets/managing)**
 👉 **[Secret Policies Reference](https://docs.agentsecrets.tech/concepts/secret-policies)**
+
+## Troubleshooting Secret Access
+
+If `secrets pull`, `secrets set`, or `secrets list` fails with `[SEC-403]` (Binary Authorization Denied) or a daemon communication error, run:
+
+```bash
+agentsecrets doctor
+```
+
+The doctor diagnoses local trust chain health and automatically authorizes and activates the current binary.

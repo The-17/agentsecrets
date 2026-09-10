@@ -160,7 +160,7 @@ func runDocs(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	cachePath := filepath.Join(paths.GlobalDir, "llms-full.txt")
-	
+
 	useCache := false
 	if info, err := os.Stat(cachePath); err == nil {
 		// Cache is valid if it's less than 24 hours old

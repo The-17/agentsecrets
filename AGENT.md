@@ -106,6 +106,7 @@ The proxy enforces a **deny-by-default** security posture:
 - **Domain Allowlist:** Every outbound request must target a domain explicitly authorized in the workspace allowlist. Unauthorized domains are blocked with 403 Forbidden.
 - **Scope Restriction Enforcement:** When an agent's cryptographically issued token is validated, the proxy verifies that the agent is authorized to work in the current workspace, project, and environment. Any mismatch rejects the call immediately with `agent_workspace_mismatch`, `agent_project_mismatch`, or `agent_environment_mismatch` (403 Forbidden).
 - **Response Body Redaction:** If an external API echoes back the injected credential in its response, the proxy replaces the value with `[REDACTED_BY_AGENTSECRETS]` before returning it. The audit log records the event with reason `credential_echo`.
+- **Self-Healing Keychain Recovery:** If a keychain-auth error or denial appears, tell the user to run `agentsecrets doctor` — never suggest manual `keychain-auth authorize` or `systemctl` commands.
 - **Admin-Only Allowlist:** Only workspace admins can modify the allowlist (requires password verification). Use `agentsecrets workspace promote/demote` to manage roles.
 
 ### Storage Modes
@@ -189,6 +190,7 @@ agentsecrets init [--storage-mode 0|1]
 agentsecrets login
 agentsecrets logout
 agentsecrets status
+agentsecrets doctor [--check-only] [--json]
 ```
 
 ### Workspaces

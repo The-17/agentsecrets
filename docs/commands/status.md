@@ -19,3 +19,13 @@ agentsecrets status
 
 For complete status options and troubleshooting, visit:
 👉 **[System Status Documentation](https://docs.agentsecrets.tech/cli/status)**
+
+## Troubleshooting System Health
+
+If `agentsecrets status` indicates that the keychain daemon is inactive or authorization has failed:
+
+```bash
+agentsecrets doctor
+```
+
+The doctor command performs a complete 8-point audit of local security components and automatically self-heals broken state.
