@@ -149,9 +149,15 @@ func runEnv(cmd *cobra.Command, args []string) error {
 	// Generate secret variants for masking
 	maskingSecrets := generateVariants(secrets)
 
+	// Make this process non-dumpable before spawning: the child runs as the same
+	// user and is our descendant, so by default it could read our memory and drive
+	// our authenticated keychain-auth socket.
+	hardenParentProcess()
+
 	// Build child process
 	childCmd := exec.Command(commandPath, commandArgs[1:]...)
 	childCmd.Env = env
+	childCmd.SysProcAttr = childSysProcAttr()
 	childCmd.Stdin = os.Stdin
 	stdoutMasker := &MaskingWriter{underlying: os.Stdout, secrets: maskingSecrets}
 	stderrMasker := &MaskingWriter{underlying: os.Stderr, secrets: maskingSecrets}
