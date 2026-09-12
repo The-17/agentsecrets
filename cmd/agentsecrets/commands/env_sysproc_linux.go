@@ -3,7 +3,11 @@
 package commands
 
 import (
+	"debug/elf"
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"syscall"
 )
 
@@ -21,7 +25,7 @@ func hardenParentProcess() {
 }
 
 // childSysProcAttr detaches the child from our controlling terminal. It keeps the
-// inherited stdin/stdout/stderr file descriptors but leaves the child with no
+// inherited stdin/stdout/stderr descriptors but leaves the child with no
 // controlling tty, so it cannot open /dev/tty to print secrets around our masking.
 func childSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
@@ -34,4 +38,44 @@ func isTerminal(f *os.File) bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// sandboxArgv wraps cmd so it runs with no network egress: a private network
+// namespace with only loopback. Unprivileged user namespaces make this possible
+// without root; the child is mapped to root inside its own namespace so its file
+// access is unchanged.
+func sandboxArgv(args []string) ([]string, error) {
+	unshare, err := exec.LookPath("unshare")
+	if err != nil {
+		return nil, fmt.Errorf("--sandbox requires 'unshare' (util-linux), not found in PATH")
+	}
+	return append([]string{unshare, "--user", "--map-root-user", "--net", "--fork", "--"}, args...), nil
+}
+
+// guardAttachWarning returns a message when the guard library cannot attach to
+// target, or "" when it can. On Linux the blocker is static linking: the dynamic
+// loader never runs, so LD_PRELOAD is ignored and the child cannot be made
+// non-dumpable. Output is still redacted by the parent-side masker.
+func guardAttachWarning(target string) string {
+	if isStaticBinary(target) {
+		return filepath.Base(target) + " is statically linked; the output guard can't attach, so other processes running as you could read its environment"
+	}
+	return ""
+}
+
+// isStaticBinary reports whether path is a statically linked ELF executable. The
+// preload guard cannot attach to one, so its protections do not apply; a static
+// binary has no PT_INTERP program header.
+func isStaticBinary(path string) bool {
+	f, err := elf.Open(path)
+	if err != nil {
+		return false // scripts and non-ELF: unknown, do not warn
+	}
+	defer f.Close()
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_INTERP {
+			return false
+		}
+	}
+	return true
 }

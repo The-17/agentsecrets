@@ -109,11 +109,15 @@ Mechanically:
 1. Reads the active project from `.agentsecrets/project.json`
 2. Calls `keyring.GetAllProjectSecrets(projectID)` — pulls all key/value pairs from the OS keychain for that project
 3. Builds the environment for the child process: **current process env + injected secrets** (project secrets override on conflict)
-4. Spawns the child via `exec.Command`, with `stdin`, `stdout`, and `stderr` wired straight through — no buffering, no interception
-5. Forwards `SIGINT` and `SIGTERM` to the child process (so `Ctrl+C` works exactly as expected)
-6. Exits with the child's exact exit code
+4. Spawns the child via `exec.Command`. `stdout` and `stderr` pass through a redactor that replaces secret values with `[REDACTED]`; `stdin` is passed straight through
+5. Makes the child non-dumpable, so no other process running as the same user can read its environment, and (when the platform supports it) loads a small guard that does the same from inside the child and blocks it from reading the parent's memory
+6. With `--sandbox`, runs the child with no network egress
+7. Forwards `SIGINT` and `SIGTERM` to the child process (so `Ctrl+C` works exactly as expected)
+8. Exits with the child's exact exit code
 
-The parent process (`agentsecrets`) never uses the secret values — it only passes them directly into the child's environment at spawn time. Nothing is written to disk. When the child exits, the secrets are gone.
+The parent writes no secret to disk. It holds the values only to build the child's environment and the redaction set, and does not retain them after spawning. While the child runs, its secrets live in the child's environment; when the child exits they are gone.
+
+**What the guard does and does not do.** The child is protected against *other* processes reading its environment, and its output is redacted. Redaction is best-effort hygiene, not a security boundary: a child that deliberately splits or encodes a value can defeat it, and a statically linked child cannot load the guard at all (you are told when that happens). To stop a value leaving the machine, use `--sandbox` (no network egress).
 
 ---
 
@@ -302,17 +306,21 @@ Every `agentsecrets env` invocation writes to `~/.agentsecrets/proxy.log`:
 }
 ```
 
-Secret values are never logged. Only key names and the command that was run.
+Secret values are never logged. The audit record holds the key names, the child's resolved path and SHA-256, its PID, its exit code, and the hosts its credentials name (see below).
 
 ---
 
 ## Security Notes
 
-- **No disk writes**: Secrets go from OS keychain directly into the child process memory — nothing is ever written to a file, `.env`, or any other location
-- **No parent access**: The `agentsecrets` process passes secrets to the child at spawn time via the OS `execve`-style interface — the secrets exist in the child's address space, not the parent's
+- **No disk writes by the parent**: Secrets go from the OS keychain into the child's environment; the parent writes nothing to a file, `.env`, or anywhere else. Containment of the *child's* disk writes is not enforced (use `--sandbox` for a no-egress run).
+- **Not readable by other processes**: The child is made non-dumpable, so another process running as the same user cannot read its environment via `/proc/<pid>/environ` or its memory via `/proc/<pid>/mem`. The parent is made non-dumpable too, so the child cannot read the parent's memory.
+- **Output is redacted, best-effort**: Secret values in the child's `stdout`/`stderr` are replaced with `[REDACTED]`. This is hygiene, not a guarantee: a child that controls its own output can interleave or encode a value to evade it, and C stdio output is not covered. Do not rely on it as a boundary.
+- **Static binaries**: A statically linked child cannot load the guard; `env` tells you when this is the case. Such a child is not protected by the per-process or redaction layers.
+- **`--sandbox`**: Runs the child with no network egress (Linux). This is what prevents an exfiltrated value from being sent anywhere.
 - **Process-scoped lifetime**: When the child exits (or is killed), the environment variables are gone with it
 - **Signal forwarding**: `SIGINT` and `SIGTERM` are forwarded to the child so the process can handle them gracefully (e.g., Django's runserver cleanup)
 - **Conflicts**: If a secret key name already exists in the parent environment (e.g., from a previous export), the keychain value takes precedence
+- **Host hints**: When a credential names a host (a `DATABASE_URL`, an API base URL) that is not in the workspace allowlist, `env` prints the host and the `agentsecrets allowlist add` command to route that traffic through AgentSecrets. It never enforces this — the command runs either way.
 
 ---
 

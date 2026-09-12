@@ -30,6 +30,14 @@ type AuditEvent struct {
 	WorkspaceID    string    `json:"workspace_id,omitempty"`
 	ProjectID      string    `json:"project_id,omitempty"`
 	TokenID        string    `json:"token_id,omitempty"`
+
+	// Attribution for `agentsecrets env`, which hands credentials to a child
+	// process. The child's identity and the hosts its credentials name make an
+	// incident provable; no secret value is ever recorded here.
+	ChildBinary     string   `json:"child_binary,omitempty"`
+	ChildHash       string   `json:"child_hash,omitempty"`
+	ChildPID        int      `json:"child_pid,omitempty"`
+	CredentialHosts []string `json:"credential_hosts,omitempty"`
 }
 
 type ForensicAuditEvent struct {
@@ -126,7 +134,7 @@ type EnforcementBlock struct {
 }
 
 type EvaluationLayer struct {
-	Layer          string `json:"layer"` // "agent_capabilities" | "workspace_allowlist" | "secrets_policy"
+	Layer          string `json:"layer"`  // "agent_capabilities" | "workspace_allowlist" | "secrets_policy"
 	Result         string `json:"result"` // "pass" | "fail"
 	Reason         string `json:"reason"`
 	ActionRequired string `json:"action_required,omitempty"`

@@ -561,7 +561,8 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 		}, nil
 	}
 
-	// 1. Secret Presence Check (Cheapest Check, purely offline)
+	// Secret presence resolver. Evaluated AFTER the allowlist gate (step 4) so a
+	// non-allowlisted target can never be probed for which secret key names exist.
 	hasSecret := func(key string) (bool, error) {
 		if e.ResolvePresence != nil {
 			return e.ResolvePresence(key)
@@ -571,17 +572,6 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 			return err == nil, nil
 		}
 		return false, nil
-	}
-
-	for _, inj := range req.Injections {
-		present, err := hasSecret(inj.SecretKey)
-		if err != nil || !present {
-			return nil, errors.New(
-				errors.ErrSecretNotFound,
-				fmt.Sprintf("secret '%s' not found in keychain — run 'agentsecrets secrets list' to see available keys, or add it with 'agentsecrets secrets set %s=VALUE'", inj.SecretKey, inj.SecretKey),
-				fmt.Errorf("secret not found in local index"),
-			)
-		}
 	}
 
 	// 2. Enforce HTTPS Target
@@ -672,6 +662,19 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 		msg := fmt.Sprintf("%s is not in your workspace allowlist. To authorize it, run: agentsecrets workspace allowlist add %s", targetDomain, targetDomain)
 		telemetry.RecordAllowlistViolation()
 		return logBlocked("domain_not_in_allowlist", msg)
+	}
+
+	// Secret Presence Check — moved AFTER the allowlist gate so key names are only
+	// ever probed for targets the workspace has authorized.
+	for _, inj := range req.Injections {
+		present, err := hasSecret(inj.SecretKey)
+		if err != nil || !present {
+			return nil, errors.New(
+				errors.ErrSecretNotFound,
+				fmt.Sprintf("secret '%s' not found in keychain — run 'agentsecrets secrets list' to see available keys, or add it with 'agentsecrets secrets set %s=VALUE'", inj.SecretKey, inj.SecretKey),
+				fmt.Errorf("secret not found in local index"),
+			)
+		}
 	}
 
 	// 5. Enforce Secret-Level Policies

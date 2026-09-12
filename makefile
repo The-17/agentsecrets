@@ -1,4 +1,4 @@
-.PHONY: help build test run clean install fmt lint dev release
+.PHONY: help build envguard test run clean install fmt lint dev release
 
 # Variables
 BINARY_NAME=agentsecrets
@@ -7,6 +7,11 @@ BUILD_DIR=bin
 GO=go
 GOFMT=gofmt
 GOLINT=golangci-lint
+CC?=cc
+
+# Host OS and Go arch, used to pick the right env-guard interposer to build.
+UNAME_S := $(shell uname -s 2>/dev/null)
+GUARD_ARCH := $(shell $(GO) env GOARCH 2>/dev/null)
 
 # Default target
 help:
@@ -26,8 +31,35 @@ help:
 	@echo "  release     Build binaries for all platforms"
 	@echo "  help        Show this help message"
 
+# Build the env-guard interposer for the host OS. It is loaded into children
+# spawned by `agentsecrets env` to mark them un-attachable and redact secret
+# output. If no compiler is available the build still succeeds; children then run
+# with parent-side masking only. The output name must match envguard.libraryName()
+# for the host (guard_<os>_<arch>.{so,dylib}).
+envguard:
+	@echo "Building env-guard interposer..."
+	@mkdir -p $(BUILD_DIR)
+ifeq ($(UNAME_S),Darwin)
+	@if command -v clang >/dev/null 2>&1; then \
+		clang -dynamiclib -O2 -o $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib internal/envguard/csrc/guard_darwin.c && \
+		codesign -s - $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib >/dev/null 2>&1; \
+		echo "✓ Built $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib (ad-hoc signed)"; \
+	else \
+		echo "⚠ No clang; env-guard not built — env children run with parent-side masking only"; \
+	fi
+else ifeq ($(UNAME_S),Linux)
+	@if command -v $(CC) >/dev/null 2>&1; then \
+		$(CC) -shared -fPIC -O2 -o $(BUILD_DIR)/guard_linux_$(GUARD_ARCH).so internal/envguard/csrc/guard_linux.c && \
+		echo "✓ Built $(BUILD_DIR)/guard_linux_$(GUARD_ARCH).so"; \
+	else \
+		echo "⚠ No C compiler ($(CC)); env-guard not built — env children run with parent-side masking only"; \
+	fi
+else
+	@echo "⚠ env-guard interposer not built on $(UNAME_S) — env children run with parent-side masking only"
+endif
+
 # Build the binary
-build:
+build: envguard
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -trimpath -ldflags "-s -w -X github.com/The-17/agentsecrets/cmd/agentsecrets/commands.Version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/agentsecrets/
