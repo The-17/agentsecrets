@@ -8,7 +8,7 @@ Every other secrets tool was built for humans to provision credentials to agents
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![ClawHub](https://img.shields.io/badge/ClawHub-agentsecrets-blue)](https://clawhub.ai/SteppaCodes/agentsecrets)
 
-**[Official Website](https://agentsecrets-website.vercel.app)** | **[Engineering Blog Series](https://engineering.theseventeen.co/series/building-agentsecrets)**
+**[Official Website](https://agentsecrets.tech)** | **[Documentation](https://docs.agentsecrets.tech)** | **[Engineering Blog Series](https://engineering.theseventeen.co/series/building-agentsecrets)**
 
 ---
 
@@ -625,7 +625,8 @@ make test
 
 ## Links
 
-- **Website**: [agentsecrets.theseventeen.co](https://agentsecrets-website.vercel.app)
+- **Website**: [agentsecrets.tech](https://agentsecrets.tech)
+- **Documentation**: [docs.agentsecrets.tech](https://docs.agentsecrets.tech)
 - **Deep Dive**: [Building AgentSecrets (Engineering Blog)](https://engineering.theseventeen.co/series/building-agentsecrets)
 - **GitHub**: [github.com/The-17/agentsecrets](https://github.com/The-17/agentsecrets)
 - **SDK**: [github.com/The-17/agentsecrets-sdk](https://github.com/The-17/agentsecrets-sdk)

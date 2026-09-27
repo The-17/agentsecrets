@@ -8,7 +8,7 @@ Every other secrets tool was built for humans to provision credentials to agents
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![ClawHub](https://img.shields.io/badge/ClawHub-agentsecrets-blue)](https://clawhub.ai/SteppaCodes/agentsecrets)
 
-**[Official Website](https://agentsecrets-website.vercel.app)** | **[Engineering Blog Series](https://engineering.theseventeen.co/series/building-agentsecrets)**
+**[Official Website](https://agentsecrets.tech)** | **[Documentation](https://docs.agentsecrets.tech)** | **[Engineering Blog Series](https://engineering.theseventeen.co/series/building-agentsecrets)**
 
 ---
 
@@ -100,7 +100,7 @@ Your agent now has full API access. It will never see a credential value.
 
 ## Full Command Reference
 
-See the [Official Documentation](https://agentsecrets-website.vercel.app) for the full command reference and architecture deep dives.
+See the [Official Documentation](https://docs.agentsecrets.tech) for the full command reference and architecture deep dives.
 
 ---
 

@@ -29,6 +29,12 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://agentsecrets.tech"
+Documentation = "https://docs.agentsecrets.tech"
+Repository = "https://github.com/The-17/agentsecrets"
+Issues = "https://github.com/The-17/agentsecrets/issues"
+
 [project.scripts]
 agentsecrets = "agentsecrets.main:main"
 

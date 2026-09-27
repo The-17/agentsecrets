@@ -54,7 +54,8 @@ type (
 type AuditLogger struct {
 	db        *sql.DB
 	APIClient *api.Client
-	mu        sync.Mutex // serializes the background writer against SyncUnpushedLogs
+	mu        sync.Mutex // serializes DB access between the background writer and the sync path's read/mark phases
+	syncMu    sync.Mutex // single-flights SyncUnpushedLogs so concurrent callers never read + POST the same rows twice
 
 	writeCh   chan func()
 	wg        sync.WaitGroup
@@ -295,7 +296,7 @@ func (a *AuditLogger) Log(event AuditEvent) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
 
-		_, _ = a.db.ExecContext(context.Background(), query,
+		if _, err := a.db.ExecContext(context.Background(), query,
 			event.ID,
 			event.Timestamp.UTC(), // Important standard for SQLite
 			event.Environment,
@@ -316,7 +317,11 @@ func (a *AuditLogger) Log(event AuditEvent) error {
 			event.TokenID,
 			string(keysJSON),
 			string(stylesJSON),
-		)
+		); err != nil {
+			// Background write: no caller to return to, so surface the failure
+			// rather than dropping the audit event silently.
+			fmt.Fprintf(os.Stderr, "Warning: audit event write failed: %v\n", err)
+		}
 	})
 	return nil
 }
@@ -331,12 +336,20 @@ func (a *AuditLogger) SyncUnpushedLogs() error {
 		return nil // Skip syncing if user has no active session
 	}
 
+	// Single-flight the read→POST→mark cycle. Two concurrent syncs would
+	// otherwise read the same synced=0 rows and POST them twice, because a.mu is
+	// released across the POST below. syncMu never blocks the background writer
+	// (the writer does not take it), so it does not reintroduce the request stall.
+	a.syncMu.Lock()
+	defer a.syncMu.Unlock()
+
 	// Ensure all queued async writes have landed before we read unsynced rows,
-	// so a just-logged event isn't missed by this sync pass.
+	// so a just-logged event isn't missed by this sync pass. Flush waits on the
+	// background writer, so it must run before a.mu is taken (the writer needs a.mu).
 	a.Flush()
 
+	// Hold a.mu only for the local reads below; it is released before the POST.
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	var payload []map[string]interface{}
 	var legacyIDs []string
@@ -517,6 +530,11 @@ func (a *AuditLogger) SyncUnpushedLogs() error {
 		}
 	}
 
+	// Release the DB lock before the network POST so the background writer — and
+	// therefore the proxy request path, which writes inline when the async queue
+	// is full — is never blocked on a slow or hung sync round-trip.
+	a.mu.Unlock()
+
 	if len(payload) == 0 {
 		return nil
 	}
@@ -525,6 +543,11 @@ func (a *AuditLogger) SyncUnpushedLogs() error {
 	if err := a.APIClient.CallNoContent("audit.sync", "POST", payload, nil, nil); err != nil {
 		return fmt.Errorf("audit.sync API call failed: %w", err)
 	}
+
+	// Re-acquire the DB lock only to flip synced=1 for the exact rows we pushed.
+	// Rows inserted while the POST was in flight keep synced=0 for the next pass.
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	// 4. Update sync status for standard logs
 	if len(legacyIDs) > 0 {
@@ -633,7 +656,7 @@ func (a *AuditLogger) LogForensic(event ForensicAuditEvent) error {
 			event_json, snapshot_json, enforcement_json, resolution_json
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
-		_, _ = a.db.ExecContext(context.Background(), query,
+		if _, err := a.db.ExecContext(context.Background(), query,
 			event.ID,
 			event.Version,
 			event.CreatedAt.UTC(),
@@ -652,7 +675,11 @@ func (a *AuditLogger) LogForensic(event ForensicAuditEvent) error {
 			string(snapshotJSON),
 			string(enforcementJSON),
 			string(resolutionJSON),
-		)
+		); err != nil {
+			// Background write: no caller to return to. A dropped forensic row
+			// also breaks the hash chain, so surface it rather than swallow it.
+			fmt.Fprintf(os.Stderr, "Warning: forensic audit write failed: %v\n", err)
+		}
 	})
 	return nil
 }

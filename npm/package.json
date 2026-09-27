@@ -27,7 +27,7 @@
   "bugs": {
     "url": "https://github.com/The-17/agentsecrets/issues"
   },
-  "homepage": "https://github.com/The-17/agentsecrets#readme",
+  "homepage": "https://agentsecrets.tech",
   "engines": {
     "node": ">=14.0.0"
   },
