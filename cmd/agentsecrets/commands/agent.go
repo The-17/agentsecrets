@@ -311,7 +311,7 @@ var agentTokenListCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("%-20s %-15s %-15s %-25s %s\n", "TOKEN ID", "LABEL", "EXPIRES", "LAST USED", "STATUS")
+		fmt.Printf("%-20s %-15s %-15s %-25s %-20s %s\n", "TOKEN ID", "LABEL", "EXPIRES", "LAST USED", "STATUS", "ROTATION")
 		for _, t := range tokens {
 			label := t.Label
 			if label == "" {
@@ -325,8 +325,144 @@ var agentTokenListCmd = &cobra.Command{
 			if t.LastUsed != nil {
 				lastUsed = t.LastUsed.Format("2006-01-02 15:04 UTC")
 			}
-			fmt.Printf("%-20s %-15s %-15s %-25s %s\n", t.ID, label, expires, lastUsed, t.Status)
+			rotation := t.RotationState
+			if rotation == "" {
+				rotation = "active"
+			}
+			if t.RotationPeriodDays != nil && *t.RotationPeriodDays > 0 {
+				rotation = fmt.Sprintf("%s/%dd", rotation, *t.RotationPeriodDays)
+			}
+			fmt.Printf("%-20s %-15s %-15s %-25s %-20s %s\n", t.ID, label, expires, lastUsed, t.Status, rotation)
 		}
+		return nil
+	},
+}
+
+var agentTokenRotateCmd = &cobra.Command{
+	Use:   "rotate <token_id>",
+	Short: "Rotate a token: mint a successor with overlap (routine) or immediate revoke (compromise)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tokenID := args[0]
+		agentName, _ := cmd.Flags().GetString("agent")
+		overlapHours, _ := cmd.Flags().GetInt("overlap-hours")
+		compromise, _ := cmd.Flags().GetBool("compromise")
+		confirm, _ := cmd.Flags().GetBool("confirm")
+
+		workspaceID := config.GetSelectedWorkspaceID()
+		if workspaceID == "" {
+			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		}
+		if agentName == "" {
+			return fmt.Errorf("please provide the --agent <name> for the token")
+		}
+
+		agent, err := getAgentByName(workspaceID, agentName)
+		if err != nil {
+			return err
+		}
+
+		reason := "routine"
+		if compromise {
+			reason = "compromise"
+		}
+		if !confirm {
+			if compromise {
+				fmt.Printf("Compromise-rotate token %s for agent %s? The old token dies immediately and the family is poisoned. [y/N] ", tokenID, agentName)
+			} else {
+				fmt.Printf("Rotate token %s for agent %s? The old token stays valid for %dh. [y/N] ", tokenID, agentName, overlapHours)
+			}
+			var response string
+			fmt.Scanln(&response)
+			if response != "y" && response != "Y" {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
+
+		if err := verifyPasswordLocally(); err != nil {
+			return err
+		}
+
+		resp, err := app.Agents().TokenRotate(workspaceID, agent.ID, tokenID, agents.RotateTokenRequest{
+			OverlapHours: &overlapHours,
+			Reason:       reason,
+		})
+		if err != nil {
+			return fmt.Errorf("token rotation failed: %w", err)
+		}
+
+		cfg, _ := config.LoadGlobalConfig()
+		_ = proxy.LogManagementEvent("ROTATE", "token", fmt.Sprintf("Rotated token for agent %s", agentName), cfg.Email, workspaceID, "", config.ResolveEnvironment())
+
+		fmt.Println("\n" + ui.SuccessStyle.Render("Token rotated"))
+		fmt.Printf("  Agent    %s\n", agentName)
+		fmt.Printf("  Token    %s\n", resp.Token)
+		fmt.Printf("  Family   %s\n", resp.Rotation.FamilyID)
+		if resp.Rotation.OverlapUntil != "" {
+			fmt.Printf("  Old valid until %s\n", resp.Rotation.OverlapUntil)
+		} else {
+			fmt.Println("  Old token revoked immediately (compromise)")
+		}
+		fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
+		fmt.Println()
+		return nil
+	},
+}
+
+var agentTokenRotationCmd = &cobra.Command{
+	Use:   "rotation",
+	Short: "Manage token rotation cadence",
+}
+
+var agentTokenRotationSetCmd = &cobra.Command{
+	Use:   "set <token_id>",
+	Short: "Arm (or disarm) an automated rotation cadence for a token",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tokenID := args[0]
+		agentName, _ := cmd.Flags().GetString("agent")
+		periodDays, _ := cmd.Flags().GetInt("period-days")
+		overlapHours, _ := cmd.Flags().GetInt("overlap-hours")
+		disable, _ := cmd.Flags().GetBool("disable")
+
+		workspaceID := config.GetSelectedWorkspaceID()
+		if workspaceID == "" {
+			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		}
+		if agentName == "" {
+			return fmt.Errorf("please provide the --agent <name> for the token")
+		}
+		if disable == (periodDays <= 0) {
+			return fmt.Errorf("provide --period-days (>0) to arm, or --disable to disarm")
+		}
+
+		agent, err := getAgentByName(workspaceID, agentName)
+		if err != nil {
+			return err
+		}
+
+		req := agents.RotationPolicyRequest{Enabled: !disable}
+		if !disable {
+			req.PeriodDays = &periodDays
+			if cmd.Flags().Changed("overlap-hours") {
+				req.OverlapHours = &overlapHours
+			}
+		}
+		resp, err := app.Agents().TokenRotationSet(workspaceID, agent.ID, tokenID, req)
+		if err != nil {
+			return fmt.Errorf("rotation policy update failed: %w", err)
+		}
+
+		if disable {
+			fmt.Println("\nRotation cadence disarmed for token " + tokenID + ".")
+			return nil
+		}
+		fmt.Println("\n" + ui.SuccessStyle.Render("Rotation cadence armed"))
+		fmt.Printf("  Token    %s\n", tokenID)
+		fmt.Printf("  Every    %d days\n", periodDays)
+		fmt.Printf("  Next     %s\n", resp.Rotation.NextRotation)
+		fmt.Println("  Execution is Pro-gated in the Cloud Resolver; manual rotate stays free.")
 		return nil
 	},
 }
@@ -474,6 +610,9 @@ func init() {
 	agentTokenCmd.AddCommand(agentTokenIssueCmd)
 	agentTokenCmd.AddCommand(agentTokenListCmd)
 	agentTokenCmd.AddCommand(agentTokenRevokeCmd)
+	agentTokenCmd.AddCommand(agentTokenRotateCmd)
+	agentTokenCmd.AddCommand(agentTokenRotationCmd)
+	agentTokenRotationCmd.AddCommand(agentTokenRotationSetCmd)
 
 	// Flags for register
 	agentRegisterCmd.Flags().StringP("project", "p", "", "scope to a specific project")
@@ -496,6 +635,18 @@ func init() {
 	// Flags for token revoke
 	agentTokenRevokeCmd.Flags().StringP("agent", "a", "", "used with --all or specific token to identify the agent")
 	agentTokenRevokeCmd.Flags().Bool("all", false, "revoke all active tokens for the agent")
+
+	// Flags for token rotate
+	agentTokenRotateCmd.Flags().StringP("agent", "a", "", "identify the agent owning the token")
+	agentTokenRotateCmd.Flags().Int("overlap-hours", 24, "routine-rotation grace window in hours")
+	agentTokenRotateCmd.Flags().Bool("compromise", false, "zero overlap: revoke the old token immediately and poison the family")
+	agentTokenRotateCmd.Flags().Bool("confirm", false, "skip the confirmation prompt")
+
+	// Flags for token rotation set
+	agentTokenRotationSetCmd.Flags().StringP("agent", "a", "", "identify the agent owning the token")
+	agentTokenRotationSetCmd.Flags().Int("period-days", 0, "rotation cadence in days (1-365)")
+	agentTokenRotationSetCmd.Flags().Int("overlap-hours", 0, "routine-rotation grace window in hours")
+	agentTokenRotationSetCmd.Flags().Bool("disable", false, "disarm the rotation cadence")
 	agentTokenRevokeCmd.Flags().Bool("confirm", false, "skip confirmation prompt")
 
 	// Flags for delete

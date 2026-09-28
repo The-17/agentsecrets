@@ -23,13 +23,18 @@ type Agent struct {
 
 // Token represents a token issued to an agent.
 type Token struct {
-	ID        string     `json:"id"`
-	AgentID   string     `json:"agent_id"`
-	Label     string     `json:"label"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	LastUsed  *time.Time `json:"last_used_at,omitempty"`
-	Status    string     `json:"status"` // e.g., "active", "revoked", "expired"
+	ID               string     `json:"id"`
+	AgentID          string     `json:"agent_id"`
+	Label            string     `json:"label"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	LastUsed         *time.Time `json:"last_used_at,omitempty"`
+	Status           string     `json:"status"` // e.g., "active", "superseded_overlap", "revoked", "expired"
+	RotationState    string     `json:"rotation_state,omitempty"` // active | superseded | revoked
+	RotationFamilyID string     `json:"rotation_family_id,omitempty"`
+	OverlapUntil     *time.Time `json:"overlap_until,omitempty"`
+	NextRotationAt   *time.Time `json:"next_rotation_at,omitempty"`
+	RotationPeriodDays *int     `json:"rotation_period_days,omitempty"`
 }
 
 // RegisterRequest holds data to register a new agent.
@@ -63,6 +68,46 @@ type IssueTokenResponse struct {
 	Token     string     `json:"token"` // The cleartext token
 	Label     string     `json:"label,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// RotationMetadata mirrors the control plane's rotation block.
+type RotationMetadata struct {
+	State         string `json:"rotation_state"`
+	FamilyID      string `json:"rotation_family_id,omitempty"`
+	OverlapUntil  string `json:"overlap_until,omitempty"`
+	NextRotation  string `json:"next_rotation_at,omitempty"`
+	PeriodDays    *int   `json:"rotation_period_days,omitempty"`
+	SupersededBy  string `json:"superseded_by,omitempty"`
+	Due           bool   `json:"rotation_due"`
+}
+
+// RotateTokenRequest holds data to rotate a token (Axis A).
+type RotateTokenRequest struct {
+	OverlapHours *int   `json:"overlap_hours,omitempty"`
+	Reason       string `json:"reason,omitempty"` // routine | compromise
+}
+
+// RotateTokenResponse is returned when rotating a token (cleartext shown once).
+type RotateTokenResponse struct {
+	Token     string           `json:"token"`
+	TokenID   string           `json:"token_id"`
+	Label     string           `json:"label,omitempty"`
+	ExpiresAt *time.Time       `json:"expires_at,omitempty"`
+	Rotation  RotationMetadata `json:"rotation"`
+}
+
+// RotationPolicyRequest arms or disarms a rotation cadence (desired-state;
+// execution is Pro-gated in the resolver).
+type RotationPolicyRequest struct {
+	PeriodDays   *int `json:"period_days,omitempty"`
+	OverlapHours *int `json:"overlap_hours,omitempty"`
+	Enabled      bool `json:"enabled"`
+}
+
+// RotationPolicyResponse echoes the armed cadence.
+type RotationPolicyResponse struct {
+	ID       string           `json:"id"`
+	Rotation RotationMetadata `json:"rotation"`
 }
 
 // Service provides methods to interact with agent resources.
@@ -196,6 +241,34 @@ func (s *Service) TokenRevoke(workspaceID, registrationID string, tokenID string
 		"registration_id": registrationID,
 		"token_id":        tokenID,
 	}, nil)
+}
+
+// TokenRotate rotates a token: mints a successor in the same family with an
+// overlap window (routine) or immediate revocation (compromise). The raw
+// successor is returned exactly once and must be persisted by the caller.
+func (s *Service) TokenRotate(workspaceID, registrationID, tokenID string, req RotateTokenRequest) (*RotateTokenResponse, error) {
+	resp, err := api.CallJSON[RotateTokenResponse](s.client, "agents.token_rotate", "POST", req, map[string]string{
+		"workspace_id":    workspaceID,
+		"registration_id": registrationID,
+		"token_id":        tokenID,
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// TokenRotationSet arms (or with Enabled=false, disarms) a rotation cadence.
+func (s *Service) TokenRotationSet(workspaceID, registrationID, tokenID string, req RotationPolicyRequest) (*RotationPolicyResponse, error) {
+	resp, err := api.CallJSON[RotationPolicyResponse](s.client, "agents.token_rotation_policy", "PUT", req, map[string]string{
+		"workspace_id":    workspaceID,
+		"registration_id": registrationID,
+		"token_id":        tokenID,
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // TokenRevokeAll revokes all active tokens for an agent by listing then deleting each.

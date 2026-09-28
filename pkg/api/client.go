@@ -72,6 +72,8 @@ var endpointMap = map[string]map[string]string{
 		"token_issue":      "workspaces/{workspace_id}/agents/{registration_id}/tokens/",
 		"token_list":       "workspaces/{workspace_id}/agents/{registration_id}/tokens/",
 		"token_revoke":     "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/",
+		"token_rotate":     "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/rotate/",
+		"token_rotation_policy": "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/rotation-policy/",
 		"get_capabilities": "workspaces/{workspace_id}/agents/{registration_id}/capabilities/",
 		"set_capabilities": "workspaces/{workspace_id}/agents/{registration_id}/capabilities/",
 		"token_validate":   "internal/agents/verify/",
