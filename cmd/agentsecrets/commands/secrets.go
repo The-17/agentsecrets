@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/crypto"
 	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/secrets"
@@ -101,6 +102,227 @@ var secretsDiffCmd = &cobra.Command{
 	RunE:  runSecretsDiff,
 }
 
+var secretsRotateCmd = &cobra.Command{
+	Use:   "rotate KEY",
+	Short: "Rotate a secret value: stage a pending version, promote it, or roll back (B1 client-push)",
+	Long: `Two-step rotation. First stage a new client-encrypted value as pending,
+update the value at the provider out-of-band, then promote. The old value
+stays valid at the provider through the overlap window (routine) or dies
+immediately (compromise).`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSecretsRotate,
+}
+
+var secretsRotationCmd = &cobra.Command{
+	Use:   "rotation",
+	Short: "Manage secret rotation cadence and status",
+}
+
+var secretsRotationSetCmd = &cobra.Command{
+	Use:   "set KEY",
+	Short: "Arm (or disarm) an automated rotation cadence for a secret",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runSecretsRotationSet,
+}
+
+var secretsRotationStatusCmd = &cobra.Command{
+	Use:   "status KEY",
+	Short: "Show a secret's rotation policy and version history",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runSecretsRotationStatus,
+}
+
+func runSecretsRotate(cmd *cobra.Command, args []string) error {
+	key := args[0]
+	env, _ := cmd.Flags().GetString("env")
+	inlineValue, _ := cmd.Flags().GetString("value")
+	generate, _ := cmd.Flags().GetBool("generate")
+	genLength, _ := cmd.Flags().GetInt("length")
+	doPromote, _ := cmd.Flags().GetBool("promote")
+	doRollback, _ := cmd.Flags().GetBool("rollback")
+	doAbort, _ := cmd.Flags().GetBool("abort")
+	reason, _ := cmd.Flags().GetString("reason")
+	expectedCurrent, _ := cmd.Flags().GetString("expected-current")
+	confirm, _ := cmd.Flags().GetBool("confirm")
+
+	ops := 0
+	for _, on := range []bool{doPromote, doRollback, doAbort} {
+		if on {
+			ops++
+		}
+	}
+	staging := inlineValue != "" || generate
+	if ops > 1 || (ops == 1 && staging) {
+		return fmt.Errorf("use one action per invocation: stage (default), --promote, --rollback, or --abort")
+	}
+	if reason != "routine" && reason != "compromise" {
+		return fmt.Errorf("--reason must be routine or compromise")
+	}
+	if doPromote && reason == "compromise" {
+		fmt.Println(ui.WarningStyle.Render("Compromise rotation: zero overlap, previous value shredded."))
+	}
+
+	svc := app.Secrets()
+
+	if doRollback {
+		if !confirm {
+			fmt.Printf("Roll back %s to its previous value? (y/n): ", key)
+			if !confirmYN() {
+				ui.Info("Cancelled.")
+				return nil
+			}
+		}
+		res, err := svc.RollbackVersion(key, env)
+		if err != nil {
+			return fmt.Errorf("rollback failed: %w", err)
+		}
+		if err := svc.Pull([]string{res.Key}); err != nil {
+			ui.Error(fmt.Sprintf("Rolled back cloud-side, but local resync failed: %v", err))
+		}
+		ui.Success(fmt.Sprintf("Rolled back %s to its previous value.", res.Key))
+		return nil
+	}
+
+	if doAbort {
+		if err := svc.AbortPending(key, env); err != nil {
+			return fmt.Errorf("abort failed: %w", err)
+		}
+		ui.Success(fmt.Sprintf("Aborted pending rotation for %s.", key))
+		return nil
+	}
+
+	if doPromote {
+		if !confirm {
+			fmt.Printf("Promote the pending version of %s to current? (y/n): ", key)
+			if !confirmYN() {
+				ui.Info("Cancelled.")
+				return nil
+			}
+		}
+		if reason == "compromise" || config.ResolveEnvironment() == "production" {
+			if err := verifyPasswordLocally(); err != nil {
+				return err
+			}
+		}
+		res, err := svc.PromoteVersion(key, env, expectedCurrent, reason)
+		if err != nil {
+			return fmt.Errorf("promote failed: %w", err)
+		}
+		if err := svc.Pull([]string{res.Key}); err != nil {
+			ui.Error(fmt.Sprintf("Promoted cloud-side, but local resync failed: %v", err))
+		}
+		if reason == "compromise" {
+			ui.Success(fmt.Sprintf("Promoted %s with zero overlap; previous value shredded.", res.Key))
+		} else {
+			ui.Success(fmt.Sprintf("Promoted %s; old value stays valid at the provider through overlap.", res.Key))
+		}
+		return nil
+	}
+
+	var plaintext string
+	switch {
+	case inlineValue != "":
+		plaintext = inlineValue
+	case generate:
+		if err := verifyPasswordLocally(); err != nil {
+			return err
+		}
+		pw, err := crypto.GeneratePassword(genLength)
+		if err != nil {
+			return err
+		}
+		plaintext = pw
+		fmt.Printf("Generated value for %s: %s\n", key, plaintext)
+		fmt.Println(ui.WarningStyle.Render("Store it at the provider before promoting."))
+	default:
+		var input string
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("New value for " + key).
+					Password(true).
+					Value(&input),
+			),
+		)
+		if err := form.Run(); err != nil {
+			return err
+		}
+		plaintext = input
+	}
+	if plaintext == "" {
+		return fmt.Errorf("empty value: nothing staged")
+	}
+
+	staged, _, err := svc.StageVersion(key, plaintext, env, reason)
+	if err != nil {
+		return fmt.Errorf("stage failed: %w", err)
+	}
+	ui.Success(fmt.Sprintf("Staged pending version %s for %s.", staged.VersionID, key))
+	fmt.Printf("Next: update the value at the provider, then run 'agentsecrets secrets rotate %s --promote'.\n", key)
+	return nil
+}
+
+func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
+	key := args[0]
+	env, _ := cmd.Flags().GetString("env")
+	policyType, _ := cmd.Flags().GetString("type")
+	periodDays, _ := cmd.Flags().GetInt("period-days")
+	overlapHours, _ := cmd.Flags().GetInt("overlap-hours")
+	disable, _ := cmd.Flags().GetBool("disable")
+
+	if disable == (periodDays <= 0) {
+		return fmt.Errorf("provide --period-days (>0) to arm, or --disable to disarm")
+	}
+	req := secrets.RotationPolicy{Enabled: !disable}
+	if !disable {
+		req.Type = policyType
+		req.PeriodDays = &periodDays
+		if cmd.Flags().Changed("overlap-hours") {
+			req.OverlapHours = &overlapHours
+		}
+	}
+	if err := app.Secrets().SetRotationPolicy(key, env, req); err != nil {
+		return fmt.Errorf("rotation policy update failed: %w", err)
+	}
+	if disable {
+		ui.Success(fmt.Sprintf("Disarmed rotation cadence for %s.", key))
+		return nil
+	}
+	ui.Success(fmt.Sprintf("Armed %s rotation every %d days for %s.", policyType, periodDays, key))
+	fmt.Println("Execution and reminders are Pro-gated in the Cloud Resolver; manual rotate stays free.")
+	return nil
+}
+
+func runSecretsRotationStatus(cmd *cobra.Command, args []string) error {
+	key := args[0]
+	env, _ := cmd.Flags().GetString("env")
+
+	status, err := app.Secrets().RotationStatus(key, env)
+	if err != nil {
+		return fmt.Errorf("rotation status failed: %w", err)
+	}
+	fmt.Printf("Secret  %s (%s)\n", status.Key, status.Environment)
+	if typ, _ := status.Policy["rotation_type"].(string); typ != "" && typ != "none" {
+		fmt.Printf("Policy  %s every %v days, next %v\n",
+			typ, status.Policy["rotation_period_days"], status.Policy["next_rotation_at"])
+	} else {
+		fmt.Println("Policy  no cadence armed")
+	}
+	if len(status.Versions) == 0 {
+		fmt.Println("No archived versions.")
+		return nil
+	}
+	fmt.Printf("%-10s %-10s %-10s %s\n", "LABEL", "REASON", "OVERLAP", "CREATED")
+	for _, v := range status.Versions {
+		overlap := v.Overlap
+		if overlap == "" {
+			overlap = "-"
+		}
+		fmt.Printf("%-10s %-10s %-10s %s\n", v.Staging, v.Reason, overlap, v.CreatedAt)
+	}
+	return nil
+}
+
 func init() {
 	secretsPullCmd.Flags().BoolVarP(&pullForce, "force", "f", false, "Overwrite local changes without prompting")
 	secretsPushCmd.Flags().BoolVarP(&pushForce, "force", "f", false, "Push without prompting for missing keys")
@@ -121,7 +343,30 @@ func init() {
 		secretsPushCmd,
 		secretsDeleteCmd,
 		secretsDiffCmd,
+		secretsRotateCmd,
+		secretsRotationCmd,
 	)
+	secretsRotationCmd.AddCommand(
+		secretsRotationSetCmd,
+		secretsRotationStatusCmd,
+	)
+	secretsRotateCmd.Flags().String("env", "", "environment (development, staging, production)")
+	secretsRotateCmd.Flags().String("value", "", "new value inline (prefer --generate or prompt; inline values linger in shell history)")
+	secretsRotateCmd.Flags().Bool("generate", false, "generate a random value")
+	secretsRotateCmd.Flags().Int("length", 32, "generated value length in bytes")
+	secretsRotateCmd.Flags().Bool("promote", false, "promote the staged pending version to current")
+	secretsRotateCmd.Flags().Bool("rollback", false, "restore the previous value to current")
+	secretsRotateCmd.Flags().Bool("abort", false, "delete the staged pending version")
+	secretsRotateCmd.Flags().String("reason", "routine", "routine or compromise (compromise shreds previous immediately)")
+	secretsRotateCmd.Flags().String("expected-current", "", "compare-and-swap: only promote if this is still the current version")
+	secretsRotateCmd.Flags().Bool("confirm", false, "skip confirmation prompts")
+	secretsRotateCmd.ValidArgsFunction = autocompleteSecretKeys
+	secretsRotationSetCmd.Flags().String("env", "", "environment (development, staging, production)")
+	secretsRotationSetCmd.Flags().String("type", "value_client", "rotation class (B1 free-form only supports value_client)")
+	secretsRotationSetCmd.Flags().Int("period-days", 0, "rotation cadence in days (1-365)")
+	secretsRotationSetCmd.Flags().Int("overlap-hours", 0, "routine-rotation grace window in hours")
+	secretsRotationSetCmd.Flags().Bool("disable", false, "disarm the rotation cadence")
+	secretsRotationStatusCmd.Flags().String("env", "", "environment (development, staging, production)")
 }
 
 func runSecretsSet(cmd *cobra.Command, args []string) error {

@@ -39,6 +39,12 @@ var endpointMap = map[string]map[string]string{
 		"delete":          "secrets/{project_id}/{environment}/{key}/",
 		"get_policy": "secrets/{project_id}/{environment}/{key}/policy/",
 		"set_policy": "secrets/{project_id}/{environment}/{key}/policy/",
+		"rotate_stage":    "secrets/{project_id}/{environment}/{key}/versions/",
+		"rotate_promote":  "secrets/{project_id}/{environment}/{key}/promote/",
+		"rotate_rollback": "secrets/{project_id}/{environment}/{key}/rollback/",
+		"rotate_abort":    "secrets/{project_id}/{environment}/{key}/versions/pending/",
+		"rotation_status": "secrets/{project_id}/{environment}/{key}/rotation/",
+		"rotation_policy": "secrets/{project_id}/{environment}/{key}/rotation-policy/",
 	},
 	"projects": {
 		"list":   "projects/",

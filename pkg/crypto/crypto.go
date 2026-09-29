@@ -162,6 +162,20 @@ func GenerateWorkspaceKey() ([]byte, error) {
 	return randomBytes(KeySize)
 }
 
+// GeneratePassword creates a cryptographically random password of the given
+// byte length, base64url-encoded without padding (suitable for API keys and
+// database passwords rotated via `secrets rotate --generate`).
+func GeneratePassword(byteLength int) (string, error) {
+	if byteLength <= 0 || byteLength > 256 {
+		return "", fmt.Errorf("password length must be between 1 and 256 bytes")
+	}
+	raw, err := randomBytes(byteLength)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
 // EncryptSecret encrypts a plaintext secret with a workspace key using AES-256-GCM.
 // The nonce is prepended to the ciphertext and returned as a single base64-encoded string.
 func EncryptSecret(plaintext string, workspaceKey []byte) (string, error) {

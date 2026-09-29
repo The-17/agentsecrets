@@ -23,18 +23,18 @@ type Agent struct {
 
 // Token represents a token issued to an agent.
 type Token struct {
-	ID               string     `json:"id"`
-	AgentID          string     `json:"agent_id"`
-	Label            string     `json:"label"`
-	CreatedAt        time.Time  `json:"created_at"`
-	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
-	LastUsed         *time.Time `json:"last_used_at,omitempty"`
-	Status           string     `json:"status"` // e.g., "active", "superseded_overlap", "revoked", "expired"
-	RotationState    string     `json:"rotation_state,omitempty"` // active | superseded | revoked
-	RotationFamilyID string     `json:"rotation_family_id,omitempty"`
-	OverlapUntil     *time.Time `json:"overlap_until,omitempty"`
-	NextRotationAt   *time.Time `json:"next_rotation_at,omitempty"`
-	RotationPeriodDays *int     `json:"rotation_period_days,omitempty"`
+	ID                 string     `json:"id"`
+	AgentID            string     `json:"agent_id"`
+	Label              string     `json:"label"`
+	CreatedAt          time.Time  `json:"created_at"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
+	LastUsed           *time.Time `json:"last_used_at,omitempty"`
+	Status             string     `json:"status"`                   // e.g., "active", "superseded_overlap", "revoked", "expired"
+	RotationState      string     `json:"rotation_state,omitempty"` // active | superseded | revoked
+	RotationFamilyID   string     `json:"rotation_family_id,omitempty"`
+	OverlapUntil       *time.Time `json:"overlap_until,omitempty"`
+	NextRotationAt     *time.Time `json:"next_rotation_at,omitempty"`
+	RotationPeriodDays *int       `json:"rotation_period_days,omitempty"`
 }
 
 // RegisterRequest holds data to register a new agent.
@@ -72,13 +72,13 @@ type IssueTokenResponse struct {
 
 // RotationMetadata mirrors the control plane's rotation block.
 type RotationMetadata struct {
-	State         string `json:"rotation_state"`
-	FamilyID      string `json:"rotation_family_id,omitempty"`
-	OverlapUntil  string `json:"overlap_until,omitempty"`
-	NextRotation  string `json:"next_rotation_at,omitempty"`
-	PeriodDays    *int   `json:"rotation_period_days,omitempty"`
-	SupersededBy  string `json:"superseded_by,omitempty"`
-	Due           bool   `json:"rotation_due"`
+	State        string `json:"rotation_state"`
+	FamilyID     string `json:"rotation_family_id,omitempty"`
+	OverlapUntil string `json:"overlap_until,omitempty"`
+	NextRotation string `json:"next_rotation_at,omitempty"`
+	PeriodDays   *int   `json:"rotation_period_days,omitempty"`
+	SupersededBy string `json:"superseded_by,omitempty"`
+	Due          bool   `json:"rotation_due"`
 }
 
 // RotateTokenRequest holds data to rotate a token (Axis A).
