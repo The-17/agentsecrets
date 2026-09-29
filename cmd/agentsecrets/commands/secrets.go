@@ -273,6 +273,16 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 	if disable == (periodDays <= 0) {
 		return fmt.Errorf("provide --period-days (>0) to arm, or --disable to disarm")
 	}
+	if !disable {
+		switch policyType {
+		case "value_client", "value_auto", "value_provider":
+		default:
+			return fmt.Errorf("--type must be value_client, value_auto, or value_provider")
+		}
+		if policyType == "value_auto" {
+			fmt.Println(ui.WarningStyle.Render("Autonomous rotation: the Cloud Resolver will mint new values on cadence (Pro). Trust-anchor keys are refused server-side."))
+		}
+	}
 	req := secrets.RotationPolicy{Enabled: !disable}
 	if !disable {
 		req.Type = policyType
