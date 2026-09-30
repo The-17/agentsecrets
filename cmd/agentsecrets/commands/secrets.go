@@ -282,6 +282,15 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 		if policyType == "value_auto" {
 			fmt.Println(ui.WarningStyle.Render("Autonomous rotation: the Cloud Resolver will mint new values on cadence (Pro). Trust-anchor keys are refused server-side."))
 		}
+		if policyType == "value_provider" {
+			adapter, _ := cmd.Flags().GetString("adapter")
+			adminRef, _ := cmd.Flags().GetString("admin-credential-ref")
+			targetUser, _ := cmd.Flags().GetString("target-user")
+			if adapter == "" || adminRef == "" || targetUser == "" {
+				return fmt.Errorf("value_provider requires --adapter, --admin-credential-ref, and --target-user")
+			}
+			fmt.Println(ui.WarningStyle.Render("Provider rotation: the Cloud Resolver will change the credential AT THE PROVIDER on cadence (Pro, isolated executor). The admin credential must live in the same project/environment."))
+		}
 	}
 	req := secrets.RotationPolicy{Enabled: !disable}
 	if !disable {
@@ -289,6 +298,19 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 		req.PeriodDays = &periodDays
 		if cmd.Flags().Changed("overlap-hours") {
 			req.OverlapHours = &overlapHours
+		}
+		if policyType == "value_provider" {
+			adapter, _ := cmd.Flags().GetString("adapter")
+			adminRef, _ := cmd.Flags().GetString("admin-credential-ref")
+			targetUser, _ := cmd.Flags().GetString("target-user")
+			binding := map[string]any{
+				"adapter": adapter, "admin_credential_ref": adminRef, "target_user": targetUser,
+			}
+			if cmd.Flags().Changed("length-bytes") {
+				lengthBytes, _ := cmd.Flags().GetInt("length-bytes")
+				binding["length_bytes"] = lengthBytes
+			}
+			req.Binding = binding
 		}
 	}
 	if err := app.Secrets().SetRotationPolicy(key, env, req); err != nil {
@@ -372,8 +394,12 @@ func init() {
 	secretsRotateCmd.Flags().Bool("confirm", false, "skip confirmation prompts")
 	secretsRotateCmd.ValidArgsFunction = autocompleteSecretKeys
 	secretsRotationSetCmd.Flags().String("env", "", "environment (development, staging, production)")
-	secretsRotationSetCmd.Flags().String("type", "value_client", "rotation class (B1 free-form only supports value_client)")
+	secretsRotationSetCmd.Flags().String("type", "value_client", "rotation class: value_client, value_auto, or value_provider")
 	secretsRotationSetCmd.Flags().Int("period-days", 0, "rotation cadence in days (1-365)")
+	secretsRotationSetCmd.Flags().String("adapter", "", "provider adapter for value_provider (currently: postgres)")
+	secretsRotationSetCmd.Flags().String("admin-credential-ref", "", "secret key of the provider admin credential (same project/environment)")
+	secretsRotationSetCmd.Flags().String("target-user", "", "provider-side identity to rotate (e.g. database role)")
+	secretsRotationSetCmd.Flags().Int("length-bytes", 0, "minted credential length 16-256 (provider default 32)")
 	secretsRotationSetCmd.Flags().Int("overlap-hours", 0, "routine-rotation grace window in hours")
 	secretsRotationSetCmd.Flags().Bool("disable", false, "disarm the rotation cadence")
 	secretsRotationStatusCmd.Flags().String("env", "", "environment (development, staging, production)")

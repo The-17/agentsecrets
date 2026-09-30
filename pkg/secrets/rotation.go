@@ -55,10 +55,11 @@ type RotationStatus struct {
 // RotationPolicy arms or disarms a value-rotation cadence (desired-state;
 // execution is Pro-gated in the resolver).
 type RotationPolicy struct {
-	Type         string `json:"rotation_type,omitempty"`
-	PeriodDays   *int   `json:"period_days,omitempty"`
-	OverlapHours *int   `json:"overlap_hours,omitempty"`
-	Enabled      bool   `json:"enabled"`
+	Type         string         `json:"rotation_type,omitempty"`
+	PeriodDays   *int           `json:"period_days,omitempty"`
+	OverlapHours *int           `json:"overlap_hours,omitempty"`
+	Binding      map[string]any `json:"provider_binding,omitempty"`
+	Enabled      bool           `json:"enabled"`
 }
 
 // resolveRotationTarget loads the project and environment for rotation calls.
