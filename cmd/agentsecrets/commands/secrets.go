@@ -284,10 +284,21 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 		}
 		if policyType == "value_provider" {
 			adapter, _ := cmd.Flags().GetString("adapter")
+			adapterRef, _ := cmd.Flags().GetString("adapter-ref")
 			adminRef, _ := cmd.Flags().GetString("admin-credential-ref")
 			targetUser, _ := cmd.Flags().GetString("target-user")
+			if adapterRef != "" {
+				id, _, ok := strings.Cut(adapterRef, "@")
+				if !ok || id == "" {
+					return fmt.Errorf("--adapter-ref must be <id>@<version>[#sha256:<hex>]")
+				}
+				if adapter != "" && adapter != id {
+					return fmt.Errorf("--adapter (%s) must match --adapter-ref id (%s)", adapter, id)
+				}
+				adapter = id
+			}
 			if adapter == "" || adminRef == "" || targetUser == "" {
-				return fmt.Errorf("value_provider requires --adapter, --admin-credential-ref, and --target-user")
+				return fmt.Errorf("value_provider requires --adapter (or --adapter-ref), --admin-credential-ref, and --target-user")
 			}
 			fmt.Println(ui.WarningStyle.Render("Provider rotation: the Cloud Resolver will change the credential AT THE PROVIDER on cadence (Pro, isolated executor). The admin credential must live in the same project/environment."))
 		}
@@ -301,10 +312,18 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 		}
 		if policyType == "value_provider" {
 			adapter, _ := cmd.Flags().GetString("adapter")
+			adapterRef, _ := cmd.Flags().GetString("adapter-ref")
 			adminRef, _ := cmd.Flags().GetString("admin-credential-ref")
 			targetUser, _ := cmd.Flags().GetString("target-user")
+			if adapterRef != "" {
+				id, _, _ := strings.Cut(adapterRef, "@")
+				adapter = id // validated consistent above
+			}
 			binding := map[string]any{
 				"adapter": adapter, "admin_credential_ref": adminRef, "target_user": targetUser,
+			}
+			if adapterRef != "" {
+				binding["adapter_ref"] = adapterRef
 			}
 			if cmd.Flags().Changed("length-bytes") {
 				lengthBytes, _ := cmd.Flags().GetInt("length-bytes")
@@ -397,6 +416,7 @@ func init() {
 	secretsRotationSetCmd.Flags().String("type", "value_client", "rotation class: value_client, value_auto, or value_provider")
 	secretsRotationSetCmd.Flags().Int("period-days", 0, "rotation cadence in days (1-365)")
 	secretsRotationSetCmd.Flags().String("adapter", "", "provider adapter for value_provider (currently: postgres)")
+	secretsRotationSetCmd.Flags().String("adapter-ref", "", "pinned adapter version <id>@<version>[#sha256:<hex>] (derives --adapter; server backfills bundled version if omitted)")
 	secretsRotationSetCmd.Flags().String("admin-credential-ref", "", "secret key of the provider admin credential (same project/environment)")
 	secretsRotationSetCmd.Flags().String("target-user", "", "provider-side identity to rotate (e.g. database role)")
 	secretsRotationSetCmd.Flags().Int("length-bytes", 0, "minted credential length 16-256 (provider default 32)")
