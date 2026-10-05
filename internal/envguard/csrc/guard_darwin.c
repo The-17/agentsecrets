@@ -50,6 +50,10 @@ extern int ptrace(int request, pid_t pid, caddr_t addr, int data);
 __attribute__((constructor)) static void guard_init(void) {
 	ptrace(PT_DENY_ATTACH, 0, 0, 0);
 	parse_secrets();
+	/* See guard_linux.c: drop the aggregated mask (and loader key) now that
+	 * secrets are parsed. */
+	unsetenv("AGENTSECRETS_MASK");
+	unsetenv("DYLD_INSERT_LIBRARIES");
 }
 
 static ssize_t guard_write(int fd, const void *buf, size_t n) {
@@ -60,12 +64,13 @@ static ssize_t guard_write(int fd, const void *buf, size_t n) {
 	if (g_count == 0 || (fd != 1 && fd != 2)) {
 		return real(fd, buf, n);
 	}
-	char *t = malloc(n + REPLACEMENT_LEN);
+	char *t = malloc(n + 1);
 	if (!t) {
 		return real(fd, buf, n);
 	}
 	memcpy(t, buf, n);
-	size_t l = redact(t, n);
+	size_t l = n;
+	redact(&t, &l);
 	ssize_t r = real(fd, t, l);
 	free(t);
 	return r < 0 ? r : (ssize_t)n;
@@ -84,7 +89,7 @@ static ssize_t guard_writev(int fd, const struct iovec *iov, int cnt) {
 	for (int i = 0; i < cnt; i++) {
 		tot += iov[i].iov_len;
 	}
-	char *t = malloc(tot + REPLACEMENT_LEN);
+	char *t = malloc(tot + 1);
 	if (!t) {
 		return real(fd, iov, cnt);
 	}
@@ -93,7 +98,8 @@ static ssize_t guard_writev(int fd, const struct iovec *iov, int cnt) {
 		memcpy(t + o, iov[i].iov_base, iov[i].iov_len);
 		o += iov[i].iov_len;
 	}
-	size_t l = redact(t, tot);
+	size_t l = tot;
+	redact(&t, &l);
 	struct iovec one = {t, l};
 	ssize_t r = real(fd, &one, 1);
 	free(t);
@@ -110,12 +116,13 @@ static size_t guard_fwrite(const void *p, size_t sz, size_t nm, FILE *f) {
 	if (!tot || g_count == 0) {
 		return real(p, sz, nm, f);
 	}
-	char *t = malloc(tot + REPLACEMENT_LEN);
+	char *t = malloc(tot + 1);
 	if (!t) {
 		return real(p, sz, nm, f);
 	}
 	memcpy(t, p, tot);
-	size_t l = redact(t, tot);
+	size_t l = tot;
+	redact(&t, &l);
 	size_t r = real(t, 1, l, f);
 	free(t);
 	return r ? nm : 0;
@@ -127,16 +134,17 @@ static int guard_fputs(const char *s, FILE *f) {
 	if (!real) {
 		real = dlsym(RTLD_NEXT, "fputs");
 	}
-	if (!s || g_count == 0) {
+	if (g_count == 0) {
 		return real(s, f);
 	}
 	size_t n = strlen(s);
-	char *t = malloc(n + REPLACEMENT_LEN);
+	char *t = malloc(n + 1);
 	if (!t) {
 		return real(s, f);
 	}
 	memcpy(t, s, n);
-	size_t l = redact(t, n);
+	size_t l = n;
+	redact(&t, &l);
 	int r = real(t, f);
 	free(t);
 	return r;
@@ -148,16 +156,17 @@ static int guard_puts(const char *s) {
 	if (!real) {
 		real = dlsym(RTLD_NEXT, "puts");
 	}
-	if (!s || g_count == 0) {
+	if (g_count == 0) {
 		return real(s);
 	}
 	size_t n = strlen(s);
-	char *t = malloc(n + REPLACEMENT_LEN);
+	char *t = malloc(n + 1);
 	if (!t) {
 		return real(s);
 	}
 	memcpy(t, s, n);
-	size_t l = redact(t, n);
+	size_t l = n;
+	redact(&t, &l);
 	int r = real(t);
 	free(t);
 	return r;

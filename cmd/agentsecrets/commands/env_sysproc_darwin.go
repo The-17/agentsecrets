@@ -27,9 +27,11 @@ func hardenParentProcess() {
 	_, _, _ = syscall.Syscall(syscall.SYS_PTRACE, ptDenyAttach, 0, 0)
 }
 
-// childSysProcAttr detaches the child from our controlling terminal. It keeps the
-// inherited stdin/stdout/stderr descriptors but leaves the child with no
-// controlling tty, so it cannot open /dev/tty to print secrets around our masking.
+// childSysProcAttr detaches the child from our controlling terminal. Setsid
+// leaves the child with no controlling tty, so the /dev/tty literal no longer
+// reaches our terminal — session hygiene, not containment: inherited fds and
+// the concrete pty remain reachable. Real output containment is the
+// interposer plus sandboxing, not session detach.
 func childSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
 }

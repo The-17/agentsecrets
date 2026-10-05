@@ -36,27 +36,47 @@ help:
 # output. If no compiler is available the build still succeeds; children then run
 # with parent-side masking only. The output name must match envguard.libraryName()
 # for the host (guard_<os>_<arch>.{so,dylib}).
+# Hardening flags for the env-guard interposer. This artifact runs preloaded in
+# every `agentsecrets env` child and parses attacker-influenced bytes, so it
+# is built like the security boundary it borders: fortified, RELRO, NX stack,
+# warnings denied. If the compiler rejects any flag, the build fails loudly
+# rather than silently producing an unhardened library.
+GUARD_CFLAGS = -std=c11 -O2 -fPIC -shared -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wl,-z,relro,-z,now -Wl,-z,noexecstack -Wall -Wextra -Werror
+GUARD_DARWIN_CFLAGS = -std=c11 -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -dynamiclib -Wall -Wextra -Werror
+
 envguard:
 	@echo "Building env-guard interposer..."
 	@mkdir -p $(BUILD_DIR)
 ifeq ($(UNAME_S),Darwin)
 	@if command -v clang >/dev/null 2>&1; then \
-		clang -dynamiclib -O2 -o $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib internal/envguard/csrc/guard_darwin.c && \
+		clang $(GUARD_DARWIN_CFLAGS) -o $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib internal/envguard/csrc/guard_darwin.c && \
 		codesign -s - $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib >/dev/null 2>&1; \
 		echo "✓ Built $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib (ad-hoc signed)"; \
+		$(GO) run ./internal/envguard/cmd/pinhash $(BUILD_DIR)/guard_darwin_$(GUARD_ARCH).dylib > internal/envguard/hashes_generated.go; \
 	else \
 		echo "⚠ No clang; env-guard not built — env children run with parent-side masking only"; \
 	fi
 else ifeq ($(UNAME_S),Linux)
 	@if command -v $(CC) >/dev/null 2>&1; then \
-		$(CC) -shared -fPIC -O2 -o $(BUILD_DIR)/guard_linux_$(GUARD_ARCH).so internal/envguard/csrc/guard_linux.c && \
+		$(CC) $(GUARD_CFLAGS) -o $(BUILD_DIR)/guard_linux_$(GUARD_ARCH).so internal/envguard/csrc/guard_linux.c && \
 		echo "✓ Built $(BUILD_DIR)/guard_linux_$(GUARD_ARCH).so"; \
+		$(GO) run ./internal/envguard/cmd/pinhash $(BUILD_DIR)/guard_linux_$(GUARD_ARCH).so > internal/envguard/hashes_generated.go; \
 	else \
 		echo "⚠ No C compiler ($(CC)); env-guard not built — env children run with parent-side masking only"; \
 	fi
 else
 	@echo "⚠ env-guard interposer not built on $(UNAME_S) — env children run with parent-side masking only"
 endif
+
+# Unit tests for the C redaction core (ASan+UBSan: the historic heap-overflow
+# class fails loudly). Requires a C compiler; skipped otherwise.
+guard-test:
+	@if command -v $(CC) >/dev/null 2>&1; then \
+		$(CC) -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -o /tmp/guard_test internal/envguard/csrc/guard_test.c && \
+		/tmp/guard_test; \
+	else \
+		echo "⚠ No C compiler; guard-test skipped"; \
+	fi
 
 # Build the binary
 build: envguard

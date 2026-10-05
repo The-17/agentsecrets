@@ -36,8 +36,14 @@ func NewEnvCmd() *cobra.Command {
 		- Local Engine (Default): Resolves from local OS keychain (offline, 0ms latency).
 		- Cloud Engine: Resolves from AgentSecrets Cloud over TLS via AGENTSECRETS_TOKEN or --cloud.
 
-		The child is made non-dumpable (no other process can read its environment) and
-		secret values are redacted from its output.
+		The child is made non-dumpable where the OS allows (Linux, macOS) so no
+		other process can read its environment, and secret values are
+		filtered from its stdout/stderr text. That filtering is hygiene, not
+		a boundary: it cannot see network traffic, file writes, or deliberately
+		transformed output — use --sandbox (Linux) when the child must not
+		exfiltrate. On Windows the child runs without interposer or
+		non-dumpable protection; parent-side stdout/stderr filtering still
+		applies.
 
 		--cloud              resolve secrets via AgentSecrets Cloud
 		--only KEY[,KEY...]  inject only these secrets (default: all)
@@ -178,20 +184,56 @@ parseArgs:
 		}
 	}
 
-	// The preload guard cannot attach to every binary (a statically linked child on
-	// Linux, a hardened-runtime child on macOS). Output is still redacted by the
-	// parent, but the child's environment protection is reduced. Say so once, and
-	// only when a guard is actually installed to attach.
-	if envguard.Locate() != "" {
-		if target, lerr := exec.LookPath(args[0]); lerr == nil {
-			if msg := guardAttachWarning(target); msg != "" {
-				ui.Warning(msg)
-			}
+	// Values that cannot be redacted anywhere are still injected (the child
+	// needs them) but must never pass silently: short values would redact
+	// unrelated text, separator-fragmented values would match nothing.
+	if short, fragmented := envguard.Unmaskable(secrets); len(short)+len(fragmented) > 0 {
+		if len(short) > 0 {
+			fmt.Println(ui.WarningStyle.Render(fmt.Sprintf(
+				"These values are too short to redact safely and will appear unmasked in output: %s",
+				strings.Join(short, " "))))
+		}
+		if len(fragmented) > 0 {
+			fmt.Println(ui.WarningStyle.Render(fmt.Sprintf(
+				"These values contain the mask separator and cannot be redacted: %s",
+				strings.Join(fragmented, " "))))
 		}
 	}
 
-	// Build environment: parent env + injected secrets
-	env := os.Environ()
+	// Resolve the inner command path ONCE and reuse it for the attach warning:
+	// resolving twice admits a PATH/binary swap between the check and the use.
+	// (The spawn below re-resolves the possibly sandbox-wrapped argv; the
+	// residual wrapper-swap window is accepted — swapping it requires the
+	// attacker's capabilities this feature already assumes.)
+	warnPath, err := exec.LookPath(args[0])
+	if err != nil {
+		return fmt.Errorf("command not found: %s", args[0])
+	}
+	// The preload guard cannot attach to every binary (a statically linked
+	// child on Linux, a hardened-runtime child on macOS, anything on
+	// Windows). The parent-side masker still filters stdout/stderr, but the
+	// child's environment protection is reduced. Say so once. Separately,
+	// when no guard library is installed at all, say that too — silent
+	// absence of a protection the help text describes would be a lie by
+	// omission.
+	if envguard.Locate() != "" {
+		if msg := guardAttachWarning(warnPath); msg != "" {
+			ui.Warning(msg)
+		}
+	} else {
+		ui.Warning("Output guard library not installed — children run with parent-side stdout/stderr filtering only (run `make envguard` at install time to enable it)")
+	}
+
+	// Build environment: parent env + injected secrets. Inherited entries for
+	// keys we are about to inject are stripped FIRST: duplicate entries are
+	// ambiguous to the loader (glibc returns the first match), so appending
+	// blindly would let a stale or attacker-planted parent value shadow the
+	// keychain value while audit logs the keychain key name.
+	secretKeyList := make([]string, 0, len(secrets))
+	for key := range secrets {
+		secretKeyList = append(secretKeyList, key)
+	}
+	env := stripEnv(os.Environ(), secretKeyList)
 	for key, value := range secrets {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
@@ -237,21 +279,25 @@ parseArgs:
 	childCmd.Stdout = stdoutMasker
 	childCmd.Stderr = stderrMasker
 
-	// Forward signals to child
+	// Forward every signal to the child for its whole lifetime (a single
+	// receive would drop the second Ctrl-C and orphan a secret-bearing child).
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
 	go func() {
-		select {
-		case sig := <-sigChan:
-			if childCmd.Process != nil {
-				childCmd.Process.Signal(sig)
+		defer signal.Stop(sigChan)
+		for {
+			select {
+			case sig := <-sigChan:
+				if childCmd.Process != nil {
+					_ = childCmd.Process.Signal(sig)
+				}
+			case <-done:
+				return
 			}
-		case <-done:
 		}
 	}()
 	defer func() {
-		signal.Stop(sigChan)
 		close(done)
 	}()
 
@@ -279,7 +325,7 @@ parseArgs:
 				exitCode = -1
 			}
 		}
-		auditLog(project, args, secretKeys, hosts, commandPath, pid, exitCode, time.Since(started))
+		auditLog(project, scrubArgv(args, secrets), secretKeys, hosts, commandPath, pid, exitCode, time.Since(started))
 	}
 
 	if runErr != nil {
@@ -295,9 +341,32 @@ parseArgs:
 	return nil
 }
 
+// scrubArgv replaces any argv element containing a secret value with
+// [REDACTED] before it can reach logs: `env -- deploy --token=<value>`
+// must not write the value into the audit trail. Values shorter than 4
+// bytes are skipped (same false-positive rule as every other masker).
+func scrubArgv(args []string, secrets map[string]string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		redacted := false
+		for _, v := range secrets {
+			if len(v) >= 4 && strings.Contains(a, v) {
+				out[i] = "[REDACTED]"
+				redacted = true
+				break
+			}
+		}
+		if !redacted {
+			out[i] = a
+		}
+	}
+	return out
+}
+
 // auditLog records what `env` handed to which child: the key names, the hosts
-// those credentials name, and the child's identity, exit code and duration. No
-// secret value is ever recorded.
+// those credentials name, and the child's identity, exit code and duration.
+// Secret values are never recorded — including inside argv: `env -- deploy
+// --token=sk_live_...` must not land the value in the audit trail.
 func auditLog(project *config.ProjectConfig, cmdArgs []string, secretKeys, hosts []string, child string, pid, exitCode int, d time.Duration) {
 	audit, err := proxy.NewAuditLogger("")
 	if err != nil {

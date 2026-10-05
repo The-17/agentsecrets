@@ -13,7 +13,9 @@
  * _DARWIN_C_SOURCE on macOS) BEFORE including this header so memmem is declared.
  *
  * Secret values are supplied by the parent through AGENTSECRETS_MASK, joined by
- * the ASCII Unit Separator (0x1f), which cannot appear in an ordinary value.
+ * the ASCII Unit Separator (0x1f). Values containing the separator are
+ * excluded upstream (they would fragment and match nothing); fragments that
+ * arrive anyway are treated as independent values, harmlessly.
  *
  * Redaction is HYGIENE, NOT A SECURITY BOUNDARY: a program that controls its own
  * bytes can always evade it (split the secret across writes, encode it, print
@@ -43,7 +45,9 @@ static void parse_secrets(void) {
 	while (*p && g_count < MAX_SECRETS) {
 		const char *sep = strchr(p, 0x1f);
 		size_t l = sep ? (size_t)(sep - p) : strlen(p);
-		if (l >= 4) { /* very short values would redact unrelated text */
+		/* Very short values would redact unrelated text; the literal
+		 * replacement is never a secret (it would redact itself forever). */
+		if (l >= 4 && (l != REPLACEMENT_LEN || memcmp(p, REPLACEMENT, l) != 0)) {
 			g_secret[g_count] = malloc(l + 1);
 			if (!g_secret[g_count]) {
 				break;
@@ -60,23 +64,75 @@ static void parse_secrets(void) {
 	}
 }
 
-/* redact replaces every secret occurrence in b[0..len) and returns the new length.
- * Callers must provide a buffer with room for REPLACEMENT_LEN - 1 extra bytes. */
-static size_t redact(char *b, size_t len) {
+/* count_occ counts NON-OVERLAPPING occurrences of s in b, scanning forward.
+ * Forward-only scanning is load-bearing: replaced regions are never
+ * rescanned, so a replacement can never match (itself or another secret). */
+static size_t count_occ(const char *b, size_t len, const char *s, size_t sl) {
+	size_t n = 0;
+	const char *p = b;
+	size_t rem = len;
+	while (rem >= sl && (p = memmem(p, rem, s, sl)) != NULL) {
+		n++;
+		p += sl;
+		rem = len - (size_t)(p - b);
+	}
+	return n;
+}
+
+/* redact replaces every secret occurrence in *pbuf (of *plen bytes) and updates
+ * *plen to the new length. Buffers that may GROW (any secret shorter than the
+ * replacement) are enlarged with realloc to fit the worst case FIRST — the
+ * size is counted, never guessed — so replacement can never overflow no
+ * matter how short the secrets or how many occurrences. Scanning is strictly
+ * forward: already-emitted output is never rescanned, which rules out
+ * self-matching and cross-secret re-match loops by construction (a secret
+ * equal to the replacement text is also refused at parse time).
+ *
+ * On realloc failure the buffer keeps whatever replacements completed so far
+ * (fail-soft toward redacted, never toward corrupt). Callers MUST route every
+ * replacement through this function — never write a growing replacement into
+ * a fixed-size buffer. */
+static void redact(char **pbuf, size_t *plen) {
+	char *b = *pbuf;
+	size_t len = *plen;
 	for (int i = 0; i < g_count; i++) {
 		size_t sl = g_len[i];
 		if (sl == 0 || sl > len) {
 			continue;
 		}
-		char *pos;
-		while ((pos = memmem(b, len, g_secret[i], sl)) != NULL) {
-			size_t off = (size_t)(pos - b);
+		if (sl < REPLACEMENT_LEN) {
+			size_t n = count_occ(b, len, g_secret[i], sl);
+			if (n == 0) {
+				continue;
+			}
+			char *nb = realloc(b, len + n * (REPLACEMENT_LEN - sl));
+			if (!nb) {
+				break;
+			}
+			b = nb;
+		}
+		size_t off = 0;
+		while (off + sl <= len) {
+			char *pos = memmem(b + off, len - off, g_secret[i], sl);
+			if (!pos) {
+				break;
+			}
+			size_t at = (size_t)(pos - b);
+			/* Tail FIRST, then stamp: when growing, the tail overlaps the
+			 * replacement zone, so stamping first would clobber the source.
+			 * (The reverse order corrupts output — and with it, trust.) */
+			memmove(pos + REPLACEMENT_LEN, pos + sl, len - at - sl);
 			memcpy(pos, REPLACEMENT, REPLACEMENT_LEN);
-			memmove(pos + REPLACEMENT_LEN, pos + sl, len - off - sl + 1);
-			len = len + REPLACEMENT_LEN - sl;
+			if (sl >= REPLACEMENT_LEN) {
+				len = len - (sl - REPLACEMENT_LEN);
+			} else {
+				len = len + (REPLACEMENT_LEN - sl);
+			}
+			off = at + REPLACEMENT_LEN;
 		}
 	}
-	return len;
+	*pbuf = b;
+	*plen = len;
 }
 
 #endif /* AGENTSECRETS_GUARD_COMMON_H */

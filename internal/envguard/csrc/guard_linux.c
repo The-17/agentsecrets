@@ -28,6 +28,12 @@
 __attribute__((constructor)) static void guard_init(void) {
 	prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
 	parse_secrets();
+	/* The mask aggregated every secret into one variable: remove it (and the
+	 * loader key) now that secrets are parsed, so getenv//proc/self/environ
+	 * no longer serve them in one place. The pre-exec window (exact bytes
+	 * visible between execve and this constructor) is inherent and documented. */
+	unsetenv("AGENTSECRETS_MASK");
+	unsetenv("LD_PRELOAD");
 }
 
 ssize_t write(int fd, const void *buf, size_t n) {
@@ -38,12 +44,13 @@ ssize_t write(int fd, const void *buf, size_t n) {
 	if (g_count == 0 || (fd != 1 && fd != 2)) {
 		return real(fd, buf, n);
 	}
-	char *t = malloc(n + REPLACEMENT_LEN);
+	char *t = malloc(n + 1);
 	if (!t) {
 		return real(fd, buf, n);
 	}
 	memcpy(t, buf, n);
-	size_t l = redact(t, n);
+	size_t l = n;
+	redact(&t, &l);
 	ssize_t r = real(fd, t, l);
 	free(t);
 	return r < 0 ? r : (ssize_t)n;
@@ -61,7 +68,7 @@ ssize_t writev(int fd, const struct iovec *iov, int cnt) {
 	for (int i = 0; i < cnt; i++) {
 		tot += iov[i].iov_len;
 	}
-	char *t = malloc(tot + REPLACEMENT_LEN);
+	char *t = malloc(tot + 1);
 	if (!t) {
 		return real(fd, iov, cnt);
 	}
@@ -70,7 +77,8 @@ ssize_t writev(int fd, const struct iovec *iov, int cnt) {
 		memcpy(t + o, iov[i].iov_base, iov[i].iov_len);
 		o += iov[i].iov_len;
 	}
-	size_t l = redact(t, tot);
+	size_t l = tot;
+	redact(&t, &l);
 	struct iovec one = {t, l};
 	ssize_t r = real(fd, &one, 1);
 	free(t);
@@ -86,12 +94,13 @@ size_t fwrite(const void *p, size_t sz, size_t nm, FILE *f) {
 	if (!tot || g_count == 0) {
 		return real(p, sz, nm, f);
 	}
-	char *t = malloc(tot + REPLACEMENT_LEN);
+	char *t = malloc(tot + 1);
 	if (!t) {
 		return real(p, sz, nm, f);
 	}
 	memcpy(t, p, tot);
-	size_t l = redact(t, tot);
+	size_t l = tot;
+	redact(&t, &l);
 	size_t r = real(t, 1, l, f);
 	free(t);
 	return r ? nm : 0;
@@ -102,16 +111,17 @@ int fputs(const char *s, FILE *f) {
 	if (!real) {
 		real = dlsym(RTLD_NEXT, "fputs");
 	}
-	if (!s || g_count == 0) {
+	if (g_count == 0) {
 		return real(s, f);
 	}
 	size_t n = strlen(s);
-	char *t = malloc(n + REPLACEMENT_LEN);
+	char *t = malloc(n + 1);
 	if (!t) {
 		return real(s, f);
 	}
 	memcpy(t, s, n);
-	size_t l = redact(t, n);
+	size_t l = n;
+	redact(&t, &l);
 	int r = real(t, f);
 	free(t);
 	return r;
@@ -122,16 +132,17 @@ int puts(const char *s) {
 	if (!real) {
 		real = dlsym(RTLD_NEXT, "puts");
 	}
-	if (!s || g_count == 0) {
+	if (g_count == 0) {
 		return real(s);
 	}
 	size_t n = strlen(s);
-	char *t = malloc(n + REPLACEMENT_LEN);
+	char *t = malloc(n + 1);
 	if (!t) {
 		return real(s);
 	}
 	memcpy(t, s, n);
-	size_t l = redact(t, n);
+	size_t l = n;
+	redact(&t, &l);
 	int r = real(t);
 	free(t);
 	return r;

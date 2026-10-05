@@ -76,3 +76,6 @@ specs/
 .env.development
 .env.staging
 .env.production
+
+# Build-generated env-guard hash pins (machine/build-specific; `make envguard` regenerates)
+internal/envguard/hashes_generated.go
