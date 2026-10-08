@@ -107,7 +107,7 @@ func syncAllowlistToKeyring(workspaceID string) error {
 func runAllowlistAdd(_ *cobra.Command, args []string) error {
 	domains := args
 
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func runAllowlistAdd(_ *cobra.Command, args []string) error {
 func runAllowlistRemove(_ *cobra.Command, args []string) error {
 	domain := args[0]
 
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func runAllowlistRemove(_ *cobra.Command, args []string) error {
 }
 
 func runAllowlistList(_ *cobra.Command, _ []string) error {
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
@@ -243,7 +243,7 @@ func runAllowlistList(_ *cobra.Command, _ []string) error {
 }
 
 func runAllowlistLog(_ *cobra.Command, _ []string) error {
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}

@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/config"
@@ -33,14 +32,7 @@ var logoutCmd = &cobra.Command{
 
 		// Confirm unless --force
 		if !forceLogout {
-			var confirm bool
-			err := huh.NewConfirm().
-				Title(fmt.Sprintf("Logout from %s?", email)).
-				Affirmative("Yes").
-				Negative("No").
-				Value(&confirm).
-				Run()
-			if err != nil || !confirm {
+			if !confirmHuh(fmt.Sprintf("Logout from %s?", email), "", "Yes", "No") {
 				ui.Info("Cancelled.")
 				return nil
 			}

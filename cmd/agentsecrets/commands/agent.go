@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/huh"
-	"github.com/spf13/cobra"
 	"github.com/The-17/agentsecrets/pkg/capabilities"
+	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/agents"
 	"github.com/The-17/agentsecrets/pkg/config"
@@ -22,9 +21,9 @@ var (
 )
 
 var agentCmd = &cobra.Command{
-	Use:   "agent",
-	Short: "Manage agent identities and tokens",
-	Long:  "Manage agent identities and tokens for the current workspace.\n\nAgents are named identities that can be bound to credential calls.\nEvery call through the proxy is logged with the calling agent's identity.\nIssued tokens provide cryptographically verified identity.",
+	Use:               "agent",
+	Short:             "Manage agent identities and tokens",
+	Long:              "Manage agent identities and tokens for the current workspace.\n\nAgents are named identities that can be bound to credential calls.\nEvery call through the proxy is logged with the calling agent's identity.\nIssued tokens provide cryptographically verified identity.",
 	PersistentPreRunE: keychainAuthMiddleware,
 }
 
@@ -46,9 +45,9 @@ var agentRegisterCmd = &cobra.Command{
 			environment = config.ResolveEnvironment()
 		}
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		projectID, err := resolveProjectID(workspaceID, projectFlag)
@@ -99,18 +98,16 @@ var agentRegisterCmd = &cobra.Command{
 		fmt.Printf("To use it: export AS_AGENT_TOKEN=%s\n", resp.Token)
 
 		var storeInKeychain bool
-		var confirmErr error
 		if cmd.Flags().Changed("save-token") {
 			storeInKeychain, _ = cmd.Flags().GetBool("save-token")
 		} else {
-			confirmErr = huh.NewConfirm().
-				Title("Would you like to store this agent token in your local OS Keychain?").
-				Description(fmt.Sprintf("This allows referencing it in your code via %s_TOKEN", strings.ToUpper(resp.Agent.Name))).
-				Value(&storeInKeychain).
-				Run()
+			storeInKeychain = confirmHuh(
+				"Would you like to store this agent token in your local OS Keychain?",
+				fmt.Sprintf("This allows referencing it in your code via %s_TOKEN", strings.ToUpper(resp.Agent.Name)),
+			)
 		}
 
-		if confirmErr == nil && storeInKeychain {
+		if storeInKeychain {
 			if err := keyring.SetAgentToken(resp.Agent.Name, resp.Token); err != nil {
 				ui.Error(fmt.Sprintf("Failed to store agent token in keychain: %v", err))
 			} else {
@@ -129,9 +126,9 @@ var agentListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		projectFlag, _ := cmd.Flags().GetString("project")
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		// Load projects to resolve IDs to Names in display
@@ -222,9 +219,9 @@ var agentTokenIssueCmd = &cobra.Command{
 			environment = config.ResolveEnvironment()
 		}
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		agent, err := getAgentByName(workspaceID, name)
@@ -260,18 +257,16 @@ var agentTokenIssueCmd = &cobra.Command{
 		fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
 
 		var storeInKeychain bool
-		var confirmErr error
 		if cmd.Flags().Changed("save-token") {
 			storeInKeychain, _ = cmd.Flags().GetBool("save-token")
 		} else {
-			confirmErr = huh.NewConfirm().
-				Title("Would you like to store this agent token in your local OS Keychain?").
-				Description(fmt.Sprintf("This allows referencing it in your code via %s_TOKEN", strings.ToUpper(name))).
-				Value(&storeInKeychain).
-				Run()
+			storeInKeychain = confirmHuh(
+				"Would you like to store this agent token in your local OS Keychain?",
+				fmt.Sprintf("This allows referencing it in your code via %s_TOKEN", strings.ToUpper(name)),
+			)
 		}
 
-		if confirmErr == nil && storeInKeychain {
+		if storeInKeychain {
 			if err := keyring.SetAgentToken(name, resp.Token); err != nil {
 				ui.Error(fmt.Sprintf("Failed to store agent token in keychain: %v", err))
 			} else {
@@ -291,9 +286,9 @@ var agentTokenListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		agent, err := getAgentByName(workspaceID, name)
@@ -349,9 +344,9 @@ var agentTokenRotateCmd = &cobra.Command{
 		compromise, _ := cmd.Flags().GetBool("compromise")
 		confirm, _ := cmd.Flags().GetBool("confirm")
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 		if agentName == "" {
 			return fmt.Errorf("please provide the --agent <name> for the token")
@@ -366,18 +361,13 @@ var agentTokenRotateCmd = &cobra.Command{
 		if compromise {
 			reason = "compromise"
 		}
-		if !confirm {
-			if compromise {
-				fmt.Printf("Compromise-rotate token %s for agent %s? The old token dies immediately and the family is poisoned. [y/N] ", tokenID, agentName)
-			} else {
-				fmt.Printf("Rotate token %s for agent %s? The old token stays valid for %dh. [y/N] ", tokenID, agentName, overlapHours)
-			}
-			var response string
-			fmt.Scanln(&response)
-			if response != "y" && response != "Y" {
-				fmt.Println("Aborted.")
-				return nil
-			}
+		prompt := fmt.Sprintf("Rotate token %s for agent %s? The old token stays valid for %dh. [y/N] ", tokenID, agentName, overlapHours)
+		if compromise {
+			prompt = fmt.Sprintf("Compromise-rotate token %s for agent %s? The old token dies immediately and the family is poisoned. [y/N] ", tokenID, agentName)
+		}
+		if !confirmProceed(confirm, prompt) {
+			fmt.Println("Aborted.")
+			return nil
 		}
 
 		if err := verifyPasswordLocally(); err != nil {
@@ -426,9 +416,9 @@ var agentTokenRotationSetCmd = &cobra.Command{
 		overlapHours, _ := cmd.Flags().GetInt("overlap-hours")
 		disable, _ := cmd.Flags().GetBool("disable")
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 		if agentName == "" {
 			return fmt.Errorf("please provide the --agent <name> for the token")
@@ -475,9 +465,9 @@ var agentTokenRevokeCmd = &cobra.Command{
 		all, _ := cmd.Flags().GetBool("all")
 		confirm, _ := cmd.Flags().GetBool("confirm")
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		if !all && len(args) == 0 {
@@ -488,14 +478,9 @@ var agentTokenRevokeCmd = &cobra.Command{
 			if agentName == "" {
 				return fmt.Errorf("--agent must be provided when using --all")
 			}
-			if !confirm {
-				fmt.Printf("Revoke all active tokens for %s? [y/N] ", agentName)
-				var response string
-				fmt.Scanln(&response)
-				if response != "y" && response != "Y" {
-					fmt.Println("Aborted.")
-					return nil
-				}
+			if !confirmProceed(confirm, fmt.Sprintf("Revoke all active tokens for %s? [y/N] ", agentName)) {
+				fmt.Println("Aborted.")
+				return nil
 			}
 
 			agent, err := getAgentByName(workspaceID, agentName)
@@ -518,14 +503,9 @@ var agentTokenRevokeCmd = &cobra.Command{
 			return fmt.Errorf("please provide the --agent <name> for the token")
 		}
 
-		if !confirm {
-			fmt.Printf("Revoke token %s for agent %s? [y/N] ", tokenID, agentName)
-			var response string
-			fmt.Scanln(&response)
-			if response != "y" && response != "Y" {
-				fmt.Println("Aborted.")
-				return nil
-			}
+		if !confirmProceed(confirm, fmt.Sprintf("Revoke token %s for agent %s? [y/N] ", tokenID, agentName)) {
+			fmt.Println("Aborted.")
+			return nil
 		}
 
 		agent, err := getAgentByName(workspaceID, agentName)
@@ -551,9 +531,9 @@ var agentDeleteCmd = &cobra.Command{
 		name := args[0]
 		confirm, _ := cmd.Flags().GetBool("confirm")
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		agent, err := getAgentByName(workspaceID, name)
@@ -561,14 +541,9 @@ var agentDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		if !confirm {
-			fmt.Printf("Delete agent %q and revoke all active tokens? [y/N] ", name)
-			var response string
-			fmt.Scanln(&response)
-			if response != "y" && response != "Y" {
-				fmt.Println("Aborted.")
-				return nil
-			}
+		if !confirmProceed(confirm, fmt.Sprintf("Delete agent %q and revoke all active tokens? [y/N] ", name)) {
+			fmt.Println("Aborted.")
+			return nil
 		}
 
 		if err := verifyPasswordLocally(); err != nil {
@@ -664,9 +639,9 @@ var agentPolicyGetCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		agent, err := getAgentByName(workspaceID, name)
@@ -701,9 +676,9 @@ var agentPolicySetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		workspaceID := config.GetSelectedWorkspaceID()
-		if workspaceID == "" {
-			return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
+		workspaceID, err := requireWorkspace()
+		if err != nil {
+			return err
 		}
 
 		agent, err := getAgentByName(workspaceID, name)

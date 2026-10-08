@@ -2,11 +2,8 @@ package keychainauth
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -465,6 +462,7 @@ func startDaemonMacOS(keychainAuthPath string) error {
 	// Last resort: start directly
 	return startDirect(keychainAuthPath)
 }
+
 // startDaemonLinux starts keychain-auth via systemd on Linux.
 func startDaemonLinux(keychainAuthPath string) error {
 	// Try systemd system service first (dedicated system user sandbox daemon)
@@ -563,21 +561,6 @@ func waitForSocket() error {
 	return waitForSocketPath(SocketPath())
 }
 
-// computeHash returns the SHA-256 hash of a file in "sha256:<hex>" format.
-func computeHash(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
-}
-
 // PurgeLegacyFiles overwrites legacy keyring.json files with random bytes and deletes them.
 func PurgeLegacyFiles() error {
 	home, err := os.UserHomeDir()
@@ -669,7 +652,6 @@ func purgeLegacyWCMEntries() {
 	}
 }
 
-
 // queryInstalledVersion returns the version of the installed keychain-auth daemon.
 func queryInstalledVersion(binPath string) (string, error) {
 	cmd := exec.Command(binPath, "--version")
@@ -685,9 +667,10 @@ func queryInstalledVersion(binPath string) (string, error) {
 }
 
 // compareVersions parses simple semver (e.g. "2.2.0") and returns:
-//  -1 if v1 < v2
-//   0 if v1 == v2
-//   1 if v1 > v2
+//
+//	-1 if v1 < v2
+//	 0 if v1 == v2
+//	 1 if v1 > v2
 func compareVersions(v1, v2 string) int {
 	if v1 == "dev" || v1 == "vdev" {
 		return 0

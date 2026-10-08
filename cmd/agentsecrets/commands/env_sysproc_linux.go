@@ -5,7 +5,6 @@ package commands
 import (
 	"debug/elf"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -33,15 +32,6 @@ func hardenParentProcess() {
 // Pdeathsig closes the orphan gap: a secret-bearing child never outlives us.
 func childSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true, Pdeathsig: syscall.SIGKILL}
-}
-
-// isTerminal reports whether f is attached to a terminal.
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // sandboxArgv wraps cmd so it runs with no network egress: a private network

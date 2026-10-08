@@ -80,12 +80,10 @@ func init() {
 func runSecretsPolicySet(cmd *cobra.Command, args []string) error {
 	key := args[0]
 
-	project, err := config.LoadProjectConfig()
-	if err != nil || project == nil || project.ProjectID == "" {
-		return fmt.Errorf("no project configured in current directory")
+	project, env, err := resolvePolicyTarget()
+	if err != nil {
+		return err
 	}
-
-	env := config.ResolveEnvironment()
 
 	// Validate that the secret key actually exists locally or remotely before prompting for password
 	exists, err := secretExists(project.ProjectID, env, key)
@@ -256,16 +254,23 @@ func runSecretsPolicySet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// resolvePolicyTarget loads the project config and environment shared by
+// every policy subcommand: identical preamble, one error message.
+func resolvePolicyTarget() (*config.ProjectConfig, string, error) {
+	project, err := config.LoadProjectConfig()
+	if err != nil || project == nil || project.ProjectID == "" {
+		return nil, "", fmt.Errorf("no project configured in current directory")
+	}
+	return project, config.ResolveEnvironment(), nil
+}
 
 func runSecretsPolicyGet(cmd *cobra.Command, args []string) error {
 	key := args[0]
 
-	project, err := config.LoadProjectConfig()
-	if err != nil || project == nil || project.ProjectID == "" {
-		return fmt.Errorf("no project configured in current directory")
+	project, env, err := resolvePolicyTarget()
+	if err != nil {
+		return err
 	}
-
-	env := config.ResolveEnvironment()
 	policyBytes, err := keyring.GetSecretPolicy(project.ProjectID, env, key)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve policy: %w", err)
@@ -337,12 +342,10 @@ func runSecretsPolicyGet(cmd *cobra.Command, args []string) error {
 func runSecretsPolicyDelete(cmd *cobra.Command, args []string) error {
 	key := args[0]
 
-	project, err := config.LoadProjectConfig()
-	if err != nil || project == nil || project.ProjectID == "" {
-		return fmt.Errorf("no project configured in current directory")
+	project, env, err := resolvePolicyTarget()
+	if err != nil {
+		return err
 	}
-
-	env := config.ResolveEnvironment()
 
 	// Check if secret exists locally or remotely first
 	exists, err := secretExists(project.ProjectID, env, key)
@@ -387,14 +390,11 @@ func runSecretsPolicyDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-
 func runSecretsPolicyList(cmd *cobra.Command, _ []string) error {
-	project, err := config.LoadProjectConfig()
-	if err != nil || project == nil || project.ProjectID == "" {
-		return fmt.Errorf("no project configured in current directory")
+	project, env, err := resolvePolicyTarget()
+	if err != nil {
+		return err
 	}
-
-	env := config.ResolveEnvironment()
 
 	keys, err := keyring.ListProjectKeyNames(project.ProjectID, env)
 	if err != nil {

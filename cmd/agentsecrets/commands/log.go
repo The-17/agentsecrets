@@ -18,13 +18,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func displayTokenID(id string) string {
-	if len(id) <= 8 {
-		return id
-	}
-	return id[:4] + "..." + id[len(id)-4:]
-}
-
 var (
 	logService  *log.Service
 	logPageSize = 20
@@ -636,6 +629,34 @@ func showLogDetail(entry proxy.AuditEvent) {
 	fmt.Println("─────────────────────────────────────────────────────────")
 }
 
+// yesNo renders a boolean the way forensic output expects.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+// layerVerdict finds the named enforcement layer and reports whether it
+// passed, with its reason (or defaultReason when the layer is absent).
+func layerVerdict(layers []proxy.EvaluationLayer, name, defaultReason string) (bool, string) {
+	for _, layer := range layers {
+		if layer.Layer == name {
+			return layer.Result != "fail", layer.Reason
+		}
+	}
+	return true, defaultReason
+}
+
+// printVerdict prints one replay verdict line in the established format.
+func printVerdict(pass bool, reason string) {
+	if pass {
+		fmt.Printf("  Result:           %s (%s)\n", ui.SuccessStyle.Render("PASS"), reason)
+	} else {
+		fmt.Printf("  Result:           %s (%s)\n", ui.ErrorStyle.Render("FAIL"), reason)
+	}
+}
+
 func showForensicLogDetail(fe *proxy.ForensicAuditEvent) {
 	fmt.Println("─────────────────────────────────────────────────────────")
 	fmt.Printf("FORENSIC LOG ENTRY  %s\n", fe.ID)
@@ -661,11 +682,7 @@ func showForensicLogDetail(fe *proxy.ForensicAuditEvent) {
 		ui.StatusRow("  Agent ID", fe.Event.AgentIdentity.TokenName)
 		ui.StatusRow("  Agent Token ID", fe.Event.AgentIdentity.TokenID)
 		ui.StatusRow("  Identity Level", fe.Event.AgentIdentity.IdentityLevel)
-		procVer := "no"
-		if fe.Event.AgentIdentity.ProcessVerified {
-			procVer = "yes"
-		}
-		ui.StatusRow("  Process Verified", procVer)
+		ui.StatusRow("  Process Verified", yesNo(fe.Event.AgentIdentity.ProcessVerified))
 	}
 	fmt.Println()
 
@@ -689,35 +706,19 @@ func showForensicLogDetail(fe *proxy.ForensicAuditEvent) {
 	fmt.Println()
 
 	fmt.Println(ui.BrandStyle.Render("● RESOLUTION LAYER"))
-	injectedStr := "no"
-	if fe.Resolution.CredentialInjected {
-		injectedStr = "yes"
-	}
-	ui.StatusRow("  Cred Injected", injectedStr)
+	ui.StatusRow("  Cred Injected", yesNo(fe.Resolution.CredentialInjected))
 	if fe.Resolution.InjectionStyle != "" {
 		ui.StatusRow("  Injection Style", fe.Resolution.InjectionStyle)
 	}
-	scannedStr := "no"
-	if fe.Resolution.ResponseScanned {
-		scannedStr = "yes"
-	}
-	ui.StatusRow("  Resp Scanned", scannedStr)
-	redactedStr := "no"
-	if fe.Resolution.RedactionTriggered {
-		redactedStr = "yes"
-	}
-	ui.StatusRow("  Redaction Triggered", redactedStr)
+	ui.StatusRow("  Resp Scanned", yesNo(fe.Resolution.ResponseScanned))
+	ui.StatusRow("  Redaction Triggered", yesNo(fe.Resolution.RedactionTriggered))
 	if fe.Resolution.RedactionPattern != "" {
 		ui.StatusRow("  Redact Pattern", fe.Resolution.RedactionPattern)
 	}
 	if fe.Resolution.RedactedField != "" {
 		ui.StatusRow("  Redacted Field", fe.Resolution.RedactedField)
 	}
-	ssrfStr := "no"
-	if fe.Resolution.SSRFCheckPassed {
-		ssrfStr = "yes"
-	}
-	ui.StatusRow("  SSRF Check Passed", ssrfStr)
+	ui.StatusRow("  SSRF Check Passed", yesNo(fe.Resolution.SSRFCheckPassed))
 	ui.StatusRow("  Response Status", fmt.Sprintf("%d", fe.Resolution.ResponseStatus))
 	fmt.Println()
 
@@ -748,30 +749,14 @@ func showForensicLogDetail(fe *proxy.ForensicAuditEvent) {
 		ui.StatusRow("    Policy Version", fe.Snapshot.SecretsPolicy.PolicyVersion)
 	}
 	fmt.Println("  Keychain Auth:")
-	authK := "no"
-	if fe.Snapshot.KeychainAuth.Authenticated {
-		authK = "yes"
-	}
-	ui.StatusRow("    Authenticated", authK)
-	procH := "no"
-	if fe.Snapshot.KeychainAuth.ProcessHashVerified {
-		procH = "yes"
-	}
-	ui.StatusRow("    Process Hash Verified", procH)
-	sessB := "no"
-	if fe.Snapshot.KeychainAuth.SessionBound {
-		sessB = "yes"
-	}
-	ui.StatusRow("    Session Bound", sessB)
+	ui.StatusRow("    Authenticated", yesNo(fe.Snapshot.KeychainAuth.Authenticated))
+	ui.StatusRow("    Process Hash Verified", yesNo(fe.Snapshot.KeychainAuth.ProcessHashVerified))
+	ui.StatusRow("    Session Bound", yesNo(fe.Snapshot.KeychainAuth.SessionBound))
 
 	fmt.Println("  Proxy Snapshot:")
 	ui.StatusRow("    Version", fe.Snapshot.Proxy.Version)
 	ui.StatusRow("    Port", fmt.Sprintf("%d", fe.Snapshot.Proxy.Port))
-	transP := "no"
-	if fe.Snapshot.Proxy.Transient {
-		transP = "yes"
-	}
-	ui.StatusRow("    Transient", transP)
+	ui.StatusRow("    Transient", yesNo(fe.Snapshot.Proxy.Transient))
 	fmt.Println("─────────────────────────────────────────────────────────")
 }
 
@@ -821,21 +806,8 @@ var logReplayCmd = &cobra.Command{
 			fmt.Println("  Agent Token:      None (Anonymous mode)")
 		}
 
-		capsResult := "PASS"
-		capsReason := "Agent has unrestricted access"
-		for _, layer := range fe.Enforcement.LayersEvaluated {
-			if layer.Layer == "agent_capabilities" {
-				if layer.Result == "fail" {
-					capsResult = "FAIL"
-				}
-				capsReason = layer.Reason
-			}
-		}
-		if capsResult == "PASS" {
-			fmt.Printf("  Result:           %s (%s)\n", ui.SuccessStyle.Render("PASS"), capsReason)
-		} else {
-			fmt.Printf("  Result:           %s (%s)\n", ui.ErrorStyle.Render("FAIL"), capsReason)
-		}
+		capsPass, capsReason := layerVerdict(fe.Enforcement.LayersEvaluated, "agent_capabilities", "Agent has unrestricted access")
+		printVerdict(capsPass, capsReason)
 		fmt.Println()
 
 		fmt.Println(ui.BrandStyle.Render("[2/3] Evaluated Workspace Allowlist"))
@@ -844,22 +816,9 @@ var logReplayCmd = &cobra.Command{
 		if len(fe.Snapshot.Workspace.Allowlist) > 0 {
 			fmt.Printf("  Allowlist:        %s\n", strings.Join(fe.Snapshot.Workspace.Allowlist, ", "))
 		}
-		
-		allowResult := "PASS"
-		allowReason := fmt.Sprintf("Domain %s is permitted by allowlist", fe.Event.Domain)
-		for _, layer := range fe.Enforcement.LayersEvaluated {
-			if layer.Layer == "workspace_allowlist" {
-				if layer.Result == "fail" {
-					allowResult = "FAIL"
-				}
-				allowReason = layer.Reason
-			}
-		}
-		if allowResult == "PASS" {
-			fmt.Printf("  Result:           %s (%s)\n", ui.SuccessStyle.Render("PASS"), allowReason)
-		} else {
-			fmt.Printf("  Result:           %s (%s)\n", ui.ErrorStyle.Render("FAIL"), allowReason)
-		}
+
+		allowPass, allowReason := layerVerdict(fe.Enforcement.LayersEvaluated, "workspace_allowlist", fmt.Sprintf("Domain %s is permitted by allowlist", fe.Event.Domain))
+		printVerdict(allowPass, allowReason)
 		fmt.Println()
 
 		fmt.Println(ui.BrandStyle.Render("[3/3] Evaluated Secret Policies"))
@@ -874,21 +833,8 @@ var logReplayCmd = &cobra.Command{
 			fmt.Println("  Active Policy:    None (No restrictions on this key)")
 		}
 
-		policyResult := "PASS"
-		policyReason := "No violations detected"
-		for _, layer := range fe.Enforcement.LayersEvaluated {
-			if layer.Layer == "secrets_policy" {
-				if layer.Result == "fail" {
-					policyResult = "FAIL"
-				}
-				policyReason = layer.Reason
-			}
-		}
-		if policyResult == "PASS" {
-			fmt.Printf("  Result:           %s (%s)\n", ui.SuccessStyle.Render("PASS"), policyReason)
-		} else {
-			fmt.Printf("  Result:           %s (%s)\n", ui.ErrorStyle.Render("FAIL"), policyReason)
-		}
+		policyPass, policyReason := layerVerdict(fe.Enforcement.LayersEvaluated, "secrets_policy", "No violations detected")
+		printVerdict(policyPass, policyReason)
 		fmt.Println()
 
 		fmt.Println("─────────────────────────────────────────────────────────")
@@ -902,7 +848,7 @@ var logReplayCmd = &cobra.Command{
 		}
 		ui.StatusRow("Final Decision", decisionColor)
 		ui.StatusRow("Decided By", fe.Enforcement.DecidedBy)
-		
+
 		injStr := "Not injected"
 		if fe.Resolution.CredentialInjected {
 			injStr = fmt.Sprintf("Injected successfully via %s", fe.Resolution.InjectionStyle)

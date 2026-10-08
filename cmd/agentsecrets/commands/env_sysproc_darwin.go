@@ -36,15 +36,6 @@ func childSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
 }
 
-// isTerminal reports whether f is attached to a terminal.
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
-}
-
 // sandboxArgv is not available on macOS: there is no unprivileged network
 // namespace equivalent, and the sandbox-exec profile route is deprecated.
 func sandboxArgv(args []string) ([]string, error) {

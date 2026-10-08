@@ -23,10 +23,10 @@ var workspaceCmd = &cobra.Command{
 }
 
 var workspaceSwitchCmd = &cobra.Command{
-	Use:   "switch [name]",
-	Short: "Switch active workspace",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runWorkspaceSwitch,
+	Use:               "switch [name]",
+	Short:             "Switch active workspace",
+	Args:              cobra.MaximumNArgs(1),
+	RunE:              runWorkspaceSwitch,
 	ValidArgsFunction: autocompleteWorkspaces,
 }
 
@@ -75,10 +75,10 @@ func init() {
 			RunE:  runWorkspaceDemote,
 		},
 		&cobra.Command{
-			Use:   "delete [name]",
-			Short: "Delete a workspace",
-			Args:  cobra.MaximumNArgs(1),
-			RunE:  runWorkspaceDelete,
+			Use:               "delete [name]",
+			Short:             "Delete a workspace",
+			Args:              cobra.MaximumNArgs(1),
+			RunE:              runWorkspaceDelete,
 			ValidArgsFunction: autocompleteWorkspaces,
 		},
 	)
@@ -96,15 +96,6 @@ func requireConfig() (*config.GlobalConfig, error) {
 		return nil, nil // nil config signals "nothing to do"
 	}
 	return cfg, nil
-}
-
-// requireWorkspaceID returns the currently selected workspace ID or an error.
-func requireWorkspaceID() (string, error) {
-	id := config.GetSelectedWorkspaceID()
-	if id == "" {
-		return "", fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch' first")
-	}
-	return id, nil
 }
 
 // Handlers
@@ -227,7 +218,7 @@ func runWorkspaceCreate(_ *cobra.Command, args []string) error {
 }
 
 func runWorkspaceInvite(_ *cobra.Command, args []string) error {
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
@@ -316,7 +307,7 @@ func runWorkspaceInvite(_ *cobra.Command, args []string) error {
 }
 
 func runWorkspaceMembers(_ *cobra.Command, _ []string) error {
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
@@ -349,16 +340,12 @@ func runWorkspaceMembers(_ *cobra.Command, _ []string) error {
 func runWorkspaceRemove(_ *cobra.Command, args []string) error {
 	email := args[0]
 
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
 
-	var confirmed bool
-	if err := huh.NewConfirm().
-		Title(fmt.Sprintf("Remove %s from workspace?", email)).
-		Value(&confirmed).
-		Run(); err != nil || !confirmed {
+	if !confirmHuh(fmt.Sprintf("Remove %s from workspace?", email), "") {
 		return nil // user cancelled or declined
 	}
 
@@ -402,7 +389,7 @@ func getMemberUserID(workspaceID, email string) (string, error) {
 func runWorkspacePromote(_ *cobra.Command, args []string) error {
 	email := args[0]
 
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
@@ -438,7 +425,7 @@ func runWorkspacePromote(_ *cobra.Command, args []string) error {
 func runWorkspaceDemote(_ *cobra.Command, args []string) error {
 	email := args[0]
 
-	workspaceID, err := requireWorkspaceID()
+	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
 	}
@@ -538,11 +525,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot delete your personal workspace")
 	}
 
-	var confirmed bool
-	if err := huh.NewConfirm().
-		Title(fmt.Sprintf("Are you sure you want to delete workspace '%s'? This cannot be undone.", wsName)).
-		Value(&confirmed).
-		Run(); err != nil || !confirmed {
+	if !confirmHuh(fmt.Sprintf("Are you sure you want to delete workspace '%s'? This cannot be undone.", wsName), "") {
 		return nil
 	}
 

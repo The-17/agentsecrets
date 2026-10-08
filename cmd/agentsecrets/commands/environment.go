@@ -72,14 +72,6 @@ func init() {
 	environmentCmd.AddCommand(envCleanCmd)
 }
 
-// confirmYN reads a y/n answer from stdin.
-func confirmYN() bool {
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-	return answer == "y" || answer == "yes"
-}
-
 func runEnvSwitch(cmd *cobra.Command, args []string) error {
 	environment := args[0]
 
@@ -93,8 +85,7 @@ func runEnvSwitch(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(localEnvFile); err == nil {
 		ui.Warning(fmt.Sprintf("You may have unpushed changes in %s.", prevEnv))
 		ui.Info("Run 'agentsecrets secrets push' first if you want to save them.")
-		fmt.Printf("Switch anyway? (y/n): ")
-		if !confirmYN() {
+		if !confirmProceed(false, "Switch anyway? (y/n): ") {
 			return nil
 		}
 	}
@@ -294,8 +285,7 @@ func runEnvCopy(cmd *cobra.Command, args []string) error {
 
 	// Confirm if destination has existing secrets
 	ui.Info(fmt.Sprintf("This will copy %d secrets from %s to %s.", len(fromSecrets), from, to))
-	fmt.Printf("Continue? (y/n): ")
-	if !confirmYN() {
+	if !confirmProceed(false, "Continue? (y/n): ") {
 		ui.Info("Copy cancelled.")
 		return nil
 	}
@@ -462,8 +452,7 @@ func runEnvClean(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\n%s\n", ui.WarningStyle.Render(fmt.Sprintf("! WARNING: This will delete all %d secrets in %s environment.", len(list), activeEnv)))
-	fmt.Printf("This action cannot be undone. Continue? (y/n): ")
-	if !confirmYN() {
+	if !confirmProceed(false, "This action cannot be undone. Continue? (y/n): ") {
 		ui.Info("Clean cancelled.")
 		return nil
 	}

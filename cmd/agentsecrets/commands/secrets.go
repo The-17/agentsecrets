@@ -61,7 +61,6 @@ var secretsSetCmd = &cobra.Command{
 	RunE:  runSecretsSet,
 }
 
-
 var secretsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all secret keys in the cloud",
@@ -74,7 +73,7 @@ var secretsListCmd = &cobra.Command{
 		}
 		return nil
 	},
-	RunE:  runSecretsList,
+	RunE: runSecretsList,
 }
 
 var secretsPullCmd = &cobra.Command{
@@ -165,12 +164,9 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 	svc := app.Secrets()
 
 	if doRollback {
-		if !confirm {
-			fmt.Printf("Roll back %s to its previous value? (y/n): ", key)
-			if !confirmYN() {
-				ui.Info("Cancelled.")
-				return nil
-			}
+		if !confirmProceed(confirm, fmt.Sprintf("Roll back %s to its previous value? (y/n): ", key)) {
+			ui.Info("Cancelled.")
+			return nil
 		}
 		res, err := svc.RollbackVersion(key, env)
 		if err != nil {
@@ -192,12 +188,9 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 	}
 
 	if doPromote {
-		if !confirm {
-			fmt.Printf("Promote the pending version of %s to current? (y/n): ", key)
-			if !confirmYN() {
-				ui.Info("Cancelled.")
-				return nil
-			}
+		if !confirmProceed(confirm, fmt.Sprintf("Promote the pending version of %s to current? (y/n): ", key)) {
+			ui.Info("Cancelled.")
+			return nil
 		}
 		if reason == "compromise" || config.ResolveEnvironment() == "production" {
 			if err := verifyPasswordLocally(); err != nil {
@@ -446,8 +439,7 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 		for k := range kv {
 			keyNames = append(keyNames, k)
 		}
-		fmt.Printf("This will set %s in development, staging, and production. Continue? (y/n): ", strings.Join(keyNames, ", "))
-		if !confirmYN() {
+		if !confirmProceed(false, fmt.Sprintf("This will set %s in development, staging, and production. Continue? (y/n): ", strings.Join(keyNames, ", "))) {
 			ui.Info("Cancelled.")
 			return nil
 		}
@@ -486,7 +478,6 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
-
 
 func runSecretsList(cmd *cobra.Command, args []string) error {
 	if listRemote {
@@ -888,8 +879,7 @@ func runSecretsDelete(cmd *cobra.Command, args []string) error {
 
 	// Confirm before deleting from production
 	if env == "production" {
-		fmt.Printf("Delete %s from production? (y/n): ", key)
-		if !confirmYN() {
+		if !confirmProceed(false, fmt.Sprintf("Delete %s from production? (y/n): ", key)) {
 			ui.Info("Delete cancelled.")
 			return nil
 		}

@@ -4,7 +4,6 @@ package commands
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 )
 
@@ -16,15 +15,6 @@ func hardenParentProcess() {}
 // platform supports it.
 func childSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
-}
-
-// isTerminal reports whether f is attached to a terminal.
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // sandboxArgv is not available on this platform yet.

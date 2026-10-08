@@ -4,7 +4,6 @@ package commands
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 	"unsafe"
 
@@ -78,15 +77,6 @@ func denyVMReadAttributes() (*syscall.SecurityAttributes, error) {
 	sa.Length = uint32(unsafe.Sizeof(*sa))
 	sa.SecurityDescriptor = uintptr(unsafe.Pointer(sd))
 	return sa, nil
-}
-
-// isTerminal reports whether f is attached to a terminal.
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // sandboxArgv is not available on this platform yet.

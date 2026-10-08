@@ -342,11 +342,7 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("project %q not found", name)
 	}
 
-	var confirmed bool
-	if err := huh.NewConfirm().
-		Title(fmt.Sprintf("Are you sure you want to delete project '%s'? This cannot be undone.", name)).
-		Value(&confirmed).
-		Run(); err != nil || !confirmed {
+	if !confirmHuh(fmt.Sprintf("Are you sure you want to delete project '%s'? This cannot be undone.", name), "") {
 		return nil
 	}
 
