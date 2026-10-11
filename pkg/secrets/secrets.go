@@ -145,10 +145,10 @@ func (s *Service) Get(key string) (string, error) {
 
 // SecretMetadata holds the secret metadata from the API.
 type SecretMetadata struct {
-	Key       string                      `json:"key"`
-	Value     string                      `json:"value,omitempty"` // Encrypted value
-	UpdatedAt string                      `json:"updated_at"`
-	Policy    *capabilities.SecretPolicy  `json:"policy,omitempty"` // Secret-level target constraints
+	Key       string                     `json:"key"`
+	Value     string                     `json:"value,omitempty"` // Encrypted value
+	UpdatedAt string                     `json:"updated_at"`
+	Policy    *capabilities.SecretPolicy `json:"policy,omitempty"` // Secret-level target constraints
 }
 
 // List returns all secret keys for the project in the active environment.
@@ -590,23 +590,6 @@ func (s *Service) updateCacheAfterSetWithEncrypted(projectID, env string, encryp
 		updated = append(updated, sm)
 	}
 	_ = s.writeCache(projectID, env, updated)
-}
-
-func (s *Service) updateCacheAfterSet(projectID, env string, kv map[string]string) {
-	workspaceKey, err := config.GetProjectWorkspaceKey()
-	if err != nil {
-		return
-	}
-
-	encryptedSecrets := make(map[string]string, len(kv))
-	for k, v := range kv {
-		encrypted, err := crypto.EncryptSecret(v, workspaceKey)
-		if err != nil {
-			continue
-		}
-		encryptedSecrets[k] = encrypted
-	}
-	s.updateCacheAfterSetWithEncrypted(projectID, env, encryptedSecrets)
 }
 
 func (s *Service) updateCacheAfterDelete(projectID, env, key string) {
