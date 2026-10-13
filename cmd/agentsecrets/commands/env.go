@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
@@ -176,6 +177,15 @@ func auditLog(project *config.ProjectConfig, cmdArgs []string, secretKeys []stri
 		WorkspaceID: project.WorkspaceID,
 		ProjectID:   project.ProjectID,
 	})
+
+	// Best-effort cloud sync so `env` runs show up in the web audit log like
+	// proxy calls do (mirrors LogManagementEvent). The local row is flushed
+	// by Close below; sync needs an authenticated session and never fails
+	// the command when offline or logged out.
+	if apiClient := auth.NewAuthenticatedClient(); apiClient != nil {
+		audit.APIClient = apiClient
+		_ = audit.SyncUnpushedLogs()
+	}
 }
 
 // ensureKeychainAuthForEnv establishes a keychain-auth connection for commands
