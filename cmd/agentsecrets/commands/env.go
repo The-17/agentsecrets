@@ -19,6 +19,7 @@ import (
 
 	"github.com/The-17/agentsecrets/internal/envguard"
 	"github.com/The-17/agentsecrets/pkg/api"
+	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
@@ -398,6 +399,15 @@ func auditLog(project *config.ProjectConfig, cmdArgs []string, secretKeys, hosts
 		WorkspaceID:     wsID,
 		ProjectID:       projID,
 	})
+
+	// Best-effort cloud sync so `env` runs show up in the web audit log like
+	// proxy calls do (mirrors LogManagementEvent). The local row is flushed
+	// by Close below; sync needs an authenticated session and never fails
+	// the command when offline or logged out.
+	if apiClient := auth.NewAuthenticatedClient(); apiClient != nil {
+		audit.APIClient = apiClient
+		_ = audit.SyncUnpushedLogs()
+	}
 }
 
 // hashFile returns "sha256:<hex>" for a file, or "" if it cannot be read.
