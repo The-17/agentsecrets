@@ -145,10 +145,10 @@ func (s *Service) Get(key string) (string, error) {
 
 // SecretMetadata holds the secret metadata from the API.
 type SecretMetadata struct {
-	Key       string                      `json:"key"`
-	Value     string                      `json:"value,omitempty"` // Encrypted value
-	UpdatedAt string                      `json:"updated_at"`
-	Policy    *capabilities.SecretPolicy  `json:"policy,omitempty"` // Secret-level target constraints
+	Key       string                     `json:"key"`
+	Value     string                     `json:"value,omitempty"` // Encrypted value
+	UpdatedAt string                     `json:"updated_at"`
+	Policy    *capabilities.SecretPolicy `json:"policy,omitempty"` // Secret-level target constraints
 }
 
 // List returns all secret keys for the project in the active environment.
@@ -158,15 +158,15 @@ func (s *Service) List() ([]SecretMetadata, error) {
 
 // ListForEnv returns all secret keys for the project in the specified environment.
 func (s *Service) ListForEnv(env string) ([]SecretMetadata, error) {
-	project, err := config.LoadProjectConfig()
-	if err != nil || project.ProjectID == "" {
+	projectID, _ := config.ResolveProjectContext()
+	if projectID == "" {
 		return nil, fmt.Errorf("list secrets: no project configured in current directory")
 	}
 
 	list, err := api.CallJSON[struct {
 		Secrets []SecretMetadata `json:"secrets"`
 	}](s.API, "secrets.list", "GET", nil, map[string]string{
-		"project_id": project.ProjectID,
+		"project_id": projectID,
 	}, map[string]string{
 		"environment": env,
 	})
@@ -175,7 +175,7 @@ func (s *Service) ListForEnv(env string) ([]SecretMetadata, error) {
 	}
 
 	// Cache the cloud secrets
-	_ = s.writeCache(project.ProjectID, env, list.Secrets)
+	_ = s.writeCache(projectID, env, list.Secrets)
 
 	return list.Secrets, nil
 }
@@ -438,9 +438,8 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 		var list []SecretMetadata
 		var cacheErr error
 		if useCache {
-			project, err := config.LoadProjectConfig()
-			if err == nil && project.ProjectID != "" {
-				list, cacheErr = s.readCache(project.ProjectID, fromEnv)
+			if projectID, _ := config.ResolveProjectContext(); projectID != "" {
+				list, cacheErr = s.readCache(projectID, fromEnv)
 			}
 		}
 		if list == nil || cacheErr != nil {
@@ -458,9 +457,12 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 	} else {
 		// Source is Local
 		if config.GetStorageMode() == 1 {
-			project, _ := config.LoadProjectConfig()
+			projectID, _ := config.ResolveProjectContext()
+			if projectID == "" {
+				return nil, fmt.Errorf("diff secrets: no project configured in current directory")
+			}
 			env := config.ResolveEnvironment()
-			source, err = keyring.GetAllProjectSecrets(project.ProjectID, env)
+			source, err = keyring.GetAllProjectSecrets(projectID, env)
 		} else {
 			source, err = s.Env.Read()
 		}
@@ -478,9 +480,8 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 	var list []SecretMetadata
 	var cacheErr error
 	if useCache {
-		project, err := config.LoadProjectConfig()
-		if err == nil && project.ProjectID != "" {
-			list, cacheErr = s.readCache(project.ProjectID, targetEnv)
+		if projectID, _ := config.ResolveProjectContext(); projectID != "" {
+			list, cacheErr = s.readCache(projectID, targetEnv)
 		}
 	}
 	if list == nil || cacheErr != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	agentmcp "github.com/The-17/agentsecrets/pkg/mcp"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -27,9 +28,15 @@ var mcpServeCmd = &cobra.Command{
 	AI clients like Claude Desktop, Cursor, or Windsurf.
 
 	Instead of configuring this manually, run:
-	agentsecrets mcp install`,
+	agentsecrets mcp install
+
+	AI clients start the server from their own working directory, which is
+	usually NOT your repo — so by default the server cannot find your project.
+	Pass --project-dir (or set AGENTSECRETS_PROJECT_DIR) to pin it:`,
 	RunE: runMCPServe,
 }
+
+var mcpProjectDir string
 
 var mcpInstallCmd = &cobra.Command{
 	Use:   "install",
@@ -50,11 +57,19 @@ var mcpInstallCmd = &cobra.Command{
 }
 
 func init() {
+	mcpServeCmd.Flags().StringVar(&mcpProjectDir, "project-dir", "", "Project directory holding .agentsecrets/project.json (AI clients launch from their own cwd; without this the server cannot find your project)")
 	mcpCmd.AddCommand(mcpServeCmd)
 	mcpCmd.AddCommand(mcpInstallCmd)
 }
 
 func runMCPServe(cmd *cobra.Command, args []string) error {
+	// Pin project resolution before anything reads config: the client's cwd
+	// is not our repo. Flag beats AGENTSECRETS_PROJECT_DIR beats cwd walk.
+	if mcpProjectDir != "" {
+		if err := config.SetProjectDirOverride(mcpProjectDir); err != nil {
+			return err
+		}
+	}
 	// Connect to the keychain-auth daemon to resolve local OS keychain secrets
 	if err := keychainauth.Init(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: keychain-auth initialization failed: %v\n", err)
@@ -86,10 +101,16 @@ func runMCPInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not resolve binary path: %w", err)
 	}
 
-	// MCP entry to write
+	// MCP entry to write. Pin the repo we are installing from so the server
+	// finds the project no matter which directory the AI client launches it
+	// from. Only pinned when the current directory is actually a project —
+	// otherwise keep today's behavior (cwd-walk at serve time).
 	entry := map[string]interface{}{
 		"command": binPath,
 		"args":    []string{"mcp", "serve"},
+	}
+	if projRoot, err := config.GetProjectRoot(); err == nil && projRoot != "" {
+		entry["env"] = map[string]string{config.ProjectDirEnv: projRoot}
 	}
 
 	installed := 0
@@ -130,7 +151,8 @@ func runMCPInstall(cmd *cobra.Command, args []string) error {
 	if installed == 0 {
 		ui.Warning("No supported AI tools detected (Claude Desktop, Cursor, OpenClaw).")
 		ui.Info("You can manually add this to your MCP config:")
-		fmt.Printf("\n  Binary: %s\n  Args:   mcp serve\n\n", binPath)
+		fmt.Printf("\n  Binary: %s\n  Args:   mcp serve\n", binPath)
+		fmt.Printf("  Env:    AGENTSECRETS_PROJECT_DIR=<your repo path>  (required: AI clients don't start in your repo)\n\n")
 		return nil
 	}
 

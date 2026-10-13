@@ -193,3 +193,61 @@ func TestProjectConfig(t *testing.T) {
 		t.Error("Loaded project config does not match saved")
 	}
 }
+
+func TestProjectDirOverride(t *testing.T) {
+	// Fixture project, resolved from a directory that has no project.
+	projDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projDir, ".agentsecrets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(projDir, ".agentsecrets", "project.json")
+	if err := os.WriteFile(marker, []byte(`{"project_id":"p-override","workspace_id":"ws-1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	emptyDir := t.TempDir()
+	t.Chdir(emptyDir)
+	t.Setenv(ProjectDirEnv, "")
+
+	projectDirOverrideMu.Lock()
+	projectDirOverride = ""
+	projectDirOverrideMu.Unlock()
+	t.Cleanup(func() {
+		projectDirOverrideMu.Lock()
+		projectDirOverride = ""
+		projectDirOverrideMu.Unlock()
+		os.Unsetenv(ProjectDirEnv)
+	})
+
+	// 1. No override, empty cwd: not found (root "", nil error by contract).
+	if root, _ := GetProjectRoot(); root != "" {
+		t.Errorf("expected empty root from empty cwd, got %q", root)
+	}
+	// 2. Env var pins the fixture.
+	t.Setenv(ProjectDirEnv, projDir)
+	root, err := GetProjectRoot()
+	if err != nil || root != projDir {
+		t.Fatalf("env override: root=%q err=%v", root, err)
+	}
+	// 3. Explicit flag override beats env (point it nowhere-valid would fail,
+	// so point it at the fixture too and confirm precedence by value).
+	os.Unsetenv(ProjectDirEnv)
+	if err := SetProjectDirOverride(projDir); err != nil {
+		t.Fatalf("SetProjectDirOverride: %v", err)
+	}
+	t.Setenv(ProjectDirEnv, emptyDir)
+	root, err = GetProjectRoot()
+	if err != nil || root != projDir {
+		t.Fatalf("flag override must beat env: root=%q err=%v", root, err)
+	}
+	// 4. Invalid dirs fail fast, never silently.
+	if err := SetProjectDirOverride(emptyDir); err == nil {
+		t.Error("expected error for non-project dir")
+	}
+	os.Unsetenv(ProjectDirEnv)
+	projectDirOverrideMu.Lock()
+	projectDirOverride = ""
+	projectDirOverrideMu.Unlock()
+	if root, _ := GetProjectRoot(); root != "" {
+		t.Errorf("expected empty root after clearing override in empty cwd, got %q", root)
+	}
+}
