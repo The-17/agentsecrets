@@ -233,7 +233,7 @@ export async function authUseIdentity(call: CallCtx, args: AuthUseIdentityArgs):
         candidates: agents.map((a) => ({
           agent: a.name,
           registration_id: a.id,
-          scope: { project_id: a.project_id ?? '(workspace-wide — resolve may find nothing; prefer project-scoped)' },
+          scope: { project_id: a.project_id ?? '(workspace-wide — reaches every project; pass {project} to target one)' },
         })),
         instructions: 'Ask the human which agent identity to use, then call auth_use_identity again with {agent}.',
       });
@@ -257,7 +257,7 @@ export async function authUseIdentity(call: CallCtx, args: AuthUseIdentityArgs):
     registration_id: reg.id,
     scope: { workspace_id: ws, project_id: pin.project_id, environment: pin.environment },
     ...(pin.resolve_may_be_empty
-      ? { warning: 'This registration is workspace-wide (no project). Cloud resolve looks up an exact (workspace, project, environment) triple and may find nothing — prefer a project-scoped agent for proxy_call.' }
+      ? { warning: 'This registration is workspace-wide (no project): cloud resolve reaches every project in the workspace. Pass {project} on proxy_call to target one project explicitly.' }
       : {}),
     setup: 'complete — proxy_call and management tools now work for this workspace. Repeat per workspace as needed.',
   });

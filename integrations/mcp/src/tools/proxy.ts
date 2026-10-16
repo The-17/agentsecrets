@@ -282,7 +282,10 @@ export async function proxyCall(call: CallCtx, args: ProxyCallArgs): Promise<Too
     if (call.creds.agentToken) {
       const scope = enforceTokenScope(call, argv, call.creds.agentToken);
       try {
-        const r = await cloudResolve(resolverBaseUrl(), call.creds.agentToken, req);
+        const r = await cloudResolve(resolverBaseUrl(), call.creds.agentToken, {
+          ...req,
+          scope: hintScope(call, argv, scope),
+        });
         return withContext(call, {
           status_code: r.status_code,
           headers: r.headers,
@@ -395,6 +398,30 @@ function buildRequestedScope(call: CallCtx, args: ProxyCallArgs): { fields: { wo
   if (call.ctx.project?.projectId) fields['project_id'] = call.ctx.project.projectId;
   fields['environment'] = args.environment ?? call.ctx.env.name;
   return { fields };
+}
+
+/**
+ * Workload posture: hand the resolver the effective scope as a narrowing hint.
+ * The token's own binding stays authoritative server-side; this only lets a
+ * workspace-wide identity (one with no project binding) resolve the project the
+ * call targets, instead of the resolver searching the whole workspace. The
+ * pinned echo wins over the local context when both are present, so the hint
+ * can never disagree with the identity the bridge enforced. Environment always
+ * travels so the lookup stays inside the pinned environment. Exported for tests.
+ */
+export function hintScope(
+  call: CallCtx,
+  args: ProxyCallArgs,
+  echo: ScopeEcho
+): NonNullable<ResolveRequest['scope']> {
+  const fields: NonNullable<ResolveRequest['scope']> = {
+    environment: args.environment ?? call.ctx.env.name,
+  };
+  const ws = echo.workspace_id ?? call.ctx.project?.workspaceId ?? null;
+  if (ws) fields.workspace_id = ws;
+  const project = echo.project_id ?? call.ctx.project?.projectId ?? null;
+  if (project) fields.project_id = project;
+  return fields;
 }
 
 export async function proxyStatus(call: CallCtx): Promise<ToolResult> {

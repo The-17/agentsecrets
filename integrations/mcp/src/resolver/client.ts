@@ -120,10 +120,13 @@ export interface ResolveRequest {
   headers: Record<string, string>;
   body: string;
   /**
-   * Explicit scope (login posture only — ignored for workload tokens,
-   * whose triple is authoritative). The resolver MUST authorize every
-   * field against the JWT identity server-side and reject out-of-scope
-   * values with 403; absent fields fall back to legacy behavior.
+   * Explicit authorization/narrowing scope. For the login posture the resolver
+   * MUST authorize every field against the JWT identity server-side and reject
+   * out-of-scope values with 403; absent fields fall back to legacy behavior.
+   * For a workload token the token's own triple stays authoritative — project_id
+   * is consulted only when the token has no project binding (a workspace-wide
+   * identity), where it narrows the lookup to the named project. Workspace and
+   * environment never widen a binding.
    */
   scope?: {
     workspace_id?: string;

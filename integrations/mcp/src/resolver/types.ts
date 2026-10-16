@@ -117,7 +117,7 @@ export interface PinnedIdentity {
   project_id: string | null;
   environment: string | null;
   scope_source: 'registration';
-  /** Set when the registration is workspace-wide: /v1/resolve looks up an exact project and may find nothing. */
+  /** Set when the registration is workspace-wide: /v1/resolve reaches every project in the workspace (a project hint narrows it). */
   resolve_may_be_empty?: boolean;
 }
 
