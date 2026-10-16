@@ -143,15 +143,62 @@ func TestPreloadEnvSkipsSeparatorValues(t *testing.T) {
 }
 
 func TestUnmaskable(t *testing.T) {
-	short, frag := Unmaskable(map[string]string{
-		"PIN":  "123",
-		"TOK":  "ab\x1fcd",
-		"GOOD": "goodsecret",
+	short, frag, ubiquitous := Unmaskable(map[string]string{
+		"PIN":   "123",
+		"TOK":   "ab\x1fcd",
+		"FLAG":  "true",
+		"STAGE": "production",
+		"GOOD":  "goodsecret",
 	})
 	if len(short) != 1 || short[0] != "PIN" {
 		t.Errorf("short = %v, want [PIN]", short)
 	}
 	if len(frag) != 1 || frag[0] != "TOK" {
 		t.Errorf("fragmented = %v, want [TOK]", frag)
+	}
+	if len(ubiquitous) != 2 {
+		t.Fatalf("ubiquitous = %v, want FLAG and STAGE", ubiquitous)
+	}
+	got := map[string]bool{ubiquitous[0]: true, ubiquitous[1]: true}
+	if !got["FLAG"] || !got["STAGE"] {
+		t.Errorf("ubiquitous = %v, want FLAG and STAGE", ubiquitous)
+	}
+}
+
+func TestMaskableVerbatim(t *testing.T) {
+	// A boolean or environment alias is not worth masking literally...
+	for _, v := range []string{"true", "FALSE", " production ", "null", "localhost"} {
+		if MaskableVerbatim(v) {
+			t.Errorf("MaskableVerbatim(%q) = true, want false", v)
+		}
+	}
+	// ...but a distinctive value is, and short/separator values never are.
+	for _, v := range []string{"sk_live_abc123", "goodsecret"} {
+		if !MaskableVerbatim(v) {
+			t.Errorf("MaskableVerbatim(%q) = false, want true", v)
+		}
+	}
+	if MaskableVerbatim("abc") || MaskableVerbatim("ab\x1fcd") {
+		t.Error("short and separator-fragmented values must not be maskable")
+	}
+}
+
+func TestPreloadEnvSkipsUbiquitousValues(t *testing.T) {
+	withFakeLib(t, true)
+	got := PreloadEnv(map[string]string{"A": "goodsecret", "B": "true"})
+	var mask string
+	for _, e := range got {
+		if strings.HasPrefix(e, MaskEnvKey+"=") {
+			mask = strings.TrimPrefix(e, MaskEnvKey+"=")
+		}
+	}
+	if mask == "" {
+		t.Fatalf("expected %s to be set, got %v", MaskEnvKey, got)
+	}
+	if !strings.Contains(mask, "goodsecret") {
+		t.Errorf("the distinctive value must enter the mask: %q", mask)
+	}
+	if strings.Contains(mask, "true") {
+		t.Errorf("a ubiquitous literal must not enter the mask: %q", mask)
 	}
 }

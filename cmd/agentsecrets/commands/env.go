@@ -186,13 +186,19 @@ parseArgs:
 	}
 
 	// Values that cannot be redacted anywhere are still injected (the child
-	// needs them) but must never pass silently: short values would redact
-	// unrelated text, separator-fragmented values would match nothing.
-	if short, fragmented := envguard.Unmaskable(secrets); len(short)+len(fragmented) > 0 {
+	// needs them) but must never pass silently: short values and ubiquitous
+	// literals would redact unrelated text, separator-fragmented values would
+	// match nothing.
+	if short, fragmented, ubiquitous := envguard.Unmaskable(secrets); len(short)+len(fragmented)+len(ubiquitous) > 0 {
 		if len(short) > 0 {
 			fmt.Println(ui.WarningStyle.Render(fmt.Sprintf(
 				"These values are too short to redact safely and will appear unmasked in output: %s",
 				strings.Join(short, " "))))
+		}
+		if len(ubiquitous) > 0 {
+			fmt.Println(ui.WarningStyle.Render(fmt.Sprintf(
+				"These values are too common to redact safely (booleans and environment aliases appear throughout output) and will appear unmasked: %s",
+				strings.Join(ubiquitous, " "))))
 		}
 		if len(fragmented) > 0 {
 			fmt.Println(ui.WarningStyle.Render(fmt.Sprintf(
@@ -539,24 +545,28 @@ func generateVariants(secrets map[string]string) []string {
 	seen := make(map[string]bool)
 
 	add := func(v string) {
-		if v != "" && !seen[v] && len(v) >= 4 { // Don't mask very short strings to avoid false positives
-			variants = append(variants, v)
-			seen[v] = true
+		// Skip very short strings and ubiquitous literals: both would redact
+		// unrelated output (a secret of "true" would turn `enabled=true` into
+		// `enabled=[REDACTED]`). Encoded forms (base64, hex) of a ubiquitous
+		// literal are distinctive and are still added, so the filter lives here
+		// on the candidate string rather than on the raw secret value.
+		if v == "" || seen[v] || len(v) < 4 || envguard.Ubiquitous(v) {
+			return
 		}
+		variants = append(variants, v)
+		seen[v] = true
 	}
 
 	for _, value := range secrets {
 		if value == "" {
 			continue
 		}
-		// 1. Raw secret
+		// 1. Raw secret and case variants
 		add(value)
-
-		// 2. Case variants
 		add(strings.ToLower(value))
 		add(strings.ToUpper(value))
 
-		// 3. Base64 variants
+		// 2. Base64 variants
 		b64Std := base64.StdEncoding.EncodeToString([]byte(value))
 		add(b64Std)
 		add(strings.ToLower(b64Std))
@@ -577,7 +587,7 @@ func generateVariants(secrets map[string]string) []string {
 		add(strings.ToLower(b64URLRaw))
 		add(strings.ToUpper(b64URLRaw))
 
-		// 4. Hex variant
+		// 3. Hex variant
 		hx := hex.EncodeToString([]byte(value))
 		add(hx)
 		add(strings.ToUpper(hx))
@@ -587,7 +597,7 @@ func generateVariants(secrets map[string]string) []string {
 		add("0X" + hx)
 		add("0X" + strings.ToUpper(hx))
 
-		// 5. URL Query Escape
+		// 4. URL Query Escape
 		add(url.QueryEscape(value))
 	}
 	return variants

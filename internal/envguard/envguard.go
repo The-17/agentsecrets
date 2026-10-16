@@ -100,25 +100,59 @@ func searchDirs() []string {
 	return dirs
 }
 
+// ubiquitousLiterals are values that appear constantly in unrelated output:
+// booleans, null-ish words, and environment aliases. Masking one verbatim
+// redacts the word everywhere the child prints it (a secret of "true" turns
+// `enabled=true` into `enabled=[REDACTED]`) while revealing nothing, because the
+// value carries no secret signal. They are still injected; the caller warns by
+// key name, and the value's encoded forms are still masked.
+var ubiquitousLiterals = map[string]struct{}{
+	"true": {}, "false": {}, "null": {}, "nil": {}, "none": {}, "undefined": {},
+	"yes": {}, "no": {}, "on": {}, "off": {}, "enabled": {}, "disabled": {},
+	"test": {}, "dev": {}, "develop": {}, "development": {}, "prod": {},
+	"production": {}, "staging": {}, "stage": {}, "local": {}, "localhost": {},
+	"default": {}, "admin": {}, "root": {},
+}
+
+// Ubiquitous reports whether a value is a ubiquitous literal that would mangle
+// unrelated output if masked verbatim.
+func Ubiquitous(value string) bool {
+	_, ok := ubiquitousLiterals[strings.ToLower(strings.TrimSpace(value))]
+	return ok
+}
+
+// MaskableVerbatim reports whether a value is worth masking in its literal form:
+// long enough to be distinctive, free of the mask separator, and not a
+// ubiquitous literal. Encoded forms (base64, hex) of an unmaskable-verbatim
+// value are still masked by the caller — they are distinctive even when the raw
+// value is not.
+func MaskableVerbatim(value string) bool {
+	return len(value) >= 4 && !strings.Contains(value, MaskSeparator) && !Ubiquitous(value)
+}
+
 // Unmaskable reports secret KEYS whose values cannot be redacted, so the
 // caller can warn by name (never by value):
 //   - values shorter than 4 bytes would redact unrelated text everywhere,
 //     so every redactor (parent writer, C interposer) skips them;
 //   - values containing the unit separator would fragment at parse time and
-//     match nothing, so they are excluded from the mask outright.
+//     match nothing, so they are excluded from the mask outright;
+//   - ubiquitous literals (booleans, environment aliases) would redact the
+//     word everywhere it appears in unrelated output.
 //
 // Either way the value is still INJECTED (the child needs it) but never
 // redacted: the caller must say so loudly.
-func Unmaskable(secrets map[string]string) (short, fragmented []string) {
+func Unmaskable(secrets map[string]string) (short, fragmented, ubiquitous []string) {
 	for k, v := range secrets {
 		switch {
 		case len(v) < 4:
 			short = append(short, k)
 		case strings.Contains(v, MaskSeparator):
 			fragmented = append(fragmented, k)
+		case Ubiquitous(v):
+			ubiquitous = append(ubiquitous, k)
 		}
 	}
-	return short, fragmented
+	return short, fragmented, ubiquitous
 }
 
 // PreloadEnv returns the environment entries that activate the guard for a child
@@ -131,7 +165,7 @@ func PreloadEnv(secrets map[string]string) []string {
 	}
 	values := make([]string, 0, len(secrets))
 	for _, v := range secrets {
-		if len(v) >= 4 && !strings.Contains(v, MaskSeparator) {
+		if MaskableVerbatim(v) {
 			values = append(values, v)
 		}
 	}

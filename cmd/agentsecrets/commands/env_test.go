@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -100,5 +101,63 @@ func TestScrubArgv(t *testing.T) {
 	got = scrubArgv([]string{"run", "xyz"}, map[string]string{"A": "xyz"})
 	if got[1] != "xyz" {
 		t.Errorf("short value must not be scrubbed: %v", got)
+	}
+}
+
+func containsExact(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGenerateVariantsSkipsUbiquitousLiteralsVerbatim(t *testing.T) {
+	got := generateVariants(map[string]string{
+		"POLAR_SANDBOX": "true",
+		"API_KEY":       "sk_live_abc123",
+	})
+	// A boolean secret must not be masked in its literal form: doing so turns
+	// every unrelated "true" in the child's output into [REDACTED].
+	for _, v := range got {
+		if strings.EqualFold(v, "true") {
+			t.Errorf("boolean literal %q must not be masked verbatim; got %v", v, got)
+		}
+	}
+	// Its encoded forms are distinctive, so they are still masked.
+	if !containsExact(got, "dHJ1ZQ==") {
+		t.Errorf("base64 of the boolean should still be masked: %v", got)
+	}
+	// A distinctive secret is still masked verbatim.
+	if !containsExact(got, "sk_live_abc123") {
+		t.Errorf("a distinctive secret must be masked verbatim: %v", got)
+	}
+}
+
+func TestMaskingWriterLeavesUbiquitousLiteralsAlone(t *testing.T) {
+	var buf bytes.Buffer
+	mw := &MaskingWriter{
+		underlying: &buf,
+		secrets: generateVariants(map[string]string{
+			"POLAR_SANDBOX": "true",
+			"TOKEN":         "sk_live_abc123",
+		}),
+	}
+	if _, err := mw.Write([]byte("enabled=true token=sk_live_abc123\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "enabled=true") {
+		t.Errorf("unrelated boolean output was mangled: %q", out)
+	}
+	if strings.Contains(out, "sk_live_abc123") {
+		t.Errorf("secret leaked through the masker: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("expected the secret to be redacted: %q", out)
 	}
 }
