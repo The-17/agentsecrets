@@ -55,13 +55,36 @@ var agentRegisterCmd = &cobra.Command{
 			return err
 		}
 
+		caps := &capabilities.AgentCapabilities{}
+		hasCaps := false
+		if cmd.Flags().Changed("env-read") {
+			v, _ := cmd.Flags().GetBool("env-read")
+			caps.CanEnvRead = &v
+			hasCaps = true
+		}
+		if cmd.Flags().Changed("proxy-resolve") {
+			v, _ := cmd.Flags().GetBool("proxy-resolve")
+			caps.CanProxyResolve = &v
+			hasCaps = true
+		}
+		var capsReq *capabilities.AgentCapabilities
+		if hasCaps {
+			capsReq = caps
+		}
+
+		expiresDays, err := agents.ParseExpiresInDays(expires)
+		if err != nil {
+			return fmt.Errorf("invalid --expires: %w", err)
+		}
+
 		resp, err := app.Agents().Register(agents.RegisterRequest{
-			Name:        name,
-			WorkspaceID: workspaceID,
-			ProjectID:   projectID,
-			Environment: environment,
-			Label:       label,
-			ExpiresIn:   expires,
+			Name:          name,
+			WorkspaceID:   workspaceID,
+			ProjectID:     projectID,
+			Environment:   environment,
+			Label:         label,
+			ExpiresInDays: expiresDays,
+			Capabilities:  capsReq,
 		})
 		if err != nil {
 			return fmt.Errorf("agent registration failed: %w", err)
@@ -233,10 +256,15 @@ var agentTokenIssueCmd = &cobra.Command{
 			return err
 		}
 
+		expiresDays, err := agents.ParseExpiresInDays(expires)
+		if err != nil {
+			return fmt.Errorf("invalid --expires: %w", err)
+		}
+
 		resp, err := app.Agents().TokenIssue(workspaceID, agent.ID, agents.IssueTokenRequest{
-			Environment: environment,
-			Label:       label,
-			ExpiresIn:   expires,
+			Environment:   environment,
+			Label:         label,
+			ExpiresInDays: expiresDays,
 		})
 		if err != nil {
 			return fmt.Errorf("token issuance failed: %w", err)
@@ -575,6 +603,8 @@ func init() {
 
 	agentPolicySetCmd.Flags().StringSliceVar(&agentPolicyAllow, "allow", nil, "comma-separated or repeatable list of allowed secret keys")
 	agentPolicySetCmd.Flags().StringSliceVar(&agentPolicyDeny, "deny", nil, "comma-separated or repeatable list of denied secret keys")
+	agentPolicySetCmd.Flags().Bool("env-read", false, "grant headless environment delivery scope (can_env_read); use --env-read=false to revoke")
+	agentPolicySetCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve); use --proxy-resolve=false to revoke")
 
 	agentCmd.AddCommand(agentRegisterCmd)
 	agentCmd.AddCommand(agentListCmd)
@@ -595,6 +625,8 @@ func init() {
 	agentRegisterCmd.Flags().StringP("expires", "e", "", "token expiry (e.g. 30d, 90d)")
 	agentRegisterCmd.Flags().String("env", "", "environment for the token (development, staging, production)")
 	agentRegisterCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
+	agentRegisterCmd.Flags().Bool("env-read", false, "grant headless environment delivery scope (can_env_read) at creation")
+	agentRegisterCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve) at creation")
 
 	// Flags for list
 	agentListCmd.Flags().StringP("project", "p", "", "filter to a specific project")
@@ -665,6 +697,18 @@ var agentPolicyGetCmd = &cobra.Command{
 		} else {
 			fmt.Println("  Denied Secrets:  (none)")
 		}
+		scope := func(v *bool) string {
+			switch {
+			case v == nil:
+				return "unset"
+			case *v:
+				return "granted"
+			default:
+				return "revoked"
+			}
+		}
+		fmt.Printf("  can_env_read:      %s\n", scope(caps.CanEnvRead))
+		fmt.Printf("  can_proxy_resolve: %s\n", scope(caps.CanProxyResolve))
 		return nil
 	},
 }
@@ -732,6 +776,16 @@ var agentPolicySetCmd = &cobra.Command{
 		caps := capabilities.AgentCapabilities{
 			AllowedSecrets: allowed,
 			DeniedSecrets:  denied,
+		}
+		// Capability scopes: only send when the user explicitly set the flag so
+		// the server preserves whatever was there (and never wipes it).
+		if cmd.Flags().Changed("env-read") {
+			v, _ := cmd.Flags().GetBool("env-read")
+			caps.CanEnvRead = &v
+		}
+		if cmd.Flags().Changed("proxy-resolve") {
+			v, _ := cmd.Flags().GetBool("proxy-resolve")
+			caps.CanProxyResolve = &v
 		}
 
 		_, err = app.Agents().SetCapabilities(workspaceID, agent.ID, caps)

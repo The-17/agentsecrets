@@ -29,6 +29,11 @@ const (
 type AgentCapabilities struct {
 	AllowedSecrets []string `json:"allowed_secrets,omitempty"`
 	DeniedSecrets  []string `json:"denied_secrets,omitempty"`
+	// Scopes. Pointers so "unset" (nil) is omitted from PUT payloads: the server
+	// merges non-None fields, so omitting one leaves the existing value intact.
+	// nil = leave unchanged; &true = grant; &false = revoke.
+	CanEnvRead      *bool `json:"can_env_read,omitempty"`
+	CanProxyResolve *bool `json:"can_proxy_resolve,omitempty"`
 }
 
 // EvaluateSecret checks if a secret can be used for the given domain+method.

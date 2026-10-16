@@ -3,6 +3,8 @@ package agents
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/The-17/agentsecrets/pkg/api"
@@ -43,8 +45,12 @@ type RegisterRequest struct {
 	WorkspaceID string `json:"-"` // used for routing, not sent in body
 	ProjectID   string `json:"project_id,omitempty"`
 	Environment string `json:"environment,omitempty"` // development, staging, production
-	Label       string `json:"label,omitempty"`
-	ExpiresIn   string `json:"expires_in,omitempty"` // e.g., "30d"
+	Label         string `json:"label,omitempty"`
+	ExpiresInDays int    `json:"expires_in_days,omitempty"` // whole days; 0 = no expiry
+	// Optional capability scopes granted at creation (e.g. can_env_read for
+	// headless env delivery, can_proxy_resolve for proxy credential resolution).
+	// When nil, the server defaults to proxy-only (env-read denied).
+	Capabilities *capabilities.AgentCapabilities `json:"capabilities,omitempty"`
 }
 
 // RegisterResponse is returned when registering a new agent (contains the cleartext token).
@@ -57,9 +63,45 @@ type RegisterResponse struct {
 
 // IssueTokenRequest holds data to issue a new token.
 type IssueTokenRequest struct {
-	Environment string `json:"environment,omitempty"`
-	Label       string `json:"label,omitempty"`
-	ExpiresIn   string `json:"expires_in,omitempty"`
+	Environment   string `json:"environment,omitempty"`
+	Label         string `json:"label,omitempty"`
+	ExpiresInDays int    `json:"expires_in_days,omitempty"` // whole days; 0 = no expiry
+}
+
+// ParseExpiresInDays converts a human expiry string into whole days for the
+// API's `expires_in_days` field. Accepts a bare integer (days) or a suffix:
+// d (days), w (weeks), m (months≈30d), y (years≈365d). Empty means no expiry.
+func ParseExpiresInDays(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+
+	if n, err := strconv.Atoi(s); err == nil {
+		if n <= 0 {
+			return 0, fmt.Errorf("expiry must be positive, got %q", s)
+		}
+		return n, nil
+	}
+
+	unit := s[len(s)-1]
+	n, err := strconv.Atoi(strings.TrimSpace(s[:len(s)-1]))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid expiry %q (use e.g. 30d, 12w, 6m, 1y)", s)
+	}
+
+	switch unit {
+	case 'd', 'D':
+		return n, nil
+	case 'w', 'W':
+		return n * 7, nil
+	case 'm', 'M':
+		return n * 30, nil
+	case 'y', 'Y':
+		return n * 365, nil
+	default:
+		return 0, fmt.Errorf("invalid expiry unit %q in %q (use d, w, m, or y)", string(unit), s)
+	}
 }
 
 // IssueTokenResponse is returned when issuing a new token.
