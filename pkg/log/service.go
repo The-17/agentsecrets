@@ -726,7 +726,7 @@ func (s *Service) QueryRemote(workspaceID string, f Filter) ([]proxy.AuditEvent,
 		params["limit"] = fmt.Sprintf("%d", f.Limit)
 	}
 
-	apiRows, err := api.CallJSON[[]apiLogRow](s.client, "log.list", "GET", nil, params, nil)
+	apiRows, err := api.CallJSON[[]apiLogRow](s.client, "log.list", "GET", nil, nil, params)
 	if err != nil {
 		return nil, fmt.Errorf("remote query failed: %w", err)
 	}

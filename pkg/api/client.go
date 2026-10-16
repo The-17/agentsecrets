@@ -442,19 +442,29 @@ func (c *Client) resolveEndpoint(key string, params map[string]string) (string, 
 	return path, nil
 }
 
-// WorkloadEnvResponse is the schema returned from POST /api/workloads/env/
+// WorkloadEnvResponse is the `data` payload of POST /api/workloads/env/. The
+// endpoint wraps its payload in the standard {"status","message","data"}
+// envelope (see CustomResponse), so callers must unwrap "data" before decoding
+// into this shape — decoding the top level yields an empty Secrets map.
 type WorkloadEnvResponse struct {
-	Status      string            `json:"status"`
-	WorkspaceID string            `json:"workspace_id"`
-	ProjectID   string            `json:"project_id"`
-	Environment string            `json:"environment"`
-	Secrets     map[string]string `json:"secrets"`
+	WorkspaceID   string            `json:"workspace_id"`
+	WorkspaceName string            `json:"workspace_name"`
+	AgentName     string            `json:"agent_name"`
+	ProjectID     string            `json:"project_id"`
+	TokenID       string            `json:"token_id"`
+	Environment   string            `json:"environment"`
+	Secrets       map[string]string `json:"secrets"`
 }
 
 // FetchWorkloadEnv retrieves scoped project secrets over TLS using an agent workload token.
 func FetchWorkloadEnv(ctx context.Context, serverURL, token string) (map[string]string, error) {
-	if !strings.HasPrefix(token, "agt_") {
-		return nil, fmt.Errorf("invalid workload token format: token must start with 'agt_'")
+	// Workload tokens are opaque `secrets.token_urlsafe(32)` values (43 chars,
+	// no prefix) issued by the control plane and verified server-side by
+	// sha256(raw_token). Do NOT impose an "agt_" prefix here: the "agt_" strings
+	// are registration/token *IDs*, not token values, and requiring the prefix
+	// rejected every real workload credential (cloud `env` was broken).
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("invalid workload token: token is empty")
 	}
 
 	targetURL := strings.TrimRight(serverURL, "/") + "/workloads/env/"
@@ -485,10 +495,12 @@ func FetchWorkloadEnv(ctx context.Context, serverURL, token string) (map[string]
 		return nil, fmt.Errorf("server returned error status: %d", resp.StatusCode)
 	}
 
-	var envResp WorkloadEnvResponse
-	if err := json.NewDecoder(resp.Body).Decode(&envResp); err != nil {
+	var envelope struct {
+		Data WorkloadEnvResponse `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		return nil, fmt.Errorf("failed to parse workload response: %w", err)
 	}
 
-	return envResp.Secrets, nil
+	return envelope.Data.Secrets, nil
 }
