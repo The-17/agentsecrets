@@ -381,16 +381,24 @@ func auditLog(project *config.ProjectConfig, cmdArgs []string, secretKeys, hosts
 		projID = project.ProjectID
 	}
 
+	// Env delivery is not an HTTP request, so it carries no HTTP status code; the
+	// child's exit code belongs in Reason, not StatusCode. Stuffing the exit code
+	// into StatusCode made the web audit list render a successful env call as
+	// "403 BLOCKED", because exit 0 is not a valid HTTP status.
+	status := "OK"
+	if exitCode != 0 {
+		status = "FAILED"
+	}
 	_ = audit.Log(proxy.AuditEvent{
 		Timestamp:       time.Now().UTC(),
 		SecretKeys:      secretKeys,
 		Method:          "ENV",
 		TargetURL:       strings.Join(cmdArgs, " "),
 		AuthStyles:      []string{"env_inject"},
-		StatusCode:      exitCode,
+		StatusCode:      0,
 		DurationMs:      d.Milliseconds(),
-		Status:          "OK",
-		Reason:          "-",
+		Status:          status,
+		Reason:          fmt.Sprintf("child exit code %d", exitCode),
 		ResolutionPath:  "env",
 		ChildBinary:     child,
 		ChildHash:       hashFile(child),
@@ -398,6 +406,55 @@ func auditLog(project *config.ProjectConfig, cmdArgs []string, secretKeys, hosts
 		CredentialHosts: hosts,
 		WorkspaceID:     wsID,
 		ProjectID:       projID,
+	})
+
+	// Emit the Tier-3 forensic twin so an `env` delivery is replayable, not just
+	// listed. This is what `logs replay` reconstructs: the exact process state
+	// (key names in scope, the child identity, the ms-stamped capture instant)
+	// and the enforcement decision. Proxy calls already emit both tiers; `env`
+	// emitted only the Tier-2 row, so it had no replayable decision state.
+	_ = audit.LogForensic(proxy.ForensicAuditEvent{
+		CreatedAt:   time.Now().UTC(),
+		WorkspaceID: wsID,
+		ProjectID:   projID,
+		Event: proxy.EventBlock{
+			Type:       "env_delivery",
+			KeyName:    strings.Join(secretKeys, ","),
+			Path:       strings.Join(cmdArgs, " "),
+			Method:     "ENV",
+			StatusCode: 0,
+			Outcome:    "success",
+			LatencyMs:  d.Milliseconds(),
+			AgentIdentity: &proxy.AgentIdentity{
+				TokenName:       child,
+				IdentityLevel:   "user",
+				ProcessVerified: true,
+			},
+		},
+		Snapshot: proxy.SnapshotBlock{
+			CapturedAt:     time.Now().UTC(),
+			Workspace:      proxy.WorkspaceSnapshot{ID: wsID, Name: wsID},
+			Project:        proxy.ProjectSnapshot{ID: projID},
+			SecretsInScope: secretKeys,
+			SecretsCount:   len(secretKeys),
+		},
+		Enforcement: proxy.EnforcementBlock{
+			Decision:  "permitted",
+			DecidedBy: "local cli",
+			LayersEvaluated: []proxy.EvaluationLayer{
+				{
+					Layer:  "env_inject",
+					Result: "pass",
+					Reason: fmt.Sprintf("Injected %d secret(s) into child process %s", len(secretKeys), child),
+				},
+			},
+		},
+		Resolution: proxy.ResolutionBlock{
+			CredentialInjected: true,
+			InjectionStyle:     "env_inject",
+			ResponseScanned:    false,
+			ResponseStatus:     0,
+		},
 	})
 
 	// Best-effort cloud sync so `env` runs show up in the web audit log like
