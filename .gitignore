@@ -45,6 +45,7 @@ config.json
 dist/
 build/
 /bin/
+integrations/mcp/dist-tests/
 *.egg-info/
 node_modules/
 .npm/
@@ -79,3 +80,5 @@ specs/
 
 # Build-generated env-guard hash pins (machine/build-specific; `make envguard` regenerates)
 internal/envguard/hashes_generated.go
+/AGENTS.md
+/scripts/verify.sh

@@ -1,0 +1,47 @@
+# .github/workflows/mcp-publish.yml
+name: Publish @the-17/agentsecrets-mcp
+
+# The TypeScript bridge ships independently from the Go release cycle.
+# Release it with: git tag mcp-v1.2.3 && git push origin mcp-v1.2.3
+on:
+  push:
+    tags:
+      - "mcp-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish Package (NPM)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/mcp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Align package version with tag
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/mcp-v}
+          npm version $VERSION --allow-same-version --no-git-tag-version
+
+      - name: Install, verify, build
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Publish to NPM
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

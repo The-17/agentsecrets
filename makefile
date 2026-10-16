@@ -1,4 +1,4 @@
-.PHONY: help build envguard test run clean install fmt lint dev release
+.PHONY: help build envguard test run clean install fmt lint dev release build-mcp test-mcp clean-mcp
 
 # Variables
 BINARY_NAME=agentsecrets
@@ -22,6 +22,8 @@ help:
 	@echo "Targets:"
 	@echo "  build       Build the binary for current OS"
 	@echo "  test        Run all tests"
+	@echo "  build-mcp   Build the TypeScript MCP bridge (integrations/mcp)"
+	@echo "  test-mcp    Typecheck + unit/integration/wire tests for the MCP bridge"
 	@echo "  run         Build and run the CLI"
 	@echo "  clean       Remove build artifacts"
 	@echo "  install     Install binary to system"
@@ -172,6 +174,22 @@ build-all:
 	@echo -n "  Windows (amd64)... "
 	@GOOS=windows GOARCH=amd64 $(GO) build -o /dev/null ./cmd/agentsecrets/ && echo "✓ OK" || (echo "✗ FAILED"; exit 1)
 	@echo "✓ All platforms compile successfully!"
+
+# TypeScript MCP bridge (integrations/mcp). Ships independently via mcp-v* tags.
+build-mcp:
+	@echo "Building MCP bridge..."
+	cd integrations/mcp && npm ci && npm run build
+	@echo "✓ Built integrations/mcp/dist"
+
+test-mcp:
+	@echo "Testing MCP bridge..."
+	cd integrations/mcp && npm ci && npm run typecheck && npm test
+	@echo "✓ MCP bridge checks passed"
+
+clean-mcp:
+	@echo "Cleaning MCP bridge..."
+	@rm -rf integrations/mcp/dist integrations/mcp/dist-tests integrations/mcp/node_modules
+	@echo "✓ Cleaned"
 
 # Quick checks before committing
 pre-commit: fmt test lint
