@@ -62,6 +62,15 @@ var projectInviteCmd = &cobra.Command{
 	RunE:  runProjectInvite,
 }
 
+var projectTransferTo string
+
+var projectTransferCmd = &cobra.Command{
+	Use:   "transfer [name]",
+	Short: "Transfer a project and all its secrets to another workspace",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runProjectTransfer,
+}
+
 func init() {
 	projectUseCmd.ValidArgsFunction = autocompleteProjects
 	projectUpdateCmd.ValidArgsFunction = autocompleteProjects
@@ -73,6 +82,9 @@ func init() {
 	projectCmd.AddCommand(projectUpdateCmd)
 	projectCmd.AddCommand(projectDeleteCmd)
 	projectCmd.AddCommand(projectInviteCmd)
+	projectTransferCmd.Flags().StringVar(&projectTransferTo, "to", "", "destination workspace name or id")
+	projectTransferCmd.ValidArgsFunction = autocompleteProjects
+	projectCmd.AddCommand(projectTransferCmd)
 }
 
 func runProjectList(cmd *cobra.Command, args []string) error {
@@ -410,6 +422,87 @@ func runProjectInvite(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Invited %s to project!", email))
+	return nil
+}
+
+func runProjectTransfer(cmd *cobra.Command, args []string) error {
+	var name string
+	if len(args) > 0 {
+		name = args[0]
+	}
+
+	if name == "" {
+		if err := huh.NewInput().
+			Title("Project Name").
+			Description("Which project do you want to transfer?").
+			Value(&name).
+			Run(); err != nil {
+			return nil
+		}
+	}
+
+	global, _ := config.LoadGlobalConfig()
+
+	// Resolve the destination workspace (by name or id).
+	targetRef := projectTransferTo
+	if targetRef == "" {
+		if global == nil || len(global.Workspaces) == 0 {
+			ui.Error("No workspaces found. Run 'agentsecrets workspace list'.")
+			return nil
+		}
+		options := make([]huh.Option[string], 0, len(global.Workspaces))
+		for id, ws := range global.Workspaces {
+			options = append(options, huh.NewOption(fmt.Sprintf("%s (%s)", ws.Name, ws.Type), id))
+		}
+		if err := huh.NewSelect[string]().
+			Title("Destination Workspace").
+			Description("You must be an owner or admin of the destination workspace.").
+			Options(options...).
+			Value(&targetRef).
+			Run(); err != nil {
+			return nil
+		}
+	}
+
+	targetWorkspaceID, targetWorkspaceName := "", ""
+	if global != nil {
+		for id, ws := range global.Workspaces {
+			if strings.EqualFold(id, targetRef) || strings.EqualFold(ws.Name, targetRef) {
+				targetWorkspaceID = id
+				targetWorkspaceName = ws.Name
+				break
+			}
+		}
+	}
+	if targetWorkspaceID == "" {
+		ui.Error(fmt.Sprintf("Workspace %q not found or not cached locally. Run 'agentsecrets workspace list'.", targetRef))
+		return nil
+	}
+
+	if !confirmHuh(fmt.Sprintf("Transfer project '%s' to workspace '%s'? All secrets will be re-encrypted on this device.", name, targetWorkspaceName), "") {
+		return nil
+	}
+
+	if err := verifyPasswordLocally(); err != nil {
+		return err
+	}
+
+	var result *projects.TransferResult
+	if err := ui.Spinner(fmt.Sprintf("Re-encrypting and transferring '%s'...", name), func() error {
+		var e error
+		result, e = app.Projects().Transfer(name, targetWorkspaceID)
+		return e
+	}); err != nil {
+		ui.Error("Failed to transfer project: " + err.Error())
+		return nil
+	}
+
+	cfg, _ := config.LoadGlobalConfig()
+	workspaceID := config.GetSelectedWorkspaceID()
+	_ = proxy.LogManagementEvent("TRANSFER", "project", fmt.Sprintf("Transferred project %s to %s", result.ProjectName, result.TargetWorkspaceName), cfg.Email, workspaceID, result.ProjectID, config.ResolveEnvironment())
+
+	fmt.Println()
+	ui.Success(fmt.Sprintf("Project '%s' transferred to '%s' (%d secrets re-encrypted).", result.ProjectName, result.TargetWorkspaceName, result.SecretsTransferred))
 	return nil
 }
 

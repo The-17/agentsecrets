@@ -145,6 +145,7 @@ func (s *Service) Get(key string) (string, error) {
 
 // SecretMetadata holds the secret metadata from the API.
 type SecretMetadata struct {
+	ID        string                     `json:"id,omitempty"`
 	Key       string                     `json:"key"`
 	Value     string                     `json:"value,omitempty"` // Encrypted value
 	UpdatedAt string                     `json:"updated_at"`

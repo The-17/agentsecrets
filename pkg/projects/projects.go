@@ -34,6 +34,11 @@ func NewService(client *api.Client) *Service {
 	return &Service{API: client}
 }
 
+// workspaceKeyResolver resolves a workspace's symmetric encryption key.
+// Production uses the keyring-backed config lookup; it is a package-level seam
+// so tests can inject deterministic keys without touching the OS keychain.
+var workspaceKeyResolver = config.GetWorkspaceKey
+
 // List returns all projects for the currently selected workspace
 func (s *Service) List() ([]Project, error) {
 	return api.CallJSON[[]Project](s.API, "projects.list", "GET", nil, nil, nil)
@@ -397,4 +402,133 @@ func (s *Service) Invite(email, role string) error {
 	}
 
 	return nil
+}
+
+// TransferResult mirrors the server's ProjectTransferResponseDataSchema.
+type TransferResult struct {
+	ProjectID           string `json:"project_id"`
+	ProjectName         string `json:"project_name"`
+	SourceWorkspaceID   string `json:"source_workspace_id"`
+	SourceWorkspaceName string `json:"source_workspace_name"`
+	TargetWorkspaceID   string `json:"target_workspace_id"`
+	TargetWorkspaceName string `json:"target_workspace_name"`
+	SecretsTransferred  int    `json:"secrets_transferred"`
+}
+
+// Transfer moves a project and all of its secrets from its current workspace to
+// the target workspace.
+//
+// Zero-knowledge: the server never sees plaintext. Every secret ciphertext is
+// decrypted with the SOURCE workspace key and re-encrypted with the TARGET
+// workspace key on this device, then the re-encrypted {id, value} pairs are
+// posted to the transfer endpoint (the same flow the web app uses). The caller
+// must be an owner/admin of both the source and the target workspace.
+func (s *Service) Transfer(projectName, targetWorkspaceID string) (*TransferResult, error) {
+	if targetWorkspaceID == "" {
+		return nil, fmt.Errorf("transfer project: target workspace is required")
+	}
+
+	project, err := s.resolveProjectByName(projectName)
+	if err != nil {
+		return nil, err
+	}
+	if project.WorkspaceID == targetWorkspaceID {
+		return nil, fmt.Errorf("transfer project: project is already in this workspace")
+	}
+
+	sourceKey, err := workspaceKeyResolver(project.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("transfer project: load source workspace key: %w", err)
+	}
+	targetKey, err := workspaceKeyResolver(targetWorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("transfer project: load target workspace key (are you an owner/admin of it?): %w", err)
+	}
+
+	type reencItem struct {
+		ID    string `json:"id"`
+		Value string `json:"value"`
+	}
+	items := []reencItem{}
+
+	for _, env := range config.ValidEnvironments {
+		resp, err := s.API.Call("secrets.list", "GET", nil,
+			map[string]string{"project_id": project.ID},
+			map[string]string{"environment": env})
+		if err != nil {
+			continue // environment may be empty/absent
+		}
+
+		var res struct {
+			Data struct {
+				Secrets []struct {
+					ID    string `json:"id"`
+					Key   string `json:"key"`
+					Value string `json:"value"`
+				} `json:"secrets"`
+			} `json:"data"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&res)
+		resp.Body.Close()
+		if decodeErr != nil {
+			continue
+		}
+
+		for _, secret := range res.Data.Secrets {
+			if secret.ID == "" || secret.Value == "" {
+				continue
+			}
+			plaintext, err := crypto.DecryptSecret(secret.Value, sourceKey)
+			if err != nil {
+				return nil, fmt.Errorf("transfer project: decrypt %q in %s: %w", secret.Key, env, err)
+			}
+			reencrypted, err := crypto.EncryptSecret(plaintext, targetKey)
+			if err != nil {
+				return nil, fmt.Errorf("transfer project: re-encrypt %q in %s: %w", secret.Key, env, err)
+			}
+			items = append(items, reencItem{ID: secret.ID, Value: reencrypted})
+		}
+	}
+
+	body := map[string]interface{}{
+		"target_workspace_id": targetWorkspaceID,
+		"secrets":             items,
+	}
+
+	result, err := api.CallJSON[TransferResult](s.API, "projects.transfer", "POST", body,
+		map[string]string{"workspace_id": project.WorkspaceID, "project_name": project.Name}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("transfer project: %w", err)
+	}
+
+	// Keep the local binding coherent: if the current directory is bound to the
+	// moved project, repoint it at the destination workspace.
+	if pc, err := config.LoadProjectConfig(); err == nil && pc != nil && pc.ProjectID == project.ID {
+		pc.WorkspaceID = targetWorkspaceID
+		_ = config.SaveProjectConfig(pc)
+	}
+
+	return &result, nil
+}
+
+// resolveProjectByName finds a single project by name or id across all
+// workspaces the user can access.
+func (s *Service) resolveProjectByName(nameOrID string) (*Project, error) {
+	projs, err := s.List()
+	if err != nil {
+		return nil, fmt.Errorf("transfer project: list projects: %w", err)
+	}
+	var found *Project
+	for i := range projs {
+		if projs[i].Name == nameOrID || projs[i].ID == nameOrID {
+			if found != nil {
+				return nil, fmt.Errorf("transfer project: multiple projects match %q; specify the project id", nameOrID)
+			}
+			found = &projs[i]
+		}
+	}
+	if found == nil {
+		return nil, fmt.Errorf("transfer project: project %q not found", nameOrID)
+	}
+	return found, nil
 }
