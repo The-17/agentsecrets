@@ -170,6 +170,41 @@ func StartTransientProxy() (int, func(), error) {
 }
 
 // CallViaProxy sends a request to the running proxy server or starts a transient one if none is running.
+// Injection header names. A style with a target carries "target=SECRET_KEY" in
+// the header VALUE, because Go canonicalises header NAMES on both sides of the
+// wire and that silently rewrote targets ("channel" became "Channel", and a
+// hyphen became a dot). Values are passed through verbatim.
+const (
+	hdrInjectBearer = "X-AS-Inject-Bearer"
+	hdrInjectBasic  = "X-AS-Inject-Basic"
+	hdrInjectHeader = "X-AS-Inject-Header"
+	hdrInjectQuery  = "X-AS-Inject-Query"
+	hdrInjectBody   = "X-AS-Inject-Body"
+	hdrInjectForm   = "X-AS-Inject-Form"
+)
+
+// applyInjections writes every injection to h. Styles without a target use a
+// bare header. Styles with a target are repeatable and encode the target in the
+// value so case and punctuation survive the trip.
+func applyInjections(h http.Header, injections []Injection) {
+	for _, inj := range injections {
+		switch inj.Style {
+		case "bearer":
+			h.Set(hdrInjectBearer, inj.SecretKey)
+		case "basic":
+			h.Set(hdrInjectBasic, inj.SecretKey)
+		case "header":
+			h.Add(hdrInjectHeader, inj.Target+"="+inj.SecretKey)
+		case "query":
+			h.Add(hdrInjectQuery, inj.Target+"="+inj.SecretKey)
+		case "body":
+			h.Add(hdrInjectBody, inj.Target+"="+inj.SecretKey)
+		case "form":
+			h.Add(hdrInjectForm, inj.Target+"="+inj.SecretKey)
+		}
+	}
+}
+
 func CallViaProxy(req CallRequest) (*CallResult, error) {
 	_, port, running := IsProxyRunning()
 	var closeFunc func()
@@ -221,23 +256,7 @@ func CallViaProxy(req CallRequest) (*CallResult, error) {
 	}
 
 	// Add injections
-	for _, inj := range req.Injections {
-		switch inj.Style {
-		case "bearer":
-			httpReq.Header.Set("X-AS-Inject-Bearer", inj.SecretKey)
-		case "basic":
-			httpReq.Header.Set("X-AS-Inject-Basic", inj.SecretKey)
-		case "header":
-			httpReq.Header.Set(fmt.Sprintf("X-AS-Inject-Header-%s", inj.Target), inj.SecretKey)
-		case "query":
-			httpReq.Header.Set(fmt.Sprintf("X-AS-Inject-Query-%s", inj.Target), inj.SecretKey)
-		case "body":
-			target := strings.ReplaceAll(inj.Target, ".", "-")
-			httpReq.Header.Set(fmt.Sprintf("X-AS-Inject-Body-%s", target), inj.SecretKey)
-		case "form":
-			httpReq.Header.Set(fmt.Sprintf("X-AS-Inject-Form-%s", inj.Target), inj.SecretKey)
-		}
-	}
+	applyInjections(httpReq.Header, req.Injections)
 
 	// Add other non-AS headers
 	for k, v := range req.Headers {

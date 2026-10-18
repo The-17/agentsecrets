@@ -79,3 +79,8 @@ release:
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
+  # The full release note lives in the docs site. Keep this page a pointer to it
+  # plus GoReleaser's generated commit list, so the prose has one source of
+  # truth and does not drift between the two.
+  header: |
+    **Full release notes for v{{ .Version }}:** https://agentsecrets.tech/docs/changelog/v3-x

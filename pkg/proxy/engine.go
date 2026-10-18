@@ -822,6 +822,14 @@ func (e *Engine) buildAndInject(ec *execContext) (*CallResult, error) {
 		outbound.Header.Set(k, v)
 	}
 
+	// Type a raw JSON body. A plain --body otherwise reaches the upstream API
+	// with no Content-Type and JSON endpoints reject it. A caller-supplied
+	// Content-Type always wins, and a non-JSON body is left untouched because
+	// its type is not ours to guess.
+	if len(ec.req.Body) > 0 && outbound.Header.Get("Content-Type") == "" && json.Valid(ec.req.Body) {
+		outbound.Header.Set("Content-Type", "application/json")
+	}
+
 	for _, inj := range ec.req.Injections {
 		telemetry.RecordInjectionStyle(inj.Style)
 

@@ -210,12 +210,17 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 //   - X-AS-Target-URL: The upstream URL to call
 //
 // Injection headers (at least one required):
-//   - X-AS-Inject-Bearer: SECRET_KEY       → Authorization: Bearer <value>
-//   - X-AS-Inject-Basic: SECRET_KEY        → Authorization: Basic base64(<value>)
-//   - X-AS-Inject-Header-<Name>: SECRET_KEY → <Name>: <value>
-//   - X-AS-Inject-Query-<Param>: SECRET_KEY → ?Param=<value>
-//   - X-AS-Inject-Body-<Path>: SECRET_KEY   → body.Path = <value>
-//   - X-AS-Inject-Form-<Key>: SECRET_KEY    → form key = <value>
+//   - X-AS-Inject-Bearer: SECRET_KEY          → Authorization: Bearer <value>
+//   - X-AS-Inject-Basic: SECRET_KEY           → Authorization: Basic base64(<value>)
+//   - X-AS-Inject-Header: Name=SECRET_KEY     → Name: <value>
+//   - X-AS-Inject-Query: param=SECRET_KEY     → ?param=<value>
+//   - X-AS-Inject-Body: json.path=SECRET_KEY  → body.json.path = <value>
+//   - X-AS-Inject-Form: field=SECRET_KEY      → form field = <value>
+//
+// The targeted styles carry the target in the header value because header
+// names are canonicalised, which used to rewrite "channel" as "Channel" and
+// "x-request-id" as "X.Request.Id". They are repeatable. The legacy
+// X-AS-Inject-Query-<Param> name form is still accepted.
 //
 // Optional headers:
 //   - X-AS-Method: HTTP method (default: GET)
@@ -235,7 +240,11 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	agentID := r.Header.Get("X-AS-Agent-ID")
 	agentToken := r.Header.Get("X-AS-Agent-Token")
 
-	injections := parseInjections(r.Header)
+	injections, err := parseInjections(r.Header)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 	if len(injections) == 0 {
 		writeError(w, 400, "At least one X-AS-Inject-* header is required")
 		return
@@ -349,41 +358,71 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	w.Write(result.Body)
 }
 
-// parseInjections extracts all X-AS-Inject-* headers and converts them to Injections.
-func parseInjections(headers http.Header) []Injection {
+// parseInjections extracts X-AS-Inject-* headers and converts them to
+// Injections. It accepts two shapes:
+//
+//   - targeted: "X-AS-Inject-Query: channel=SECRET_KEY", the target in the
+//     value (repeatable). Case and punctuation survive, because header values
+//     are not canonicalised.
+//   - legacy: "X-AS-Inject-Query-channel: SECRET_KEY", the target in the
+//     header name. Kept so older clients and published curl recipes keep
+//     working; note that Go canonicalisation mangles these names.
+//
+// A targeted header whose value has no "=" is a client bug, so it is reported
+// instead of being dropped silently.
+func parseInjections(headers http.Header) ([]Injection, error) {
 	var injections []Injection
 
 	for key, values := range headers {
-		secretKey := values[0]
-
 		switch {
 		case strings.EqualFold(key, "X-As-Inject-Bearer"):
-			injections = append(injections, Injection{Style: "bearer", SecretKey: secretKey})
+			injections = append(injections, Injection{Style: "bearer", SecretKey: values[0]})
 
 		case strings.EqualFold(key, "X-As-Inject-Basic"):
-			injections = append(injections, Injection{Style: "basic", SecretKey: secretKey})
+			injections = append(injections, Injection{Style: "basic", SecretKey: values[0]})
+
+		case strings.EqualFold(key, "X-As-Inject-Header"),
+			strings.EqualFold(key, "X-As-Inject-Query"),
+			strings.EqualFold(key, "X-As-Inject-Body"),
+			strings.EqualFold(key, "X-As-Inject-Form"):
+			style := strings.ToLower(strings.TrimPrefix(strings.ToLower(key), "x-as-inject-"))
+			for _, v := range values {
+				target, secretKey, ok := strings.Cut(v, "=")
+				if !ok {
+					// The published docs used a space separator. Accept it so an
+					// existing script keeps working.
+					target, secretKey, ok = strings.Cut(v, " ")
+				}
+				target = strings.TrimSpace(target)
+				secretKey = strings.TrimSpace(secretKey)
+				if !ok || target == "" || secretKey == "" {
+					return nil, fmt.Errorf("%s value must be target=SECRET_KEY, got %q", key, v)
+				}
+				injections = append(injections, Injection{Style: style, Target: target, SecretKey: secretKey})
+			}
 
 		case strings.HasPrefix(strings.ToLower(key), "x-as-inject-header-"):
 			headerName := key[len("X-As-Inject-Header-"):]
-			injections = append(injections, Injection{Style: "header", Target: headerName, SecretKey: secretKey})
+			injections = append(injections, Injection{Style: "header", Target: headerName, SecretKey: values[0]})
 
 		case strings.HasPrefix(strings.ToLower(key), "x-as-inject-query-"):
 			paramName := key[len("X-As-Inject-Query-"):]
-			injections = append(injections, Injection{Style: "query", Target: paramName, SecretKey: secretKey})
+			injections = append(injections, Injection{Style: "query", Target: paramName, SecretKey: values[0]})
 
 		case strings.HasPrefix(strings.ToLower(key), "x-as-inject-body-"):
 			path := key[len("X-As-Inject-Body-"):]
-			// Convert dashes to dots for nested paths: auth-key → auth.key
+			// Legacy encoding: dots were sent as dashes. A real hyphen cannot be
+			// distinguished here, which is why the targeted form exists.
 			path = strings.ReplaceAll(path, "-", ".")
-			injections = append(injections, Injection{Style: "body", Target: path, SecretKey: secretKey})
+			injections = append(injections, Injection{Style: "body", Target: path, SecretKey: values[0]})
 
 		case strings.HasPrefix(strings.ToLower(key), "x-as-inject-form-"):
 			formKey := key[len("X-As-Inject-Form-"):]
-			injections = append(injections, Injection{Style: "form", Target: formKey, SecretKey: secretKey})
+			injections = append(injections, Injection{Style: "form", Target: formKey, SecretKey: values[0]})
 		}
 	}
 
-	return injections
+	return injections, nil
 }
 
 // writeError writes a JSON error response.

@@ -140,19 +140,24 @@ curl http://localhost:8765/proxy \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}'
 
-# Query parameter injection
+# Query parameter injection. The target goes in the value, so case and
+# punctuation are preserved exactly.
 curl http://localhost:8765/proxy \
-  -H "X-AS-Target-URL: https://maps.googleapis.com/maps/api/geocode/json?address=NYC" \
-  -H "X-AS-Inject-Query-key: GOOGLE_MAPS_KEY"
+  -H "X-AS-Target-URL: https://slack.com/api/conversations.info" \
+  -H "X-AS-Inject-Query: channel=SLACK_CHANNEL_ID"
 
 # Multiple injections
 curl http://localhost:8765/proxy \
   -H "X-AS-Target-URL: https://api.example.com/data" \
   -H "X-AS-Inject-Bearer: AUTH_TOKEN" \
-  -H "X-AS-Inject-Header-X-Org-ID: ORG_SECRET"
+  -H "X-AS-Inject-Header: X-Org-ID=ORG_SECRET"
 ```
 
 ### Header Reference
+
+Targets ride in the header **value** as `target=SECRET_KEY`, and the header is
+repeatable. Header values are not canonicalised, so `channel`, `auth.token` and
+`x-request-id` all arrive exactly as written.
 
 | Header | Required | Description |
 |--------|----------|-------------|
@@ -161,10 +166,15 @@ curl http://localhost:8765/proxy \
 | `X-AS-Agent-ID` | | Agent identifier for audit logging |
 | `X-AS-Inject-Bearer` | | Bearer token injection |
 | `X-AS-Inject-Basic` | | Basic auth injection (secret format: `user:pass`) |
-| `X-AS-Inject-Header-<Name>` | | Custom header injection |
-| `X-AS-Inject-Query-<Param>` | | Query parameter injection |
-| `X-AS-Inject-Body-<Path>` | | JSON body injection (dashes → dots) |
-| `X-AS-Inject-Form-<Key>` | | Form body injection |
+| `X-AS-Inject-Header` | | Custom header injection: `Name=SECRET_KEY` |
+| `X-AS-Inject-Query` | | Query parameter injection: `param=SECRET_KEY` |
+| `X-AS-Inject-Body` | | JSON body injection: `json.path=SECRET_KEY` |
+| `X-AS-Inject-Form` | | Form body injection: `field=SECRET_KEY` |
+
+The older `X-AS-Inject-Query-<Param>` shape, with the target in the header name,
+is still accepted for existing scripts. Do not use it for new work: Go
+canonicalises header names, so `channel` arrives as `Channel` and a hyphen
+arrives as a dot. Use the value form.
 
 ### Health Check
 

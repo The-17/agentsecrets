@@ -24,6 +24,7 @@ var (
 	callQueries    []string // "api_key=SECRET_NAME"
 	callBodyFields []string // "json.path=SECRET_NAME"
 	callFormFields []string // "field=SECRET_NAME"
+	callSetHeaders []string // "Name=Value" plain headers (non-secret)
 	callOutput     string   // "text" (default) or "json"
 )
 
@@ -46,6 +47,12 @@ var callCmd = &cobra.Command{
 	# Custom header
 	agentsecrets call --url https://api.example.com/data \
 		--header X-API-Key=MY_KEY
+
+	# Plain (non-secret) header. Use for Content-Type when you need one other
+	# than the default: a JSON body is sent as application/json automatically.
+	agentsecrets call --url https://api.example.com/data \
+		--bearer MY_KEY --body '{"text":"hi"}' \
+		--set-header Content-Type=application/json
 `,
 	Aliases:      []string{"calls"},
 	SilenceUsage: true,
@@ -63,6 +70,7 @@ func init() {
 	callCmd.Flags().StringArrayVar(&callQueries, "query", nil, "Query injection: param=SECRET_KEY (repeatable)")
 	callCmd.Flags().StringArrayVar(&callBodyFields, "body-field", nil, "Body injection: json.path=SECRET_KEY (repeatable)")
 	callCmd.Flags().StringArrayVar(&callFormFields, "form-field", nil, "Form injection: field=SECRET_KEY (repeatable)")
+	callCmd.Flags().StringArrayVar(&callSetHeaders, "set-header", nil, "Plain header: Name=Value, no secret lookup (repeatable)")
 	callCmd.Flags().StringVar(&callOutput, "output", "text", "Output format: text or json")
 	_ = callCmd.MarkFlagRequired("url")
 
@@ -115,6 +123,13 @@ func runCall(cmd *cobra.Command, args []string) error {
 		injections = append(injections, proxy.Injection{Style: "form", Target: field, SecretKey: key})
 	}
 
+	// Plain headers. These are not secret lookups: they exist so a caller can
+	// set Content-Type and similar. Protocol headers stay reserved.
+	headers, err := parsePlainHeaders(callSetHeaders)
+	if err != nil {
+		return err
+	}
+
 	if len(injections) == 0 {
 		return fmt.Errorf(
 			"'agentsecrets call' is a credential proxy — it makes authenticated API calls by injecting secrets from your keychain.\n\n" +
@@ -139,6 +154,7 @@ func runCall(cmd *cobra.Command, args []string) error {
 	result, err := proxy.CallViaProxy(proxy.CallRequest{
 		TargetURL:  callURL,
 		Method:     callMethod,
+		Headers:    headers,
 		Body:       body,
 		Injections: injections,
 		AgentToken: callToken,
@@ -197,6 +213,25 @@ const (
 	outputText = "text"
 	outputJSON = "json"
 )
+
+// parsePlainHeaders turns repeatable --set-header Name=Value flags into a
+// header map for CallRequest.Headers. It rejects the reserved X-AS-* prefix so
+// a caller cannot rewrite the proxy protocol itself.
+func parsePlainHeaders(values []string) (map[string]string, error) {
+	headers := make(map[string]string, len(values))
+	for _, h := range values {
+		name, value, ok := strings.Cut(h, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" || value == "" {
+			return nil, fmt.Errorf("--set-header must be Name=Value, got %q", h)
+		}
+		if strings.HasPrefix(strings.ToLower(name), "x-as-") {
+			return nil, fmt.Errorf("--set-header cannot set reserved X-AS-* headers (%q)", name)
+		}
+		headers[name] = value
+	}
+	return headers, nil
+}
 
 // splitFlag parses "name=value" flag format.
 func splitFlag(s string, flagName string) (string, string, error) {
