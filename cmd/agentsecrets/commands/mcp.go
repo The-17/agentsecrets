@@ -17,8 +17,16 @@ import (
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "MCP server for AI agent integration",
-	Long:  `Start an MCP (Model Context Protocol) server that exposes api_call and list_secrets tools for AI agents like Claude, Cursor, and Windsurf.`,
+	Long: `Connect AI clients to AgentSecrets over the Model Context Protocol.
+
+	` + mcpBridgePackage + ` is the published bridge (npx). This binary also
+	speaks MCP itself via "mcp serve".`,
 }
+
+// mcpBridgePackage is the published TypeScript MCP bridge. Client config names
+// the package, never a version and never an absolute binary path, so a user
+// upgrades by restarting their AI tool.
+const mcpBridgePackage = "@the-17/agentsecrets-mcp"
 
 var mcpServeCmd = &cobra.Command{
 	Use:   "serve",
@@ -37,8 +45,14 @@ var mcpInstallCmd = &cobra.Command{
 	Long: `Automatically detect Claude Desktop, Cursor, and OpenClaw installations and
 	configure them to use AgentSecrets.
 
-	For Claude Desktop and Cursor, this writes MCP config so your AI tools can
-	call api_call and list_secrets without any manual JSON editing.
+	By default the MCP entry runs the published bridge through npx:
+
+	  "command": "npx",
+	  "args": ["-y", "` + mcpBridgePackage + `@latest"]
+
+	That entry carries no version pin and no absolute path, so a new release
+	needs no config edit. Use --local to run this binary's "mcp serve" instead,
+	for machines without Node.
 
 	For OpenClaw, this installs the AgentSecrets skill into your skills directory.
 
@@ -52,6 +66,7 @@ var mcpInstallCmd = &cobra.Command{
 func init() {
 	mcpCmd.AddCommand(mcpServeCmd)
 	mcpCmd.AddCommand(mcpInstallCmd)
+	mcpInstallCmd.Flags().Bool("local", false, "Run this binary's `mcp serve` instead of the published npx bridge")
 }
 
 func runMCPServe(cmd *cobra.Command, args []string) error {
@@ -75,21 +90,38 @@ func runMCPServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runMCPInstall(cmd *cobra.Command, args []string) error {
-	// Find our own binary path
+// mcpServerEntry returns the mcpServers entry for the AgentSecrets server.
+// By default it runs the published bridge through npx, so client config holds
+// neither a version pin nor an absolute path. With useLocal it runs this
+// binary's `mcp serve` instead, for machines without Node.
+func mcpServerEntry(useLocal bool) (map[string]interface{}, error) {
+	if !useLocal {
+		return map[string]interface{}{
+			"command": "npx",
+			"args":    []string{"-y", mcpBridgePackage + "@latest"},
+		}, nil
+	}
+
 	binPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("could not determine binary path: %w", err)
+		return nil, fmt.Errorf("could not determine binary path: %w", err)
 	}
 	binPath, err = filepath.EvalSymlinks(binPath)
 	if err != nil {
-		return fmt.Errorf("could not resolve binary path: %w", err)
+		return nil, fmt.Errorf("could not resolve binary path: %w", err)
 	}
-
-	// MCP entry to write
-	entry := map[string]interface{}{
+	return map[string]interface{}{
 		"command": binPath,
 		"args":    []string{"mcp", "serve"},
+	}, nil
+}
+
+func runMCPInstall(cmd *cobra.Command, args []string) error {
+	useLocal, _ := cmd.Flags().GetBool("local")
+
+	entry, err := mcpServerEntry(useLocal)
+	if err != nil {
+		return err
 	}
 
 	installed := 0
@@ -119,7 +151,7 @@ func runMCPInstall(cmd *cobra.Command, args []string) error {
 	// Try OpenClaw
 	oclawPath := openclawSkillsPath()
 	if oclawPath != "" {
-		if err := installOpenClawSkill(oclawPath, binPath); err != nil {
+		if err := installOpenClawSkill(oclawPath); err != nil {
 			ui.Warning(fmt.Sprintf("OpenClaw: %v", err))
 		} else {
 			ui.Success("Configured OpenClaw (skill installed)")
@@ -129,8 +161,11 @@ func runMCPInstall(cmd *cobra.Command, args []string) error {
 
 	if installed == 0 {
 		ui.Warning("No supported AI tools detected (Claude Desktop, Cursor, OpenClaw).")
-		ui.Info("You can manually add this to your MCP config:")
-		fmt.Printf("\n  Binary: %s\n  Args:   mcp serve\n\n", binPath)
+		ui.Info("Add this to your MCP client config:")
+		pretty, _ := json.MarshalIndent(map[string]interface{}{
+			"mcpServers": map[string]interface{}{"agentsecrets": entry},
+		}, "", "  ")
+		fmt.Printf("\n%s\n\n", pretty)
 		return nil
 	}
 
@@ -217,7 +252,7 @@ func openclawSkillsPath() string {
 }
 
 // installOpenClawSkill writes the AgentSecrets skill files into the OpenClaw skills directory.
-func installOpenClawSkill(skillsDir string, binPath string) error {
+func installOpenClawSkill(skillsDir string) error {
 	skillDir := filepath.Join(skillsDir, "agentsecrets")
 	scriptsDir := filepath.Join(skillDir, "scripts")
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {

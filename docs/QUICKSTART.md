@@ -120,7 +120,7 @@ This requires your password and takes effect immediately.
 agentsecrets mcp install
 ```
 
-This auto-configures MCP for Claude Desktop and Cursor. Restart your AI tool. You'll see two new tools: `api_call` and `list_secrets`.
+This auto-configures MCP for Claude Desktop and Cursor. It points the client at the published bridge (`npx -y @the-17/agentsecrets-mcp@latest`), so no config edit is needed on a new release. Restart your AI tool. You'll see the AgentSecrets tools, including `api_call` and `secret_store`.
 
 ### HTTP Proxy (any agent or framework)
 

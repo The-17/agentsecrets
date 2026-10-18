@@ -17,26 +17,46 @@ Both paths share the same core engine that resolves secrets from your OS keychai
 
 ### Setup for Claude Desktop
 
-1. Build AgentSecrets:
-   ```bash
-   go build -o agentsecrets ./cmd/agentsecrets
-   ```
+Run the installer, which writes the MCP entry for Claude Desktop, Cursor, and
+OpenClaw:
 
-2. Add to your Claude Desktop config:
+```bash
+agentsecrets mcp install
+```
 
-   **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-   **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+The entry it writes runs the published bridge, with no version pin and no
+absolute path, so a new release needs no config edit:
 
-   ```json
-   {
-     "mcpServers": {
-       "agentsecrets": {
-         "command": "/path/to/agentsecrets",
-         "args": ["mcp", "serve"]
-       }
-     }
-   }
-   ```
+```json
+{
+  "mcpServers": {
+    "agentsecrets": {
+      "command": "npx",
+      "args": ["-y", "@the-17/agentsecrets-mcp@latest"]
+    }
+  }
+}
+```
+
+The bridge finds the CLI on `PATH`. On a machine without Node, run
+`agentsecrets mcp install --local` to point the client at this binary's
+`mcp serve` instead.
+
+Manual install, if you prefer to edit the file yourself:
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "agentsecrets": {
+      "command": "npx",
+      "args": ["-y", "@the-17/agentsecrets-mcp@latest"]
+    }
+  }
+}
+```
 
 3. Restart Claude Desktop. You'll see the AgentSecrets tools, including `api_call`, `secret_store`, and `list_secrets`.
 

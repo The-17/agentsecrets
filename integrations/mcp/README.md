@@ -33,7 +33,7 @@ A workload token (an agent identity, `agt_...`) carries its exact scope — work
   "mcpServers": {
     "agentsecrets": {
       "command": "npx",
-      "args": ["-y", "@the-17/agentsecrets-mcp"]
+      "args": ["-y", "@the-17/agentsecrets-mcp@latest"]
     }
   }
 }
