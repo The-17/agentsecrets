@@ -11,6 +11,7 @@ import (
 
 	"github.com/The-17/agentsecrets/pkg/api"
 	"github.com/The-17/agentsecrets/pkg/config"
+	clierrors "github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -130,10 +131,34 @@ func Execute() error {
 			}
 			return err
 		}
+		recordCommandError(err)
 		ui.ErrorWithSuggestions(err)
 		return err
 	}
 	return nil
+}
+
+// recordCommandError increments the coarse error-class counter from the CLI
+// error taxonomy. A propagated child exit code (ExitError) is not a CLI error
+// and is excluded by the caller.
+func recordCommandError(err error) {
+	if err == nil {
+		return
+	}
+	switch code := string(clierrors.FromError(err).Code); {
+	case strings.HasPrefix(code, "AUTH-"):
+		telemetry.RecordErrorAuth()
+	case strings.HasPrefix(code, "KEY-"):
+		telemetry.RecordErrorKeychain()
+	case strings.HasPrefix(code, "NET-"):
+		telemetry.RecordErrorNetwork()
+	case strings.HasPrefix(code, "SEC-"):
+		telemetry.RecordErrorSecrets()
+	case strings.HasPrefix(code, "SYS-"):
+		telemetry.RecordErrorSystem()
+	default:
+		telemetry.RecordErrorUnknown()
+	}
 }
 
 // skipPreamble reports whether the current invocation should bypass the update

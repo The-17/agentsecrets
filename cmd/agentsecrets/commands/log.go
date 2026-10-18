@@ -14,6 +14,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/log"
 	"github.com/The-17/agentsecrets/pkg/proxy"
+	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
 	"github.com/spf13/cobra"
 )
@@ -767,11 +768,14 @@ var logVerifyCmd = &cobra.Command{
 		fmt.Println("Verifying cryptographic chain integrity...")
 		err := logService.VerifyChain()
 		if err != nil {
+			telemetry.RecordLogChainVerification()
+			telemetry.RecordTamperingDetected()
 			fmt.Printf("%s Chain integrity failure detected!\n", ui.ErrorStyle.Render("FAIL:"))
 			fmt.Printf("  Reason: %v\n", err)
 			return fmt.Errorf("cryptographic audit log verification failed")
 		}
 
+		telemetry.RecordLogChainVerification()
 		fmt.Println(ui.SuccessStyle.Render("Chain integrity: OK"))
 		return nil
 	},

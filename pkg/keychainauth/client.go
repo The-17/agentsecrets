@@ -501,6 +501,7 @@ func sendRequest(req request) (*response, error) {
 	case "success":
 		return &resp, nil
 	case "denied":
+		telemetry.RecordProcessVerificationsFailed()
 		return nil, &DaemonDeniedError{Reason: resp.Reason}
 	case "error":
 		return nil, &DaemonDeniedError{Reason: resp.Reason}

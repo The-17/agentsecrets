@@ -19,6 +19,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/secrets"
+	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
 	"github.com/The-17/agentsecrets/pkg/workspaces"
 )
@@ -1322,6 +1323,8 @@ func runSecretsDiff(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println()
 	}
+
+	telemetry.RecordDriftDiffsDetected(len(diff.Added) + len(diff.Removed) + len(diff.Changed))
 
 	return nil
 }
