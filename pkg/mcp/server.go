@@ -2,6 +2,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -89,6 +90,9 @@ func newServer(version string, deps Deps) *server.MCPServer {
 	// --- Key Rotation ---
 	s.AddTool(rotateKeyTool(), srv.handleRotateKey)
 
+	// --- Secret Provisioning ---
+	s.AddTool(secretStoreTool(), srv.handleSecretStore)
+
 	return s
 }
 
@@ -130,10 +134,15 @@ func apiCallTool() mcp.Tool {
 					"Example: {\"bearer\": \"STRIPE_KEY\"} or {\"header:X-API-Key\": \"API_KEY\"}",
 			),
 		),
+		mcp.WithObject("capture",
+			mcp.Description(
+				"Optional: store a field of the response as a secret and replace it in the returned body with [REDACTED_BY_AGENTSECRETS]. "+
+					"Use when the call MINTS a credential (e.g. POST /keys returns a new key) so the value never enters your context. "+
+					"Keys: key_name (required), extract (required: dot-separated JSON path to the field to store and redact, e.g. \"data.key\").",
+			),
+		),
 	)
 }
-
-
 
 // --- Handlers ---
 
@@ -179,6 +188,22 @@ func (s *Server) handleAPICall(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError(fmt.Sprintf("invalid injections: %v", err)), nil
 	}
 
+	// Optional: capture — store a response field as a secret and redact it.
+	var capture struct {
+		keyName string
+		extract string
+	}
+	if capRaw, ok := args["capture"].(map[string]interface{}); ok && capRaw != nil {
+		capture.keyName = strings.TrimSpace(mustString(capRaw["key_name"]))
+		capture.extract = strings.TrimSpace(mustString(capRaw["extract"]))
+		if capture.keyName == "" {
+			return mcp.NewToolResultError("capture requires key_name"), nil
+		}
+		if capture.extract == "" {
+			return mcp.NewToolResultError("capture requires extract (dot-separated JSON path to the field to store and redact)"), nil
+		}
+	}
+
 	// Execute via the proxy daemon
 	result, err := proxy.CallViaProxy(proxy.CallRequest{
 		TargetURL:  url,
@@ -192,9 +217,45 @@ func (s *Server) handleAPICall(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError(fmt.Sprintf("API call failed: %v", err)), nil
 	}
 
-	// Format response
-	response := fmt.Sprintf("HTTP %d\n\n%s", result.StatusCode, string(result.Body))
+	// Format response.
+	var caption string
+	if capture.keyName != "" {
+		value, capErr := secrets.ExtractJSONPath(result.Body, capture.extract)
+		if capErr != nil {
+			// Store nothing and do not return the body, so the unredacted value
+			// never reaches the model.
+			return mcp.NewToolResultError(fmt.Sprintf("capture failed: %v — the API call succeeded but nothing was stored, so the body is not returned", capErr)), nil
+		}
+		meta, capErr := s.getSecretsService().SetProvisioned(capture.keyName, value, "")
+		if capErr != nil {
+			// Safe to surface: the store error never carries a secret value.
+			return mcp.NewToolResultError(fmt.Sprintf("capture failed to store %s: %v — the body is not returned", capture.keyName, capErr)), nil
+		}
+		result.Body = redactValue(result.Body, value)
+		caption = fmt.Sprintf(
+			"Secret stored as %s (environment %s, %d bytes, fingerprint %s). The value was replaced with [REDACTED_BY_AGENTSECRETS] in the body below.\n\n",
+			meta.Key, meta.Environment, meta.Length, meta.Fingerprint,
+		)
+	}
+
+	response := fmt.Sprintf("HTTP %d\n%s%s", result.StatusCode, caption, string(result.Body))
 	return mcp.NewToolResultText(response), nil
+}
+
+// mustString type-asserts an args value to a bare string, returning "" otherwise.
+func mustString(v interface{}) string {
+	s, _ := v.(string)
+	return s
+}
+
+// redactValue replaces every occurrence of value in body with the proxy
+// redaction placeholder so a freshly minted credential cannot survive in a
+// returned body.
+func redactValue(body []byte, value string) []byte {
+	if value == "" {
+		return body
+	}
+	return bytes.ReplaceAll(body, []byte(value), []byte(proxy.RedactionPlaceholder))
 }
 
 // --- Shared Helpers ---

@@ -3,9 +3,11 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/keyring"
+	"github.com/The-17/agentsecrets/pkg/secrets"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -48,6 +50,46 @@ func rotateKeyTool() mcp.Tool {
 		),
 		mcp.WithString("environment",
 			mcp.Description("Optional: The environment to rotate the key in. Defaults to active environment."),
+		),
+	)
+}
+
+func secretStoreTool() mcp.Tool {
+	return mcp.NewTool("secret_store",
+		mcp.WithDescription(
+			"Store a secret WITHOUT the value ever entering your context or the command line. "+
+				"⚠️ IMPORTANT: This creates or updates a stored credential. Confirm with the user in chat before calling this tool. "+
+				"The value always comes from a source you name, never from you: "+
+				"source=generate mints a random value in-process; "+
+				"source=command captures a command's stdout (for example a provider CLI that mints a key); "+
+				"source=http fetches a URL. "+
+				"Returns only {status, key_name, environment, length, fingerprint}. The value is never returned and is never a parameter.",
+		),
+		mcp.WithString("key_name",
+			mcp.Required(),
+			mcp.Description("Name of the secret key to create or update (e.g. STRIPE_KEY)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Where the value comes from: generate | command | http"),
+		),
+		mcp.WithString("environment",
+			mcp.Description("Optional: environment to store in. Defaults to the active environment."),
+		),
+		mcp.WithString("command",
+			mcp.Description("source=command: shell command whose stdout is the value. Its output is never logged or returned."),
+		),
+		mcp.WithString("url",
+			mcp.Description("source=http: URL to GET the value from."),
+		),
+		mcp.WithObject("headers",
+			mcp.Description("source=http: extra request headers as key-value pairs."),
+		),
+		mcp.WithNumber("length",
+			mcp.Description("source=generate: value length in bytes. Default 32."),
+		),
+		mcp.WithString("extract",
+			mcp.Description("Optional: dot-separated JSON path to the field that holds the value (source=command or source=http), e.g. \"data.key\"."),
 		),
 	)
 }
@@ -204,6 +246,79 @@ func (s *Server) handleRotateKey(ctx context.Context, req mcp.CallToolRequest) (
 		"key_name":    keyName,
 		"environment": activeEnv,
 		"message":     msg,
-		"next_step":   "Set the new secret value using: agentsecrets secrets set KEY=VALUE",
+		"next_step":   "Store the new value without exposing it: use the secret_store tool (source generate | command | http), or run `agentsecrets secrets set KEY_NAME` from a terminal.",
+	})
+}
+
+// handleSecretStore stores a secret from a source the agent names. The value
+// never appears in the tool arguments or the result.
+func (s *Server) handleSecretStore(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+
+	keyName, _ := args["key_name"].(string)
+	source, _ := args["source"].(string)
+	environment, _ := args["environment"].(string)
+	extract, _ := args["extract"].(string)
+
+	if keyName == "" {
+		return mcp.NewToolResultError("missing required parameter: key_name"), nil
+	}
+	if environment != "" && !config.IsValidEnvironment(environment) {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid environment %q — must be one of: development, staging, production", environment)), nil
+	}
+
+	if source == "" {
+		return mcp.NewToolResultError("missing required parameter: source (generate | command | http)"), nil
+	}
+
+	svc := s.getSecretsService()
+
+	var (
+		meta secrets.StoredMeta
+		err  error
+	)
+	switch source {
+	case "generate":
+		length := 32
+		if n, ok := args["length"].(float64); ok && n > 0 {
+			length = int(n)
+		}
+		meta, err = svc.Generate(keyName, length, environment)
+	case "command":
+		command, _ := args["command"].(string)
+		if strings.TrimSpace(command) == "" {
+			return mcp.NewToolResultError("source=command requires the command parameter"), nil
+		}
+		meta, err = svc.SetFromCommand(keyName, command, extract, environment)
+	case "http":
+		url, _ := args["url"].(string)
+		if strings.TrimSpace(url) == "" {
+			return mcp.NewToolResultError("source=http requires the url parameter"), nil
+		}
+		headers := map[string]string{}
+		if hdrs, ok := args["headers"].(map[string]interface{}); ok {
+			for k, v := range hdrs {
+				if sv, ok := v.(string); ok {
+					headers[k] = sv
+				}
+			}
+		}
+		meta, err = svc.SetFromHTTP(keyName, url, extract, environment, headers)
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("invalid source %q — must be generate, command, or http", source)), nil
+	}
+
+	if err != nil {
+		// The error comes from validation, the source, or the store. It never
+		// carries a secret value, so it is safe to surface.
+		return mcp.NewToolResultError(fmt.Sprintf("secret_store failed: %v", err)), nil
+	}
+
+	return jsonResult(map[string]interface{}{
+		"status":      "stored",
+		"key_name":    meta.Key,
+		"environment": meta.Environment,
+		"length":      meta.Length,
+		"fingerprint": meta.Fingerprint,
 	})
 }

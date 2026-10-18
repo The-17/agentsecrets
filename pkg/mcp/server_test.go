@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/The-17/agentsecrets/pkg/proxy"
@@ -130,3 +132,20 @@ func TestNewServerCreation(t *testing.T) {
 	}
 }
 
+// TestRedactValue verifies a freshly minted value is not left in a returned body.
+func TestRedactValue(t *testing.T) {
+	body := []byte(`{"id":"x","key":"sk_live_secret","label":"key"}`)
+	if out := redactValue(body, "sk_live_secret"); strings.Contains(string(out), "sk_live_secret") {
+		t.Fatalf("value still present after redaction: %s", out)
+	} else if !strings.Contains(string(out), proxy.RedactionPlaceholder) {
+		t.Fatalf("placeholder missing after redaction: %s", out)
+	}
+
+	if out := redactValue(body, ""); !bytes.Equal(out, body) {
+		t.Fatal("empty value must be a no-op")
+	}
+
+	if out := redactValue([]byte(`{"a":"v1v2","b":"vv1v2z"}`), "v1v2"); strings.Contains(string(out), "v1v2") {
+		t.Fatalf("echoed value survived: %s", out)
+	}
+}

@@ -86,6 +86,7 @@ agentsecrets init
 agentsecrets project create my-agent
 
 agentsecrets secrets set STRIPE_KEY=sk_live_EXAMPLE...
+agentsecrets secrets set STRIPE_KEY          # or type it at a prompt; not in shell history
 agentsecrets workspace allowlist add api.stripe.com
 
 agentsecrets mcp install        # Claude Desktop + Cursor

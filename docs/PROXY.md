@@ -38,7 +38,7 @@ Both paths share the same core engine that resolves secrets from your OS keychai
    }
    ```
 
-3. Restart Claude Desktop. You'll see two new tools: `api_call` and `list_secrets`.
+3. Restart Claude Desktop. You'll see the AgentSecrets tools, including `api_call`, `secret_store`, and `list_secrets`.
 
 ### Available Tools
 
@@ -73,6 +73,7 @@ Make an authenticated API call. The AI sends key *names*, the engine resolves ac
 | `body` | string | | Request body (JSON string) |
 | `headers` | object | | Extra request headers |
 | `injections` | object | ✅ | Map of injection spec → secret key name |
+| `capture` | object | | Store a response field as a secret, and redact it from the returned body |
 
 **Injection specs:**
 
@@ -106,6 +107,57 @@ HTTP 200
 ```
 
 **Claude never sees:** `sk_test_51H...` (the actual Stripe key).
+
+#### Minting calls — `capture`
+
+Some endpoints create a credential and return it. Pass `capture` so the new
+value is stored and removed from the body the model receives:
+
+```json
+{
+  "url": "https://api.provider.com/v1/keys",
+  "method": "POST",
+  "injections": {"bearer": "PROVIDER_ADMIN_KEY"},
+  "capture": {"key_name": "PROVIDER_KEY", "extract": "data.key"}
+}
+```
+
+`key_name` names the stored secret. `extract` is the dot-separated JSON path to
+the field. The stored value is replaced with `[REDACTED_BY_AGENTSECRETS]`
+everywhere it appears in the returned body. If capture fails, the body is not
+returned at all — the tool fails closed.
+
+#### `secret_store`
+
+Store a secret without the value ever entering the model's context. The value
+comes from a source the agent names. It is never a tool parameter and never a
+tool result.
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `key_name` | string | ✅ | Secret key to create or update |
+| `source` | string | ✅ | `generate`, `command`, or `http` |
+| `environment` | string | | Target environment; defaults to the active one |
+| `length` | number | | `source=generate`: value length in bytes (default 32) |
+| `command` | string | | `source=command`: shell command whose stdout is the value |
+| `url` | string | | `source=http`: URL to GET |
+| `headers` | object | | `source=http`: extra request headers |
+| `extract` | string | | Dot-path to the value inside JSON output (`command` or `http`) |
+
+**Returns:** `{status, key_name, environment, length, fingerprint}`. No code
+path returns the value.
+
+Example — mint a key at a provider and keep it out of the transcript:
+
+```json
+{
+  "key_name": "STRIPE_KEY",
+  "source": "command",
+  "command": "provider mint-key --json",
+  "extract": "secret",
+  "environment": "development"
+}
+```
 
 ---
 

@@ -1,13 +1,18 @@
 package commands
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/crypto"
@@ -55,10 +60,31 @@ var secretsCmd = &cobra.Command{
 }
 
 var secretsSetCmd = &cobra.Command{
-	Use:   "set KEY=VALUE [KEY2=VALUE2...]",
-	Short: "Add or update one or more secrets",
-	Args:  cobra.MinimumNArgs(1),
-	RunE:  runSecretsSet,
+	Use:   "set KEY=VALUE [KEY2=VALUE2...] | set KEY [KEY2...]",
+	Short: "Add or update secrets without putting values on the command line",
+	Long: `Add or update secrets.
+
+Two forms:
+
+  agentsecrets secrets set KEY=VALUE [KEY2=VALUE2...]
+      Batch form. Values are the command-line arguments, so they are visible
+      in shell history and process listings. Unchanged from earlier versions.
+
+  agentsecrets secrets set KEY [KEY2...]
+      Prompt form. You type each value at a visible prompt. The value is shown
+      as you type and is never written to shell history.
+
+Value sources for the prompt form:
+
+  (default)            type the value at a visible prompt
+  --stdin              read the value (one key) or KEY=VALUE lines (no keys) from stdin
+  --generate           mint a random value in-process (never shown; see --length)
+  --from-command CMD   use CMD's stdout as the value (its output is never logged)
+  --extract PATH       with --from-command: take the value from a dot-separated
+                       JSON path in CMD's stdout (for example data.key)
+  --output json        print {status, secrets} metadata instead of human text`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runSecretsSet,
 }
 
 var secretsListCmd = &cobra.Command{
@@ -372,6 +398,13 @@ func init() {
 	secretsPushCmd.Flags().BoolVarP(&pushForce, "force", "f", false, "Push without prompting for missing keys")
 	secretsListCmd.Flags().BoolVar(&listRemote, "remote", false, "Fetch latest keys from the cloud instead of local cache")
 	secretsSetCmd.Flags().BoolVar(&allEnvs, "all-envs", false, "Set in all three environments simultaneously")
+	secretsSetCmd.Flags().Bool("stdin", false, "Read the value (one key) or KEY=VALUE lines (no keys) from stdin")
+	secretsSetCmd.Flags().Bool("generate", false, "Generate a random value (never shown)")
+	secretsSetCmd.Flags().Int("length", 32, "Generated value length in bytes (with --generate)")
+	secretsSetCmd.Flags().String("from-command", "", "Use the command's stdout as the value")
+	secretsSetCmd.Flags().String("extract", "", "With --from-command: dot-separated JSON path in the command output that holds the value")
+	secretsSetCmd.Flags().String("output", "text", "Output format: text or json")
+	secretsSetCmd.Flags().String("env", "", "Target environment (development, staging, production); defaults to the active one")
 	secretsDiffCmd.Flags().StringVar(&diffFrom, "from", "", "Source environment for cross-environment diff")
 	secretsDiffCmd.Flags().StringVar(&diffTo, "to", "", "Target environment for cross-environment diff")
 
@@ -419,64 +452,327 @@ func init() {
 }
 
 func runSecretsSet(cmd *cobra.Command, args []string) error {
-	kv := make(map[string]string)
-	for _, arg := range args {
-		parts := strings.SplitN(arg, "=", 2)
-		if len(parts) != 2 {
-			ui.Error(fmt.Sprintf("Invalid format '%s'. Use KEY=VALUE.", arg))
-			continue
-		}
-		kv[parts[0]] = parts[1]
+	stdinMode, _ := cmd.Flags().GetBool("stdin")
+	generate, _ := cmd.Flags().GetBool("generate")
+	fromCommand, _ := cmd.Flags().GetString("from-command")
+	extract, _ := cmd.Flags().GetString("extract")
+	envFlag, _ := cmd.Flags().GetString("env")
+	length, _ := cmd.Flags().GetInt("length")
+	outputMode, _ := cmd.Flags().GetString("output")
+
+	switch outputMode {
+	case "", outputText, outputJSON:
+	default:
+		return fmt.Errorf("--output must be %q or %q, got %q", outputText, outputJSON, outputMode)
+	}
+	jsonOut := outputMode == outputJSON
+	if jsonOut && allEnvs {
+		return fmt.Errorf("--all-envs cannot be combined with --output json")
 	}
 
+	sources := 0
+	if stdinMode {
+		sources++
+	}
+	if generate {
+		sources++
+	}
+	if fromCommand != "" {
+		sources++
+	}
+	if sources > 1 {
+		return fmt.Errorf("use only one value source: --stdin, --generate, or --from-command")
+	}
+	if extract != "" && fromCommand == "" {
+		return fmt.Errorf("--extract only applies to --from-command")
+	}
+	if envFlag != "" && !config.IsValidEnvironment(envFlag) {
+		return fmt.Errorf("invalid --env %q (valid: development, staging, production)", envFlag)
+	}
+	if envFlag != "" && allEnvs {
+		return fmt.Errorf("--env and --all-envs are mutually exclusive")
+	}
+
+	hasAssign := false
+	for _, a := range args {
+		if strings.Contains(a, "=") {
+			hasAssign = true
+			break
+		}
+	}
+
+	// Batch form: every argument is KEY=VALUE. Values are on the command line,
+	// unchanged from earlier versions.
+	if hasAssign {
+		if sources > 0 {
+			return fmt.Errorf("KEY=VALUE arguments cannot be combined with --stdin, --generate, or --from-command")
+		}
+		kv := make(map[string]string, len(args))
+		for _, arg := range args {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) != 2 || parts[0] == "" {
+				ui.Error(fmt.Sprintf("Invalid format '%s'. Use KEY=VALUE.", arg))
+				continue
+			}
+			kv[parts[0]] = parts[1]
+		}
+		if len(kv) == 0 {
+			return nil
+		}
+		metas, err := storeSecretValues(kv, envFlag, jsonOut)
+		if err != nil {
+			return err
+		}
+		return emitStoredJSON(metas, jsonOut)
+	}
+
+	// Source form: arguments are key names, and the value comes from a source
+	// that never places it on the command line.
+	var kv map[string]string
+	var err error
+	switch {
+	case stdinMode:
+		kv, err = valuesFromStdin(args)
+	case generate:
+		if len(args) == 0 {
+			return fmt.Errorf("provide at least one KEY to generate")
+		}
+		kv, err = generateValues(args, length)
+	case fromCommand != "":
+		if len(args) == 0 {
+			return fmt.Errorf("provide at least one KEY to fill from --from-command")
+		}
+		kv, err = valuesFromCommand(args, fromCommand, extract)
+	default:
+		if len(args) == 0 {
+			return fmt.Errorf("provide KEY names, KEY=VALUE pairs, or --stdin")
+		}
+		kv, err = promptVisibleValues(args)
+	}
+	if err != nil {
+		return err
+	}
 	if len(kv) == 0 {
 		return nil
 	}
 
-	if allEnvs {
-		// Set in all three environments
-		keyNames := make([]string, 0, len(kv))
-		for k := range kv {
-			keyNames = append(keyNames, k)
+	metas, err := storeSecretValues(kv, envFlag, jsonOut)
+	if err != nil {
+		return err
+	}
+	if !jsonOut && generate {
+		for _, key := range sortedKeys(kv) {
+			ui.Info(fmt.Sprintf("%s: %d bytes, fingerprint %s", key, len(kv[key]), secrets.Fingerprint(kv[key])))
 		}
-		if !confirmProceed(false, fmt.Sprintf("This will set %s in development, staging, and production. Continue? (y/n): ", strings.Join(keyNames, ", "))) {
-			ui.Info("Cancelled.")
-			return nil
-		}
+	}
+	return emitStoredJSON(metas, jsonOut)
+}
 
-		if err := verifyPasswordLocally(); err != nil {
-			return err
-		}
-
-		for _, env := range config.ValidEnvironments {
-			if err := ui.Spinner(fmt.Sprintf("Setting in %s...", env), func() error {
-				return app.Secrets().BatchSet(kv, env)
-			}); err != nil {
-				ui.Error(fmt.Sprintf("Failed to set in %s: %v", env, err))
-				continue
-			}
-			ui.Success(fmt.Sprintf("Set in %s", env))
-		}
+// emitStoredJSON prints the structured result of `secrets set --output json`.
+// All human-readable output is suppressed in that mode, so stdout stays a
+// single parseable JSON object.
+func emitStoredJSON(metas []secrets.StoredMeta, jsonOut bool) error {
+	if !jsonOut {
 		return nil
 	}
+	enc, err := storedJSON(metas)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(enc))
+	return nil
+}
 
-	env := config.ResolveEnvironment()
+// storedJSON encodes the `secrets set --output json` envelope. It is pure so
+// the shape can be tested without a store.
+func storedJSON(metas []secrets.StoredMeta) ([]byte, error) {
+	if metas == nil {
+		metas = []secrets.StoredMeta{}
+	}
+	enc, err := json.Marshal(map[string]any{"status": "stored", "secrets": metas})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode JSON output: %w", err)
+	}
+	return enc, nil
+}
+
+// storeSecretValues is the single write path for `secrets set`. It handles the
+// all-environments and production password checks, then stores kv, and returns
+// metadata for what was written. When quiet is set it prints no human-readable
+// output, so the caller can emit machine-readable output on a clean stdout.
+func storeSecretValues(kv map[string]string, env string, quiet bool) ([]secrets.StoredMeta, error) {
+	metas := make([]secrets.StoredMeta, 0, len(kv))
+
+	if allEnvs {
+		if !quiet {
+			names := strings.Join(sortedKeys(kv), ", ")
+			if !confirmProceed(false, fmt.Sprintf("This will set %s in development, staging, and production. Continue? (y/n): ", names)) {
+				ui.Info("Cancelled.")
+				return nil, nil
+			}
+		}
+		if err := verifyPasswordLocally(); err != nil {
+			return nil, err
+		}
+		for _, e := range config.ValidEnvironments {
+			var setErr error
+			if quiet {
+				setErr = app.Secrets().BatchSet(kv, e)
+			} else {
+				setErr = ui.Spinner(fmt.Sprintf("Setting in %s...", e), func() error {
+					return app.Secrets().BatchSet(kv, e)
+				})
+			}
+			if setErr != nil {
+				if !quiet {
+					ui.Error(fmt.Sprintf("Failed to set in %s: %v", e, setErr))
+				}
+				continue
+			}
+			if !quiet {
+				ui.Success(fmt.Sprintf("Set in %s", e))
+			}
+			for _, key := range sortedKeys(kv) {
+				metas = append(metas, secrets.DescribeValue(key, e, kv[key]))
+			}
+		}
+		return metas, nil
+	}
+
+	if env == "" {
+		env = config.ResolveEnvironment()
+	}
 	if env == "production" {
 		if err := verifyPasswordLocally(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	if err := ui.Spinner(fmt.Sprintf("Encrypting and syncing %d secrets...", len(kv)), func() error {
-		return app.Secrets().BatchSet(kv, "")
+	if quiet {
+		if err := app.Secrets().BatchSet(kv, env); err != nil {
+			return nil, fmt.Errorf("failed to set secrets: %w", err)
+		}
+	} else if err := ui.Spinner(fmt.Sprintf("Encrypting and syncing %d secrets...", len(kv)), func() error {
+		return app.Secrets().BatchSet(kv, env)
 	}); err != nil {
-		return fmt.Errorf("failed to set secrets: %w", err)
+		return nil, fmt.Errorf("failed to set secrets: %w", err)
 	}
 
-	for k := range kv {
-		ui.Success(fmt.Sprintf("Set %s", k))
+	for _, key := range sortedKeys(kv) {
+		if !quiet {
+			ui.Success(fmt.Sprintf("Set %s", key))
+		}
+		metas = append(metas, secrets.DescribeValue(key, env, kv[key]))
 	}
-	return nil
+	return metas, nil
+}
+
+// sortedKeys returns the map keys in a stable order for display.
+func sortedKeys(kv map[string]string) []string {
+	keys := make([]string, 0, len(kv))
+	for k := range kv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// generateValues mints a random value per key. The value is never displayed.
+func generateValues(keys []string, length int) (map[string]string, error) {
+	if length <= 0 {
+		length = 32
+	}
+	kv := make(map[string]string, len(keys))
+	for _, key := range keys {
+		value, err := crypto.GeneratePassword(length)
+		if err != nil {
+			return nil, fmt.Errorf("generate value for %s: %w", key, err)
+		}
+		kv[key] = value
+	}
+	return kv, nil
+}
+
+// valuesFromCommand uses one command's stdout as the value for each key. With
+// extract, only the string at that dot-separated JSON path is used.
+func valuesFromCommand(keys []string, command, extract string) (map[string]string, error) {
+	value, err := secrets.ReadValueFromCommand(command, extract)
+	if err != nil {
+		return nil, err
+	}
+	kv := make(map[string]string, len(keys))
+	for _, key := range keys {
+		kv[key] = value
+	}
+	return kv, nil
+}
+
+// valuesFromStdin reads stdin once. With key names, the whole input is the
+// value. Without key names, each non-blank line must be KEY=VALUE.
+func valuesFromStdin(keys []string) (map[string]string, error) {
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, secrets.MaxProvisionInput+1))
+	if err != nil {
+		return nil, fmt.Errorf("read stdin: %w", err)
+	}
+	if len(raw) > secrets.MaxProvisionInput {
+		return nil, fmt.Errorf("stdin exceeds %d bytes", secrets.MaxProvisionInput)
+	}
+
+	if len(keys) > 0 {
+		value, err := secrets.NormalizeValue(raw)
+		if err != nil {
+			return nil, err
+		}
+		kv := make(map[string]string, len(keys))
+		for _, key := range keys {
+			kv[key] = value
+		}
+		return kv, nil
+	}
+
+	kv := make(map[string]string)
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			return nil, fmt.Errorf("stdin line %d is not KEY=VALUE", i+1)
+		}
+		kv[parts[0]] = parts[1]
+	}
+	if len(kv) == 0 {
+		return nil, fmt.Errorf("no KEY=VALUE lines on stdin")
+	}
+	return kv, nil
+}
+
+// promptVisibleValues reads one value per key from the terminal. The value is
+// echoed as typed (so the operator can see it) and is read directly from the
+// terminal, so the shell never records it in history.
+func promptVisibleValues(keys []string) (map[string]string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil, fmt.Errorf("no terminal to prompt for a value; pipe it with --stdin instead")
+	}
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintln(os.Stderr, "Values are shown as you type and are not saved in your shell history.")
+	}
+	reader := bufio.NewReader(os.Stdin)
+	kv := make(map[string]string, len(keys))
+	for _, key := range keys {
+		fmt.Fprintf(os.Stderr, "%s: ", key)
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("read value for %s: %w", key, err)
+		}
+		value, nerr := secrets.NormalizeValue([]byte(line))
+		if nerr != nil {
+			return nil, fmt.Errorf("%s: %w", key, nerr)
+		}
+		kv[key] = value
+	}
+	return kv, nil
 }
 
 func runSecretsList(cmd *cobra.Command, args []string) error {

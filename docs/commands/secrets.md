@@ -6,7 +6,8 @@
 
 ```
 agentsecrets secrets list
-agentsecrets secrets set <KEY=value> [KEY=value...]
+agentsecrets secrets set <KEY=VALUE> [KEY=VALUE...]
+agentsecrets secrets set <KEY> [KEY...] [--stdin | --generate | --from-command CMD]
 agentsecrets secrets delete <KEY>
 agentsecrets secrets pull [--force]
 agentsecrets secrets push
@@ -39,8 +40,34 @@ SENDGRID_KEY
 
 Store or update a secret. The value is encrypted client-side before being sent to the server.
 
+Two forms:
+
 ```bash
+# Batch form. Values are command-line arguments, so they land in shell history
+# and process listings.
 agentsecrets secrets set STRIPE_KEY=sk_live_51H... DATABASE_URL=postgresql://user:pass@host:5432/db
+
+# Prompt form. You type each value at a visible prompt. Nothing reaches shell
+# history, argv, or the process list.
+agentsecrets secrets set STRIPE_KEY DATABASE_URL
+```
+
+Value sources for the prompt form:
+
+| Source | Value comes from | Notes |
+|---|---|---|
+| _(default)_ | a visible terminal prompt | shown as you type; not written to history |
+| `--stdin` | stdin | one key: the whole input; no keys: `KEY=VALUE` lines |
+| `--generate` | minted in-process | never displayed; `--length` sets bytes (default 32) |
+| `--from-command CMD` | the command's stdout | output is never logged |
+| `--extract PATH` | a dot-path inside the command's stdout | for JSON output, for example `data.key` |
+
+Every source reports metadata only: key name, environment, length, and a SHA-256 fingerprint.
+
+`--output json` prints that metadata as one JSON object, for scripts and SDKs:
+
+```json
+{"status":"stored","secrets":[{"key_name":"STRIPE_KEY","environment":"development","length":43,"fingerprint":"9f2b1c0d4e5a"}]}
 ```
 
 **What happens:**

@@ -221,7 +221,11 @@ agentsecrets project delete NAME
 
 ### Secrets
 ```bash
-agentsecrets secrets set KEY=value
+agentsecrets secrets set KEY=value          # value on argv (visible in history)
+agentsecrets secrets set KEY                # value typed at a prompt; not in history
+agentsecrets secrets set KEY --generate     # minted in-process, never shown
+agentsecrets secrets set KEY --from-command "provider mint-key" --extract data.key
+agentsecrets secrets set KEY --stdin        # value piped in
 agentsecrets secrets list [--project NAME]
 agentsecrets secrets push
 agentsecrets secrets pull
@@ -308,7 +312,9 @@ go test ./pkg/proxy/...
 
 ### MCP (Claude Desktop + Cursor)
 
-AgentSecrets runs as an MCP server exposing `api_call` and `list_secrets` tools. Config auto-written to `~/.cursor/mcp.json` and `~/Library/Application Support/Claude/claude_desktop_config.json` by `agentsecrets mcp install`.
+AgentSecrets runs as an MCP server exposing `api_call`, `secret_store`, `list_secrets`, and management tools. Config auto-written to `~/.cursor/mcp.json` and `~/Library/Application Support/Claude/claude_desktop_config.json` by `agentsecrets mcp install`.
+
+Never require a secret value as a tool parameter or a CLI argument. To create one, use `secret_store` (source `generate`, `command`, or `http`). To capture a value a call mints, use `api_call` with `capture`. Both return metadata only: key name, environment, length, and fingerprint.
 
 ### OpenClaw Exec Provider
 
