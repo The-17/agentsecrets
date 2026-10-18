@@ -82,10 +82,9 @@ func Execute() error {
 	telemetry.ResolveEnvironmentFunc = config.ResolveEnvironment
 
 	// Machine-facing and metadata-only invocations (--version, --help, shell
-	// completion, `mcp serve`, `exec`) skip the interactive preamble: no update
-	// banner, no per-command telemetry record, and no telemetry sync. These run
-	// on hot or non-interactive paths where a network round-trip and a stdout
-	// banner are unwanted.
+	// completion, `mcp`, `exec`) skip the interactive preamble: no update
+	// banner and no telemetry sync. These run on hot or non-interactive paths
+	// where a network round-trip and a stdout banner are unwanted.
 	if !skipPreamble() {
 		// Run update check. It's efficient (24h interval) and has a short timeout.
 		if res, _ := config.CheckForUpdates(Version); res != nil && res.NewVersionAvailable {
@@ -96,12 +95,11 @@ func Execute() error {
 			fmt.Println()
 		}
 
-		// Record telemetry for the executed command
-		cmdName := "root"
-		if len(os.Args) > 1 {
-			cmdName = os.Args[1]
-		}
-		telemetry.RecordCommand(cmdName)
+		// Record telemetry for the executed command. Resolve the canonical
+		// command path, not just the first token: `secrets pull`, `workspace
+		// switch`, and `agent token issue` must land in their action bucket,
+		// not in `<group>.general`. See resolveCommandName.
+		telemetry.RecordCommand(resolveCommandName(os.Args[1:]))
 
 		// Sync telemetry in background if 24 hours have passed. Deferred so it runs
 		// after the command completes — including on the error paths below, which
@@ -110,6 +108,13 @@ func Execute() error {
 		// skipped the preamble never built the API client, so this path doesn't
 		// force construction either.
 		defer telemetry.SyncIfDue(app.API(), Version)
+	} else if countsUsageWithoutPreamble() {
+		// `exec` and `mcp` are the AI execution paths and the public metrics
+		// read command_usage.exec. They still skip the update check and the
+		// network sync, but count locally and persist at exit. Without this they
+		// were never measured at all.
+		telemetry.RecordCommand(resolveCommandName(os.Args[1:]))
+		defer func() { _ = telemetry.Flush() }()
 	}
 
 	if err := rootCmd.Execute(); err != nil {
@@ -144,6 +149,45 @@ func skipPreamble() bool {
 		return true
 	}
 	return false
+}
+
+// countsUsageWithoutPreamble reports whether a preamble-skipping invocation is
+// still real CLI usage that must be counted. `exec` and `mcp` are the AI
+// execution paths; help, completion, and version flags are not usage.
+func countsUsageWithoutPreamble() bool {
+	if len(os.Args) < 2 {
+		return false
+	}
+	switch os.Args[1] {
+	case "mcp", "exec":
+		return true
+	}
+	return false
+}
+
+// resolveCommandName returns the canonical command path being run ("secrets
+// pull", "agent token issue", "status"). Recording only os.Args[1] collapsed
+// every noun-group invocation into "<group>.general", while the same action
+// reached through a shortcut ("pull-secrets") landed in "<group>.pull" — one
+// operation, two buckets, and the action breakdown was empty for the canonical
+// tree. Cobra resolves aliases and strips flags, so Find yields the real path
+// before Execute parses anything.
+//
+// An unknown head (a typo) or a bare root invocation falls back to the first
+// non-flag token so typos still reach the typos bucket instead of vanishing
+// into "root".
+func resolveCommandName(args []string) string {
+	if cmd, _, err := rootCmd.Find(args); err == nil && cmd != nil && cmd != rootCmd {
+		if name := strings.TrimPrefix(cmd.CommandPath(), rootCmd.Name()+" "); name != "" {
+			return name
+		}
+	}
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return "root"
 }
 
 func init() {
