@@ -79,8 +79,18 @@ release:
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
-  # The full release note lives in the docs site. Keep this page a pointer to it
-  # plus GoReleaser's generated commit list, so the prose has one source of
-  # truth and does not drift between the two.
+  # The full release note lives in the docs site; this body is a summary plus a
+  # pointer, followed by GoReleaser's generated commit list.
   header: |
-    **Full release notes for v{{ .Version }}:** https://agentsecrets.tech/docs/changelog/v3-x
+    ## Fixed in v{{ .Version }}
+
+    Two bugs blocked any API that needs a lowercase JSON field or a Content-Type.
+
+    - **Injection targets are no longer rewritten.** `--query`, `--body-field`, `--form-field` and `--header` put the target in a proxy control header name, which Go canonicalises on both sides of the wire, so `channel` arrived as `Channel` and `x-request-id` as `X.Request.Id`. Targets now travel in the header value (`X-AS-Inject-Body: channel=SLACK_CHANNEL_ID`) and are repeatable.
+    - **JSON bodies get a Content-Type.** A plain `--body` went upstream untyped. It now defaults to `application/json`, and `--set-header Name=Value` sets any plain header explicitly.
+
+    The legacy header-name form still parses, so existing scripts keep working. After upgrading, restart a running proxy with `agentsecrets proxy restart`.
+
+    **Full release notes:** https://docs.agentsecrets.tech/changelog/v3-x
+
+    ---
