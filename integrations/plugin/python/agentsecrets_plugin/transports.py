@@ -9,6 +9,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _package_version
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .env import build_child_env
@@ -24,6 +26,22 @@ from .errors import (
 from .types import CallRequest, CallResult, parse_injections
 
 _TOKEN_RE = re.compile(r"\bagt_[A-Za-z0-9._-]{8,}\b")
+
+
+def _user_agent() -> str:
+    """Identify the client so Cloudflare's browser-integrity check accepts us.
+
+    The stdlib default (``Python-urllib/x.y``) gets HTTP 403 "error code: 1010".
+    Track the installed distribution so the header cannot drift from the release.
+    """
+    try:
+        version = _package_version("agentsecrets-plugin")
+    except PackageNotFoundError:
+        version = "0.0.0"
+    return f"agentsecrets-plugin/{version}"
+
+
+_USER_AGENT = _user_agent()
 
 
 def _sanitize(text: str, token: Optional[str] = None) -> str:
@@ -201,6 +219,7 @@ class CloudResolverTransport:
             headers={
                 "Authorization": f"Bearer {self._token}",
                 "Content-Type": "application/json",
+                "User-Agent": _USER_AGENT,
             },
         )
         try:
