@@ -39,6 +39,7 @@ Thumbs.db
 
 # Config files (local only)
 .agentsecrets/
+.agent/rules.md
 config.json
 
 # Build artifacts
@@ -46,6 +47,7 @@ dist/
 build/
 /bin/
 integrations/mcp/dist-tests/
+integrations/plugin/typescript/dist-tests/
 *.egg-info/
 node_modules/
 .npm/

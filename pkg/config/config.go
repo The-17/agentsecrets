@@ -38,10 +38,37 @@ var (
 
 	cachedWorkspaceKeysMu sync.RWMutex
 	cachedWorkspaceKeys   = make(map[string][]byte)
+
+	// projectDirOverride pins project resolution to an explicit directory
+	// (mcp serve --project-dir, or AGENTSECRETS_PROJECT_DIR). MCP servers are
+	// launched by AI clients from arbitrary working directories, so cwd-walk
+	// resolution cannot find the project. Flag beats env beats cwd walk.
+	projectDirOverrideMu sync.RWMutex
+	projectDirOverride   string
 )
 
+// ProjectDirEnv is read by GetProjectRoot when no flag override is set.
+const ProjectDirEnv = "AGENTSECRETS_PROJECT_DIR"
+
+// SetProjectDirOverride pins project resolution to dir (must contain
+// .agentsecrets/project.json). Used by `mcp serve --project-dir`.
+func SetProjectDirOverride(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("invalid project directory: %w", err)
+	}
+	marker := filepath.Join(abs, ".agentsecrets", "project.json")
+	if fi, err := os.Stat(marker); err != nil || fi.IsDir() {
+		return fmt.Errorf("not an AgentSecrets project directory (no .agentsecrets/project.json under %s)", abs)
+	}
+	projectDirOverrideMu.Lock()
+	projectDirOverride = abs
+	projectDirOverrideMu.Unlock()
+	return nil
+}
+
 // DefaultServerURL is the default AgentSecrets Server endpoint.
-const DefaultServerURL = "https://secrets-api-orpin.vercel.app/api"
+const DefaultServerURL = "https://api.agentsecrets.tech/api"
 
 // GlobalConfig represents ~/.agentsecrets/config.json
 type GlobalConfig struct {
@@ -451,6 +478,25 @@ func SaveTokens(tokens *TokenConfig) error {
 // '.agentsecrets/project.json'.
 // If none is found before reaching the filesystem root, it returns an empty string.
 func GetProjectRoot() (string, error) {
+	// 1. Explicit flag override (mcp serve --project-dir).
+	projectDirOverrideMu.RLock()
+	override := projectDirOverride
+	projectDirOverrideMu.RUnlock()
+	if override != "" {
+		return override, nil
+	}
+	// 2. Environment (MCP server entries written by `mcp install`).
+	if envDir := strings.TrimSpace(os.Getenv(ProjectDirEnv)); envDir != "" {
+		abs, err := filepath.Abs(envDir)
+		if err != nil {
+			return "", fmt.Errorf("invalid %s: %w", ProjectDirEnv, err)
+		}
+		if fi, err := os.Stat(filepath.Join(abs, ".agentsecrets", "project.json")); err != nil || fi.IsDir() {
+			return "", fmt.Errorf("%s does not point at an AgentSecrets project (%s)", ProjectDirEnv, abs)
+		}
+		return abs, nil
+	}
+	// 3. Cwd walk (interactive CLI use).
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -616,6 +662,21 @@ func SetSelectedWorkspaceID(id string) error {
 	return SaveGlobalConfig(c)
 }
 
+// ResolveProjectContext returns the project and workspace IDs for headless
+// operation (MCP servers launched by AI clients from arbitrary directories).
+// Order: explicit project file (cwd walk, --project-dir, or
+// AGENTSECRETS_PROJECT_DIR) first; globally selected IDs as fallback.
+// Returns empty strings when nothing is known — callers decide whether that
+// is fatal (key reads) or merely unscoped (log filters, status display).
+func ResolveProjectContext() (projectID, workspaceID string) {
+	if pc, err := LoadProjectConfig(); err == nil && pc != nil {
+		if pc.ProjectID != "" {
+			return pc.ProjectID, pc.WorkspaceID
+		}
+	}
+	return GetSelectedProjectID(), GetSelectedWorkspaceID()
+}
+
 // GetSelectedProjectID returns the globally selected project ID.
 func GetSelectedProjectID() string {
 	config, err := LoadGlobalConfig()
@@ -734,11 +795,11 @@ func GetWorkspaceKey(workspaceID string) ([]byte, error) {
 
 // GetProjectWorkspaceKey returns the workspace key for the current project directory.
 func GetProjectWorkspaceKey() ([]byte, error) {
-	p, err := LoadProjectConfig()
-	if err != nil || p.WorkspaceID == "" {
+	_, workspaceID := ResolveProjectContext()
+	if workspaceID == "" {
 		return nil, fmt.Errorf("no project configured in current directory")
 	}
-	return GetWorkspaceKey(p.WorkspaceID)
+	return GetWorkspaceKey(workspaceID)
 }
 
 // IsAuthenticated checks if the user has a valid session (token + email present).

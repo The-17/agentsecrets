@@ -246,8 +246,8 @@ func (s *Server) handleListKeys(ctx context.Context, req mcp.CallToolRequest) (*
 	activeEnv := config.ResolveEnvironment()
 	envs := config.ValidEnvironments
 
-	project, err := config.LoadProjectConfig()
-	if err != nil || project == nil || project.ProjectID == "" {
+	projectID, _ := config.ResolveProjectContext()
+	if projectID == "" {
 		return mcp.NewToolResultError("no project configured in current directory"), nil
 	}
 
@@ -270,7 +270,7 @@ func (s *Server) handleListKeys(ctx context.Context, req mcp.CallToolRequest) (*
 				}
 			}
 		} else {
-			keyNames, _ = keyring.ListProjectKeyNames(project.ProjectID, env)
+			keyNames, _ = keyring.ListProjectKeyNames(projectID, env)
 		}
 		keyCount[env] = len(keyNames)
 		for _, k := range keyNames {
@@ -526,7 +526,9 @@ func (s *Server) handleGetStatus(ctx context.Context, req mcp.CallToolRequest) (
 
 	activeEnv, envSource := config.ResolveEnvironmentWithSource()
 
-	// --- Project ---
+	// --- Project --- (full detail from the project file when launched in a
+	// repo; globally-selected IDs otherwise, so headless MCP servers still
+	// report which project they serve)
 	projectData := map[string]interface{}{}
 	if pc != nil && pc.ProjectID != "" {
 		projectData["id"] = pc.ProjectID
@@ -534,6 +536,9 @@ func (s *Server) handleGetStatus(ctx context.Context, req mcp.CallToolRequest) (
 		projectData["workspace_id"] = pc.WorkspaceID
 		projectData["workspace_name"] = pc.WorkspaceName
 		projectData["environment"] = pc.Environment
+	} else if projectID, workspaceID := config.ResolveProjectContext(); projectID != "" {
+		projectData["id"] = projectID
+		projectData["workspace_id"] = workspaceID
 	}
 
 	// --- Secrets Sync (matches CLI DiffCached) ---
@@ -602,6 +607,8 @@ func (s *Server) handleGetEnvironment(ctx context.Context, req mcp.CallToolReque
 			"id":   pc.ProjectID,
 			"name": pc.ProjectName,
 		}
+	} else if projectID, _ := config.ResolveProjectContext(); projectID != "" {
+		projectData = map[string]interface{}{"id": projectID}
 	}
 
 	return jsonResult(map[string]interface{}{
@@ -748,11 +755,7 @@ func (s *Server) handleGetProxyLogs(ctx context.Context, req mcp.CallToolRequest
 	}
 	defer logSvc.Close()
 
-	pc, _ := config.LoadProjectConfig()
-	var projectID string
-	if pc != nil {
-		projectID = pc.ProjectID
-	}
+	projectID, _ := config.ResolveProjectContext()
 
 	events, err := logSvc.QueryLocal(log.Filter{
 		Credential: keyName,
@@ -785,11 +788,7 @@ func (s *Server) handleGetBlockedRequests(ctx context.Context, req mcp.CallToolR
 	}
 	defer logSvc.Close()
 
-	pc, _ := config.LoadProjectConfig()
-	var projectID string
-	if pc != nil {
-		projectID = pc.ProjectID
-	}
+	projectID, _ := config.ResolveProjectContext()
 
 	events, err := logSvc.QueryLocal(log.Filter{
 		Blocked:   true,
@@ -820,11 +819,7 @@ func (s *Server) handleGetRedactionEvents(ctx context.Context, req mcp.CallToolR
 	}
 	defer logSvc.Close()
 
-	pc, _ := config.LoadProjectConfig()
-	var projectID string
-	if pc != nil {
-		projectID = pc.ProjectID
-	}
+	projectID, _ := config.ResolveProjectContext()
 
 	events, err := logSvc.QueryLocal(log.Filter{
 		Redacted:  true,
@@ -845,11 +840,7 @@ func (s *Server) handleGetAuditSummary(ctx context.Context, req mcp.CallToolRequ
 	}
 	defer logSvc.Close()
 
-	pc, _ := config.LoadProjectConfig()
-	var projectID string
-	if pc != nil {
-		projectID = pc.ProjectID
-	}
+	projectID, _ := config.ResolveProjectContext()
 
 	events, err := logSvc.QueryLocal(log.Filter{
 		Limit:     1000,
@@ -932,13 +923,13 @@ func (s *Server) handleGetAgentIdentity(ctx context.Context, req mcp.CallToolReq
 }
 
 func (s *Server) handleGetAllowlist(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pc, err := config.LoadProjectConfig()
-	if err != nil || pc.WorkspaceID == "" {
+	_, workspaceID := config.ResolveProjectContext()
+	if workspaceID == "" {
 		return mcp.NewToolResultError("no workspace configured — run 'agentsecrets init' first"), nil
 	}
 
 	wsSvc := s.getWorkspaceService()
-	domainsResp, err := wsSvc.ListAllowlist(pc.WorkspaceID)
+	domainsResp, err := wsSvc.ListAllowlist(workspaceID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to fetch allowlist: %v", err)), nil
 	}
@@ -949,7 +940,7 @@ func (s *Server) handleGetAllowlist(ctx context.Context, req mcp.CallToolRequest
 	}
 
 	return jsonResult(map[string]interface{}{
-		"workspace_id": pc.WorkspaceID,
+		"workspace_id": workspaceID,
 		"domains":      domainNames,
 		"count":        len(domainNames),
 	})
@@ -962,13 +953,13 @@ func (s *Server) handleCheckDomain(ctx context.Context, req mcp.CallToolRequest)
 		return mcp.NewToolResultError("missing required parameter: domain"), nil
 	}
 
-	pc, err := config.LoadProjectConfig()
-	if err != nil || pc.WorkspaceID == "" {
+	_, workspaceID := config.ResolveProjectContext()
+	if workspaceID == "" {
 		return mcp.NewToolResultError("no workspace configured — run 'agentsecrets init' first"), nil
 	}
 
 	wsSvc := s.getWorkspaceService()
-	domainsResp, err := wsSvc.ListAllowlist(pc.WorkspaceID)
+	domainsResp, err := wsSvc.ListAllowlist(workspaceID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to fetch allowlist: %v", err)), nil
 	}
@@ -997,13 +988,13 @@ func (s *Server) handleCheckDomain(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (s *Server) handleListAgentTokens(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pc, err := config.LoadProjectConfig()
-	if err != nil || pc.WorkspaceID == "" {
+	_, workspaceID := config.ResolveProjectContext()
+	if workspaceID == "" {
 		return mcp.NewToolResultError("no workspace configured — run 'agentsecrets init' first"), nil
 	}
 
 	svc := agents.NewService(s.getAPIClient())
-	agentList, err := svc.List(pc.WorkspaceID, "")
+	agentList, err := svc.List(workspaceID, "")
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list agents: %v", err)), nil
 	}
@@ -1015,7 +1006,7 @@ func (s *Server) handleListAgentTokens(ctx context.Context, req mcp.CallToolRequ
 
 	details := []agentDetails{}
 	for _, ag := range agentList {
-		toks, err := svc.TokenList(pc.WorkspaceID, ag.ID)
+		toks, err := svc.TokenList(workspaceID, ag.ID)
 		if err != nil {
 			toks = []agents.Token{}
 		}

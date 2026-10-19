@@ -120,3 +120,13 @@ To skip the prompt and force reinitialize non-interactively:
 ```bash
 agentsecrets init --force
 ```
+
+## Troubleshooting & Diagnostic Health
+
+If initialization encounters keychain-auth registration failures or socket connection issues, run:
+
+```bash
+agentsecrets doctor
+```
+
+`agentsecrets doctor` automatically verifies daemon status, repairs binary authorization, restarts the background service, and confirms live connectivity without manual intervention.

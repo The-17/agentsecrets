@@ -119,9 +119,9 @@ If an API call returns 403 due to the domain allowlist, ask the user to authoriz
 If you need to know a command, run `agentsecrets --help`.
 To search the official AgentSecrets documentation, use the API below to get a list of matching topics and snippets. You can then `curl` the specific URL from the results to read the full page:
 ```bash
-curl -G "https://agentsecrets-website.vercel.app/api/search" --data-urlencode "q=your query here"
+curl -G "https://agentsecrets.tech/api/search" --data-urlencode "q=your query here"
 ```
 If you need to read the full, complete documentation in a single Markdown file, curl:
 ```bash
-curl -s "https://agentsecrets-website.vercel.app/llms-full.txt"
+curl -s "https://agentsecrets.tech/llms-full.txt"
 ```

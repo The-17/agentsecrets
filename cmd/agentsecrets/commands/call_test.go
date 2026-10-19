@@ -113,12 +113,12 @@ func TestEmitCallJSONSuccess(t *testing.T) {
 // TestEmitCallJSONError returns silent exit on >=400.
 func TestEmitCallJSONError(t *testing.T) {
 	out := callResultJSON{
-		Status:   502,
-		Headers:  map[string][]string{},
-		Body:     "Bad Gateway",
-		Redacted: false,
+		Status:     502,
+		Headers:    map[string][]string{},
+		Body:       "Bad Gateway",
+		Redacted:   false,
 		DurationMs: 0,
-		Error:    "upstream",
+		Error:      "upstream",
 	}
 	err := emitCallJSON(out)
 	if err == nil {
@@ -141,12 +141,12 @@ func TestEmitCallJSONError(t *testing.T) {
 // TestEmitCallJSONErrorZeroStatus returns silent exit on error string.
 func TestEmitCallJSONErrorZeroStatus(t *testing.T) {
 	out := callResultJSON{
-		Status:   0,
-		Headers:  map[string][]string{},
-		Body:     "",
-		Redacted: false,
+		Status:     0,
+		Headers:    map[string][]string{},
+		Body:       "",
+		Redacted:   false,
 		DurationMs: 0,
-		Error:    "something went wrong",
+		Error:      "something went wrong",
 	}
 	err := emitCallJSON(out)
 	if err == nil {
@@ -165,3 +165,28 @@ func TestEmitCallJSONErrorZeroStatus(t *testing.T) {
 		t.Errorf("err = %v, want *ExitError", err)
 	}
 }
+
+func TestCallCmdHasRunE(t *testing.T) {
+	if callCmd.RunE == nil {
+		t.Fatal("callCmd.RunE is nil! The command will dump help text instead of executing.")
+	}
+	if !callCmd.SilenceUsage {
+		t.Error("callCmd.SilenceUsage should be true to prevent dumping usage on request failure")
+	}
+}
+
+func TestCallCmdValidation(t *testing.T) {
+	callBearer = ""
+	callBasic = ""
+	callHeaders = nil
+	callQueries = nil
+	callBodyFields = nil
+	callFormFields = nil
+
+	err := runCall(callCmd, nil)
+	if err == nil {
+		t.Fatal("expected error when running call without injection flags, got nil")
+	}
+}
+
+

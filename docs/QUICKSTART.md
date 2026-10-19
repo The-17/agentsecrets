@@ -120,7 +120,7 @@ This requires your password and takes effect immediately.
 agentsecrets mcp install
 ```
 
-This auto-configures MCP for Claude Desktop and Cursor. It points the client at the published bridge (`npx -y @the-17/agentsecrets-mcp@latest`), so no config edit is needed on a new release. Restart your AI tool. You'll see the AgentSecrets tools, including `api_call` and `secret_store`.
+This auto-configures MCP for Claude Desktop and Cursor. Restart your AI tool. You'll see two new tools: `api_call` and `list_secrets`.
 
 ### HTTP Proxy (any agent or framework)
 
@@ -175,6 +175,18 @@ agentsecrets proxy logs --last 5
 TIME      RESULT  METHOD  URL                              KEY          AUTH    STATUS  REASON  DURATION
 14:23:01  * OK    GET     api.stripe.com/v1/balance        STRIPE_KEY   bearer  200     -       245ms
 ```
+
+---
+
+## Troubleshooting
+
+Something not working or hit a daemon authorization denial? Run:
+
+```bash
+agentsecrets doctor
+```
+
+The doctor inspects the full local trust chain, repairs authorization mismatches, and re-verifies your installation.
 
 ---
 

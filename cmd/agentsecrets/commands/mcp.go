@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	agentmcp "github.com/The-17/agentsecrets/pkg/mcp"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -35,9 +36,15 @@ var mcpServeCmd = &cobra.Command{
 	AI clients like Claude Desktop, Cursor, or Windsurf.
 
 	Instead of configuring this manually, run:
-	agentsecrets mcp install`,
+	agentsecrets mcp install
+
+	AI clients start the server from their own working directory, which is
+	usually NOT your repo — so by default the server cannot find your project.
+	Pass --project-dir (or set AGENTSECRETS_PROJECT_DIR) to pin it:`,
 	RunE: runMCPServe,
 }
+
+var mcpProjectDir string
 
 var mcpInstallCmd = &cobra.Command{
 	Use:   "install",
@@ -64,12 +71,20 @@ var mcpInstallCmd = &cobra.Command{
 }
 
 func init() {
+	mcpServeCmd.Flags().StringVar(&mcpProjectDir, "project-dir", "", "Project directory holding .agentsecrets/project.json (AI clients launch from their own cwd; without this the server cannot find your project)")
 	mcpCmd.AddCommand(mcpServeCmd)
 	mcpCmd.AddCommand(mcpInstallCmd)
 	mcpInstallCmd.Flags().Bool("local", false, "Run this binary's `mcp serve` instead of the published npx bridge")
 }
 
 func runMCPServe(cmd *cobra.Command, args []string) error {
+	// Pin project resolution before anything reads config: the client's cwd
+	// is not our repo. Flag beats AGENTSECRETS_PROJECT_DIR beats cwd walk.
+	if mcpProjectDir != "" {
+		if err := config.SetProjectDirOverride(mcpProjectDir); err != nil {
+			return err
+		}
+	}
 	// Connect to the keychain-auth daemon to resolve local OS keychain secrets
 	if err := keychainauth.Init(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: keychain-auth initialization failed: %v\n", err)
@@ -122,6 +137,9 @@ func runMCPInstall(cmd *cobra.Command, args []string) error {
 	entry, err := mcpServerEntry(useLocal)
 	if err != nil {
 		return err
+	}
+	if projRoot, err := config.GetProjectRoot(); err == nil && projRoot != "" {
+		entry["env"] = map[string]string{config.ProjectDirEnv: projRoot}
 	}
 
 	installed := 0

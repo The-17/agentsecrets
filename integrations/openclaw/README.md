@@ -78,7 +78,7 @@ Values are injected into the child process at spawn time. Nothing is written to 
 
 ## Links
 
-- [Official Website](https://agentsecrets-website.vercel.app)
+- [Official Website](https://agentsecrets.tech)
 - [Engineering Blog](https://engineering.theseventeen.co/series/building-agentsecrets)
 - [GitHub](https://github.com/The-17/agentsecrets)
 - [Security Docs](https://github.com/The-17/agentsecrets/blob/main/docs/PROXY.md)

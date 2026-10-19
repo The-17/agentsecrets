@@ -102,10 +102,10 @@ func Info(msg string) {
 
 // ErrorDetails defines structured error help text
 type ErrorDetails struct {
-	Title        string
-	Description  string
-	Suggestions  []string
-	QuickAction  string
+	Title       string
+	Description string
+	Suggestions []string
+	QuickAction string
 }
 
 // ErrorRegistry maps structured ErrorCodes to user remedies
@@ -214,11 +214,11 @@ var ErrorRegistry = map[errors.ErrorCode]ErrorDetails{
 	},
 	errors.ErrBinaryUnapproved: {
 		Title:       "Binary Unapproved",
-		Description: "The calling binary is not approved to access your keychain secrets.",
+		Description: "keychain-auth has not authorized this AgentSecrets binary to read your secrets. This normally happens right after an upgrade, when the binary's signature changes.",
 		Suggestions: []string{
-			"Run 'agentsecrets' in your terminal to trigger the auto-approval setup flow.",
-			"Verify the calling process name matches your approved shell / IDE binary path.",
+			"Run 'agentsecrets doctor' to re-authorize this binary and restart the daemon automatically.",
 		},
+		QuickAction: "agentsecrets doctor",
 	},
 	errors.ErrLogNotFound: {
 		Title:       "Log Entry Not Found",

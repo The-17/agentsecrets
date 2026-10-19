@@ -28,6 +28,78 @@ function getPlatformInfo() {
   return { os_name, arch_name };
 }
 
+function compareVersions(v1, v2) {
+  const p1 = (v1 || '').replace(/^v/, '').split('.').map(Number);
+  const p2 = (v2 || '').replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const n1 = p1[i] || 0;
+    const n2 = p2[i] || 0;
+    if (n1 < n2) return -1;
+    if (n1 > n2) return 1;
+  }
+  return 0;
+}
+
+function checkUpdateNotice() {
+  try {
+    const cacheFile = path.join(os.homedir(), '.agentsecrets', 'npm_update_cache.json');
+    let cache = null;
+    if (fs.existsSync(cacheFile)) {
+      try {
+        cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      } catch (_) {}
+    }
+
+    const now = Date.now();
+    // Notify on stderr if a newer version is detected
+    if (cache && cache.latest_version && compareVersions(cache.latest_version, VERSION) > 0) {
+      process.stderr.write(`\n\x1b[33mUpdate available:\x1b[0m ${VERSION} -> \x1b[32m${cache.latest_version}\x1b[0m\nRun: \x1b[36mnpm install -g @the-17/agentsecrets@latest\x1b[0m to update\n\n`);
+    }
+
+    // Refresh cache once per 24 hours in the background (non-blocking)
+    if (!cache || !cache.last_checked || now - cache.last_checked > 24 * 60 * 60 * 1000) {
+      const req = https.get({
+        hostname: 'api.github.com',
+        path: `/repos/${GITHUB_REPO}/releases/latest`,
+        headers: { 'User-Agent': 'agentsecrets-npm' },
+        timeout: 3000
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.tag_name) {
+              const latest = json.tag_name.replace(/^v/, '');
+              fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+              fs.writeFileSync(cacheFile, JSON.stringify({
+                last_checked: now,
+                latest_version: latest
+              }));
+            }
+          } catch (_) {}
+        });
+      });
+      req.on('error', () => {});
+      req.on('timeout', () => req.destroy());
+    }
+  } catch (_) {}
+}
+
+function cleanupOldBinaries(binDir, currentBinaryPath) {
+  try {
+    if (!fs.existsSync(binDir)) return;
+    const files = fs.readdirSync(binDir);
+    const prefix = os.platform() === 'win32' ? 'agentsecrets.exe_' : 'agentsecrets_';
+    for (const f of files) {
+      const fullPath = path.join(binDir, f);
+      if (f.startsWith(prefix) && fullPath !== currentBinaryPath) {
+        try { fs.unlinkSync(fullPath); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
 async function downloadBinary(url, dest, isZip = false) {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
@@ -51,7 +123,6 @@ async function downloadBinary(url, dest, isZip = false) {
           fileStream.close(() => {
             const { execSync } = require('child_process');
             try {
-              // Use ErrorActionPreference = Stop so PowerShell errors trigger execSync failure
               execSync('powershell.exe -NoProfile -Command "$ErrorActionPreference = \'Stop\'; Expand-Archive -Path \'' + zipPath + '\' -DestinationPath \'' + tempDir + '\' -Force"', { stdio: 'pipe' });
               const binaryName = 'agentsecrets.exe';
               const src = path.join(tempDir, binaryName);
@@ -81,17 +152,14 @@ async function downloadBinary(url, dest, isZip = false) {
             fs.renameSync(src, dest);
             fs.chmodSync(dest, 0o755);
 
-            // Pre-register with keychain-auth if available. This eliminates
-            // the one-time setup spinner on the user's first command.
+            // Pre-register with keychain-auth if available
             try {
               const { execFileSync } = require('child_process');
               execFileSync('keychain-auth', ['register', dest], {
                 timeout: 5000,
                 stdio: 'ignore',
               });
-            } catch (_) {
-              // Silent — AutoSetup handles registration at runtime if needed
-            }
+            } catch (_) {}
 
             resolve();
           } else {
@@ -103,52 +171,19 @@ async function downloadBinary(url, dest, isZip = false) {
   });
 }
 
-async function getLatestVersion() {
-  return new Promise((resolve, reject) => {
-    https.get({
-      hostname: 'api.github.com',
-      path: `/repos/${GITHUB_REPO}/releases/latest`,
-      headers: { 'User-Agent': 'agentsecrets-npm' }
-    }, (res) => {
-      let data = '';
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          if (json.tag_name) {
-            resolve(json.tag_name.replace(/^v/, ''));
-          } else {
-            reject(new Error('No tag_name in latest release'));
-          }
-        } catch (e) {
-          reject(e);
-        }
-      });
-    }).on('error', reject);
-  });
-}
-
 async function getBinaryPath() {
   const { os_name, arch_name } = getPlatformInfo();
   const binDir = path.join(os.homedir(), '.agentsecrets', 'bin');
   const binaryName = os_name === 'windows' ? 'agentsecrets.exe' : 'agentsecrets';
   
-  // Try to get the latest version from GitHub
-  let version = VERSION;
-  try {
-    version = await getLatestVersion();
-    console.log(`Latest AgentSecrets version: ${version}`);
-  } catch (err) {
-    console.error(`Failed to fetch latest version from GitHub: ${err.message}. Falling back to package version ${VERSION}.`);
-  }
-
+  const version = VERSION;
   const binaryPath = path.join(binDir, `${binaryName}_${version}`);
 
   if (fs.existsSync(binaryPath)) {
     return binaryPath;
   }
 
-  console.error(`AgentSecrets binary not found. Downloading v${version} for ${os_name}/${arch_name}...`);
+  process.stderr.write(`AgentSecrets binary not found. Downloading v${version} for ${os_name}/${arch_name}...\n`);
 
   const ext = os_name === 'windows' ? 'zip' : 'tar.gz';
   const assetName = `agentsecrets_${version}_${os_name}_${arch_name}.${ext}`;
@@ -156,6 +191,7 @@ async function getBinaryPath() {
 
   try {
     await downloadBinary(url, binaryPath);
+    cleanupOldBinaries(binDir, binaryPath);
     return binaryPath;
   } catch (err) {
     throw new Error(`Failed to download AgentSecrets binary: ${err.message}\nURL: ${url}`);
@@ -164,6 +200,7 @@ async function getBinaryPath() {
 
 async function main() {
   try {
+    checkUpdateNotice();
     const binaryPath = await getBinaryPath();
     const args = process.argv.slice(2);
     const proc = spawn(binaryPath, args, { stdio: 'inherit' });

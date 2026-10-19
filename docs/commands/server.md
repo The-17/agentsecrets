@@ -15,7 +15,7 @@ agentsecrets server reset [--project]
 
 The `server` command group allows you to manage where the AgentSecrets CLI sends API requests.
 
-By default, AgentSecrets communicates with the official default AgentSecrets Server (`https://secrets-api-orpin.vercel.app/api`).
+By default, AgentSecrets communicates with the official default AgentSecrets Server (`https://api.agentsecrets.tech/api`).
 When deploying an open-source self-hosted AgentSecrets server, you can point your local CLI to your custom instance globally or for a specific repository.
 
 ## Subcommands
@@ -33,7 +33,7 @@ Output:
 AgentSecrets Server Target
   ──────────────────────────────
   Target Type:                   AgentSecrets Server (Default)
-  API Endpoint:                  https://secrets-api-orpin.vercel.app/api
+  API Endpoint:                  https://api.agentsecrets.tech/api
   Config Source:                 AgentSecrets Server (default)
 ```
 
@@ -71,7 +71,7 @@ Output:
 Server Connection Status
   ──────────────────────────────
   Server Type:                   AgentSecrets Server (Default)
-  Endpoint:                      https://secrets-api-orpin.vercel.app/api
+  Endpoint:                      https://api.agentsecrets.tech/api
   Config Source:                 AgentSecrets Server (default)
   Status:                        ONLINE
   Latency:                       42ms
@@ -99,4 +99,12 @@ When executing any CLI command, the active server is resolved in the following o
 2. Environment Variable (`AGENTSECRETS_SERVER_URL` or `AGENTSECRETS_API_URL`)
 3. Project Config (`.agentsecrets/project.json`)
 4. Global Config (`~/.agentsecrets/config.json`)
-5. Default Server (`https://secrets-api-orpin.vercel.app/api`)
+5. Default Server (`https://api.agentsecrets.tech/api`)
+
+---
+
+## Official Documentation
+
+For complete server deployment and self-hosting guides, visit:
+👉 **[Server & Self-Hosting Guide](https://docs.agentsecrets.tech/cli/server)**
+👉 **[Self-Hosting Deployment Architecture](https://docs.agentsecrets.tech/api/self-hosting)**

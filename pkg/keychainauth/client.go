@@ -334,7 +334,6 @@ func ListProjectKeyNames(projectID, environment string) ([]string, error) {
 	return keys, nil
 }
 
-
 // SetWorkspaceAllowlist stores the domain allowlist for a workspace.
 func SetWorkspaceAllowlist(workspaceID string, domains []string) error {
 	target := formatAllowlistTarget(workspaceID)
@@ -429,8 +428,33 @@ func GetSecretPolicy(projectID, environment, key string) ([]byte, error) {
 // --- Internal helpers ---
 
 // sendRequest sends a request to the daemon and reads the response.
+//
+// A registration denial (unregistered binary, or a hash that changed because
+// agentsecrets was just upgraded) is repaired transparently and the request is
+// retried once. This is the difference between a user seeing a brief
+// "re-authorizing" notice and a user being handed shell commands to run by hand:
+// the denial surfaces here, at request time, not during Init, so recovery has to
+// live at this seam.
+//
 // The caller must NOT hold sessionMu.
 func sendRequest(req request) (*response, error) {
+	resp, err := sendRequestOnce(req)
+	if err == nil || !isRegistrationDenial(err) {
+		return resp, err
+	}
+
+	if repairErr := tryRegistrationRepair(); repairErr != nil {
+		// Repair was unavailable or failed — surface the original denial, which
+		// carries the actionable reason code.
+		return nil, err
+	}
+	return sendRequestOnce(req)
+}
+
+// sendRequestOnce performs a single request/response exchange, reconnecting once if
+// the connection is half-open. It does not attempt registration repair.
+// The caller must NOT hold sessionMu.
+func sendRequestOnce(req request) (*response, error) {
 	sessionMu.Lock()
 	testMode := testStubMode
 	if testMode {

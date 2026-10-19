@@ -6,7 +6,7 @@ A unified enforcement pipeline that stores, injects, governs, and audits credent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)]() [![Go Version](https://img.shields.io/badge/Go-1.x-00ADD8)]() [![Stars](https://img.shields.io/github/stars/The-17/agentsecrets)]()
 
-**[Website](https://agentsecrets.tech) · [Docs](https://docs.agentsecrets.tech) · [Engineering Publication](https://engineering.theseventeen.co/series/building-agentsecrets)**
+**[Website](https://agentsecrets.tech) · [Docs](https://agentsecrets.tech/docs) · [Engineering Publication](https://engineering.theseventeen.co/series/building-agentsecrets)**
 
 
 ---
@@ -46,7 +46,7 @@ OS keychain → proxy resolves in memory → value injected at transport layer
                                        → nothing to steal, log, or extract
 ```
 
-The agent can't be prompted to reveal a value it never held, and it can't be logged or stolen through a plugin, because it was structurally absent from every place an attack would look. That guarantee is architectural rather than policy-based. Read the full model in the [docs](https://docs.agentsecrets.tech).
+The agent can't be prompted to reveal a value it never held, and it can't be logged or stolen through a plugin, because it was structurally absent from every place an attack would look. That guarantee is architectural rather than policy-based. Read the full model in the [docs](https://agentsecrets.tech/docs).
 
 ## Architecture
 
@@ -57,11 +57,11 @@ AgentSecrets is an extensible host with one pluggable subsystem today:
 | **Credential Infrastructure** | AgentSecrets (Host) | Agent credential theft and lifecycle management, covering six auth injection styles, client-side encryption (X25519, AES-256-GCM, Argon2id), SSRF protection, and response redaction. The server stores ciphertext it structurally cannot decrypt. |
 | **Capability Bounding** | [Keychain-Auth (Subsystem)](https://github.com/The-17/keychain-auth) | Static, long-lived, over-privileged local credentials. OS keychain access is verified against the calling process's cryptographic hash, so only authorized binaries can resolve a credential, even from the same machine. |
 
-On top of that sits agent identity and audit, where every execution is mapped to a cryptographically issued token and logged in a SHA-256 chain with no value field to leak, along with environments and teams, which support instant dev/staging/prod switching and sync secrets client-side via NaCl SealedBox so no plaintext ever touches the wire. Full detail is in the [docs](https://docs.agentsecrets.tech).
+On top of that sits agent identity and audit, where every execution is mapped to a cryptographically issued token and logged in a SHA-256 chain with no value field to leak, along with environments and teams, which support instant dev/staging/prod switching and sync secrets client-side via NaCl SealedBox so no plaintext ever touches the wire. Full detail is in the [docs](https://agentsecrets.tech/docs).
 
 ## Ecosystem
 
-AgentSecrets connects to the tools you already use: MCP servers for Claude Desktop and Cursor, OpenClaw, environment-variable injection for any CLI tool, and an HTTP proxy that works with LangChain, CrewAI, and AutoGen. A Python SDK is available now, with a JS/TS version coming soon, and neither has a `get()` method, since there's no code path that should return a raw value. Full integration guides are in the [Integrations](https://docs.agentsecrets.tech/integrations/claude-desktop).
+AgentSecrets connects to the tools you already use: MCP servers for Claude Desktop and Cursor, OpenClaw, environment-variable injection for any CLI tool, and an HTTP proxy that works with LangChain, CrewAI, and AutoGen. A Python SDK is available now, with a JS/TS version coming soon, and neither has a `get()` method, since there's no code path that should return a raw value. Full integration guides are in the [Integrations](https://agentsecrets.tech/docs/integrations/overview).
 
 ## Installation
 
@@ -79,6 +79,16 @@ pip install agentsecrets-cli
 go install github.com/The-17/agentsecrets/cmd/agentsecrets@v3.0.0
 ```
 
+## Troubleshooting & Self-Healing
+
+If you encounter issues with credentials, binary registration, or the keychain daemon after an upgrade:
+
+```bash
+agentsecrets doctor
+```
+
+`agentsecrets doctor` verifies the local trust chain, checks daemon health, repairs registration mismatches, and re-verifies your installation automatically.
+
 ## Quick Start
 
 ```bash
@@ -86,7 +96,6 @@ agentsecrets init
 agentsecrets project create my-agent
 
 agentsecrets secrets set STRIPE_KEY=sk_live_EXAMPLE...
-agentsecrets secrets set STRIPE_KEY          # or type it at a prompt; not in shell history
 agentsecrets workspace allowlist add api.stripe.com
 
 agentsecrets mcp install        # Claude Desktop + Cursor
@@ -116,13 +125,13 @@ The agent managed the entire workflow, and no credential value appeared at any s
 
 | Topic | What it covers |
 |---|---|
-| [Environments](https://docs.agentsecrets.tech/concepts/environments) & [Team Workspaces](https://docs.agentsecrets.tech/workspaces/overview) | Dev/staging/prod isolation, zero-knowledge team sync, onboarding without sharing plaintext |
-| [Agent Identity](https://docs.agentsecrets.tech/agent-identity/overview) & [Policies](https://docs.agentsecrets.tech/concepts/secret-policies) | Cryptographic agent tokens, per-agent allow/deny lists, secret-level domain and method rules, interactive approval flow |
-| [Auth Injection Styles](https://docs.agentsecrets.tech/proxy/injection-styles) | All six injection modes: bearer, header, query, basic, JSON body, and form field |
-| [Zero-Trust Proxy Pipeline](https://docs.agentsecrets.tech/proxy/overview) | The full request pipeline, including allowlisting, capability checks, SSRF protection, and response redaction |
-| [Encryption Model](https://docs.agentsecrets.tech/security/encryption) | X25519 key exchange, AES-256-GCM, Argon2id, OS keychain storage, and SHA-256 audit chaining |
-| [Build on AgentSecrets](https://docs.agentsecrets.tech/sdk/overview) | Python SDK, zero-knowledge MCP template, and the JS/TS SDK (coming soon) |
-| [Full Command Reference](https://docs.agentsecrets.tech/cli/account) | Every subcommand across account, workspace, project, environment, secrets, proxy, and audit |
+| [Environments](https://agentsecrets.tech/docs/concepts/environments) & [Team Workspaces](https://agentsecrets.tech/docs/workspaces/overview) | Dev/staging/prod isolation, zero-knowledge team sync, onboarding without sharing plaintext |
+| [Agent Identity](https://agentsecrets.tech/docs/concepts/agent-identity) & [Policies](https://agentsecrets.tech/docs/concepts/secret-policies) | Cryptographic agent tokens, per-agent allow/deny lists, secret-level domain and method rules, interactive approval flow |
+| [Auth Injection Styles](https://agentsecrets.tech/docs/proxy/injection-styles) | All six injection modes: bearer, header, query, basic, JSON body, and form field |
+| [Zero-Trust Proxy Pipeline](https://agentsecrets.tech/docs/proxy/overview) | The full request pipeline, including allowlisting, capability checks, SSRF protection, and response redaction |
+| [Encryption Model](https://agentsecrets.tech/docs/security/encryption) | X25519 key exchange, AES-256-GCM, Argon2id, OS keychain storage, and SHA-256 audit chaining |
+| [Build on AgentSecrets](https://agentsecrets.tech/docs/sdk/overview) | Python SDK, zero-knowledge MCP template, and the JS/TS SDK (coming soon) |
+| [Full Command Reference]([https://agentsecrets.tech/docs](https://agentsecrets.tech/docs/cli/account)) | Every subcommand across account, workspace, project, environment, secrets, proxy, and audit |
 
 ## Roadmap · Security · Contributing
 

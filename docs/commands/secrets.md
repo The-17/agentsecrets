@@ -5,13 +5,14 @@
 ## Subcommands
 
 ```
-agentsecrets secrets list
-agentsecrets secrets set <KEY=VALUE> [KEY=VALUE...]
-agentsecrets secrets set <KEY> [KEY...] [--stdin | --generate | --from-command CMD]
-agentsecrets secrets delete <KEY>
-agentsecrets secrets pull [--force]
-agentsecrets secrets push
-agentsecrets secrets diff
+agentsecrets secrets list [--project <name>] [--env <env>]
+agentsecrets secrets get <KEY> [--env <env>]
+agentsecrets secrets set <KEY=value> [KEY=value...] [--env <env>]
+agentsecrets secrets delete <KEY> [--env <env>]
+agentsecrets secrets pull [--force] [--env <env>]
+agentsecrets secrets push [--env <env>]
+agentsecrets secrets diff [--env <env>]
+agentsecrets secrets policy <KEY>
 ```
 
 ---
@@ -40,34 +41,8 @@ SENDGRID_KEY
 
 Store or update a secret. The value is encrypted client-side before being sent to the server.
 
-Two forms:
-
 ```bash
-# Batch form. Values are command-line arguments, so they land in shell history
-# and process listings.
 agentsecrets secrets set STRIPE_KEY=sk_live_51H... DATABASE_URL=postgresql://user:pass@host:5432/db
-
-# Prompt form. You type each value at a visible prompt. Nothing reaches shell
-# history, argv, or the process list.
-agentsecrets secrets set STRIPE_KEY DATABASE_URL
-```
-
-Value sources for the prompt form:
-
-| Source | Value comes from | Notes |
-|---|---|---|
-| _(default)_ | a visible terminal prompt | shown as you type; not written to history |
-| `--stdin` | stdin | one key: the whole input; no keys: `KEY=VALUE` lines |
-| `--generate` | minted in-process | never displayed; `--length` sets bytes (default 32) |
-| `--from-command CMD` | the command's stdout | output is never logged |
-| `--extract PATH` | a dot-path inside the command's stdout | for JSON output, for example `data.key` |
-
-Every source reports metadata only: key name, environment, length, and a SHA-256 fingerprint.
-
-`--output json` prints that metadata as one JSON object, for scripts and SDKs:
-
-```json
-{"status":"stored","secrets":[{"key_name":"STRIPE_KEY","environment":"development","length":43,"fingerprint":"9f2b1c0d4e5a"}]}
 ```
 
 **What happens:**
@@ -185,12 +160,51 @@ Deletes the key from:
 Prompts for confirmation before deleting.
 
 ---
+ 
+## agentsecrets secrets get
+
+Fetch and decrypt a specific secret value from the local OS keychain for debugging.
+
+```bash
+agentsecrets secrets get STRIPE_KEY
+agentsecrets secrets get DATABASE_URL --env staging
+```
+
+---
+
+## agentsecrets secrets policy
+
+Inspect or configure secret-level access policies (domain constraints, allowed HTTP methods, required approvals).
+
+```bash
+agentsecrets secrets policy STRIPE_KEY
+```
+
+---
 
 ## Storage Modes
 
 | Mode | Where `pull` writes | Where `push` reads from |
 |---|---|---|
 | `1` — Keychain | OS keychain | OS keychain |
-| `2` — Standard | `.env` file (plaintext) | `.env` file |
+| `2` — Standard | `.env` file (plaintext, `0600` permissions) | `.env` file |
 
-The storage mode is set during `agentsecrets init` and stored in `.agentsecrets/project.json`. You can check it with `agentsecrets status`.
+The storage mode is set during `agentsecrets init` and stored in `.agentsecrets/project.json`.
+
+---
+
+## Official Documentation
+
+For complete secrets management workflows and policy guides, visit:
+👉 **[Secrets Management Guide](https://docs.agentsecrets.tech/secrets/managing)**
+👉 **[Secret Policies Reference](https://docs.agentsecrets.tech/concepts/secret-policies)**
+
+## Troubleshooting Secret Access
+
+If `secrets pull`, `secrets set`, or `secrets list` fails with `[SEC-403]` (Binary Authorization Denied) or a daemon communication error, run:
+
+```bash
+agentsecrets doctor
+```
+
+The doctor diagnoses local trust chain health and automatically authorizes and activates the current binary.

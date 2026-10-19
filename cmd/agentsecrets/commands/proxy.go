@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -213,51 +212,48 @@ func runProxyStatus(cmd *cobra.Command, args []string) error {
 	} else if !proxy.IsProcessAlive(pid) {
 		ui.StatusRow("Proxy status:", ui.ErrorStyle.Render("not running"))
 		ui.StatusRowDim("Last PID:", fmt.Sprintf("%d (exited)", pid))
-		proxy.RemovePIDFile()
 	} else {
 		// Verify port is actively listening
-		conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
-		if dialErr != nil {
+		_, _, running := proxy.IsProxyRunning()
+		if !running {
 			ui.StatusRow("Proxy status:", ui.ErrorStyle.Render("not running"))
 			ui.StatusRowDim("Last PID:", fmt.Sprintf("%d (port %d unreachable)", pid, port))
-			proxy.RemovePIDFile()
 		} else {
-			conn.Close()
 			ui.StatusRow("Proxy status:", ui.SuccessStyle.Render("running"))
 			ui.StatusRow("PID:", fmt.Sprintf("%d", pid))
 			ui.StatusRow("Port:", fmt.Sprintf("%d", port))
 			ui.StatusRow("Uptime:", formatUptime(startTime))
 
-		// Try to fetch live metrics from /health
-		healthURL := fmt.Sprintf("http://localhost:%d/health", port)
-		client := &http.Client{Timeout: 1 * time.Second}
-		resp, err := client.Get(healthURL)
-		if err == nil {
-			defer resp.Body.Close()
-			var health struct {
-				LastSync     string   `json:"last_sync"`
-				RevokedCount int      `json:"revoked_count"`
-				RevokedIDs   []string `json:"revoked_ids"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&health); err == nil {
-				syncVal := "never"
-				if t, err := time.Parse(time.RFC3339, health.LastSync); err == nil && !t.IsZero() {
-					syncVal = formatUptime(t) + " ago"
+			// Try to fetch live metrics from /health
+			healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
+			client := &http.Client{Timeout: 1 * time.Second}
+			resp, err := client.Get(healthURL)
+			if err == nil {
+				defer resp.Body.Close()
+				var health struct {
+					LastSync     string   `json:"last_sync"`
+					RevokedCount int      `json:"revoked_count"`
+					RevokedIDs   []string `json:"revoked_ids"`
 				}
-				ui.StatusRow("Last sync:", syncVal)
-				if health.RevokedCount > 0 {
-					ui.StatusRow("Revoked IDs:", fmt.Sprintf("%d (%s)", health.RevokedCount, strings.Join(health.RevokedIDs, ", ")))
+				if err := json.NewDecoder(resp.Body).Decode(&health); err == nil {
+					syncVal := "never"
+					if t, err := time.Parse(time.RFC3339, health.LastSync); err == nil && !t.IsZero() {
+						syncVal = formatUptime(t) + " ago"
+					}
+					ui.StatusRow("Last sync:", syncVal)
+					if health.RevokedCount > 0 {
+						ui.StatusRow("Revoked IDs:", fmt.Sprintf("%d (%s)", health.RevokedCount, strings.Join(health.RevokedIDs, ", ")))
+					} else {
+						ui.StatusRow("Revoked IDs:", "0")
+					}
 				} else {
-					ui.StatusRow("Revoked IDs:", "0")
+					ui.StatusRowDim("Last sync:", "(failed to parse health data)")
+					ui.StatusRowDim("Revoked IDs:", "(failed to parse health data)")
 				}
 			} else {
-				ui.StatusRowDim("Last sync:", "(failed to parse health data)")
-				ui.StatusRowDim("Revoked IDs:", "(failed to parse health data)")
+				ui.StatusRowDim("Last sync:", "(proxy unreachable for status check)")
+				ui.StatusRowDim("Revoked IDs:", "(proxy unreachable for status check)")
 			}
-		} else {
-			ui.StatusRowDim("Last sync:", "(proxy unreachable for status check)")
-			ui.StatusRowDim("Revoked IDs:", "(proxy unreachable for status check)")
-		}
 		}
 	}
 
@@ -298,9 +294,10 @@ func runProxyStop(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.Info(fmt.Sprintf("Stopping proxy (PID %d)...", pid))
-	p, _ := os.FindProcess(pid)
-	if err := p.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("failed to send SIGTERM to proxy: %w", err)
+	if err := proxy.TerminateProcess(pid); err != nil {
+		if p, findErr := os.FindProcess(pid); findErr == nil {
+			_ = p.Kill()
+		}
 	}
 
 	// Wait up to 5 seconds for it to stop
@@ -314,9 +311,11 @@ func runProxyStop(cmd *cobra.Command, args []string) error {
 	}
 
 	// Try SIGKILL if still alive
-	ui.Warning("Proxy didn't stop with SIGTERM, sending SIGKILL...")
-	if err := p.Kill(); err != nil {
-		return fmt.Errorf("failed to kill proxy: %w", err)
+	ui.Warning("Proxy didn't stop gracefully, force-killing...")
+	if p, findErr := os.FindProcess(pid); findErr == nil {
+		if err := p.Kill(); err != nil {
+			return fmt.Errorf("failed to kill proxy: %w", err)
+		}
 	}
 	proxy.RemovePIDFile()
 	ui.Success("Proxy force-killed.")
@@ -331,7 +330,7 @@ func runProxySync(cmd *cobra.Command, args []string) error {
 		port = pidPort
 	}
 
-	url := fmt.Sprintf("http://localhost:%d/sync", port)
+	url := fmt.Sprintf("http://127.0.0.1:%d/sync", port)
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -466,7 +465,7 @@ func runProxyApprove(cmd *cobra.Command, args []string) error {
 	}
 	body, _ := json.Marshal(payload)
 
-	url := fmt.Sprintf("http://localhost:%d/approve", port)
+	url := fmt.Sprintf("http://127.0.0.1:%d/approve", port)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -592,7 +591,7 @@ func runProxyRotateSession(cmd *cobra.Command, args []string) error {
 	// Notify running proxy server. The new token is generated server-side and
 	// returned; the client never chooses it (trusting a client-supplied token
 	// would let anyone who can reach the endpoint pick the session key).
-	url := fmt.Sprintf("http://localhost:%d/rotate-session", port)
+	url := fmt.Sprintf("http://127.0.0.1:%d/rotate-session", port)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to build rotation request: %w", err)
@@ -614,8 +613,8 @@ func runProxyRotateSession(cmd *cobra.Command, args []string) error {
 	}
 
 	var rotResp struct {
-		Status  string `json:"status"`
-		Message string `json:"message"`
+		Status   string `json:"status"`
+		Message  string `json:"message"`
 		NewToken string `json:"new_token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rotResp); err != nil {
