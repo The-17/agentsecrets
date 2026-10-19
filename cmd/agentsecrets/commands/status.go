@@ -19,6 +19,7 @@ var statusCmd = &cobra.Command{
 	Long: `Show the current AgentSecrets session status.
 
 	Displays:
+	- CLI version and update status
 	- Whether you're logged in
 	- Your email
 	- Active workspace
@@ -126,13 +127,6 @@ var statusCmd = &cobra.Command{
 			}
 			ui.StatusRow("Current Project:", projectDisplay)
 
-			// Proxy status
-			if pid, port, running := proxy.IsProxyRunning(); running {
-				ui.StatusRow("Proxy:", fmt.Sprintf("Running (port %d, PID %d)", port, pid))
-			} else {
-				ui.StatusRowDim("Proxy:", "Not running")
-			}
-
 			// Sync info
 			secretsDisplay := "Unable to calculate"
 			if !isAuthenticated {
@@ -154,14 +148,38 @@ var statusCmd = &cobra.Command{
 			}
 			ui.StatusRow("Secrets:", secretsDisplay)
 
+			// Proxy status
+			if pid, port, running := proxy.IsProxyRunning(); running {
+				ui.StatusRow("Proxy:", fmt.Sprintf("Running (port %d, PID %d)", port, pid))
+			} else {
+				ui.StatusRowDim("Proxy:", "Not running")
+			}
+
 			ui.StatusRow("Activity:", fmt.Sprintf("Last Push: %s | Last Pull: %s", formatTime(p.LastPush), formatTime(p.LastPull)))
 		} else {
 			ui.StatusRowDim("Current Project:", "—")
 		}
 
+		// CLI version, annotated with the cached update verdict. The update
+		// check runs in the root preamble, so this is a cache read.
+		latest := ""
+		if global != nil {
+			latest = global.LatestVersion
+		}
+		ui.StatusRow("Version:", statusVersionDisplay(Version, latest))
+
 		fmt.Println()
 		return nil
 	},
+}
+
+// statusVersionDisplay renders the CLI version alongside its cached update
+// verdict, for example "4.0.0-dev (dev build)".
+func statusVersionDisplay(current, latest string) string {
+	if verdict := config.VersionStatus(current, latest); verdict != "" {
+		return fmt.Sprintf("%s (%s)", current, verdict)
+	}
+	return current
 }
 
 func formatTime(rfc3339Str string) string {

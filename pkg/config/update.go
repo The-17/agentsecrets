@@ -118,3 +118,38 @@ func isNewer(latest, current string) bool {
 	// If prefixes are same, the one with more parts is "newer" (e.g. 1.1.2.1 > 1.1.2)
 	return len(lParts) > len(cParts)
 }
+
+// VersionStatus returns a short human-readable verdict for the running CLI
+// version against the latest version from the cached update check. It performs
+// no network I/O, so callers can use it on read-only paths such as `status`.
+// An empty string means there is nothing worth reporting.
+func VersionStatus(current, latest string) string {
+	current = strings.TrimPrefix(strings.TrimSpace(current), "v")
+	latest = strings.TrimPrefix(strings.TrimSpace(latest), "v")
+	if current == "" {
+		return ""
+	}
+
+	prerelease := strings.ContainsAny(current, "-+")
+
+	if latest == "" {
+		if prerelease {
+			return "dev build"
+		}
+		return ""
+	}
+
+	// A prerelease is compared against the release it is based on, so
+	// 4.0.0-dev is only "outdated" once 4.0.0 or newer ships.
+	base := current
+	if i := strings.IndexAny(base, "-+"); i >= 0 {
+		base = base[:i]
+	}
+	if isNewer(latest, base) {
+		return "outdated, " + latest + " available"
+	}
+	if prerelease {
+		return "dev build"
+	}
+	return "up to date"
+}

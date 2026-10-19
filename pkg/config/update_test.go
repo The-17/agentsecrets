@@ -32,6 +32,33 @@ func TestIsNewer(t *testing.T) {
 	fmt.Println("✓ Version comparison tests passed")
 }
 
+func TestVersionStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		latest  string
+		want    string
+	}{
+		{"up to date", "3.3.6", "3.3.6", "up to date"},
+		{"outdated", "3.2.3", "3.3.6", "outdated, 3.3.6 available"},
+		{"newer than cached latest", "3.4.0", "3.3.6", "up to date"},
+		{"dev build ahead of stable", "4.0.0-dev", "3.3.6", "dev build"},
+		{"dev build behind next release", "4.0.0-dev", "4.1.0", "outdated, 4.1.0 available"},
+		{"no cached latest, stable", "3.3.6", "", ""},
+		{"no cached latest, dev", "4.0.0-dev", "", "dev build"},
+		{"v prefix", "v3.3.5", "v3.3.6", "outdated, 3.3.6 available"},
+		{"empty current", "", "3.3.6", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := VersionStatus(tt.current, tt.latest); got != tt.want {
+				t.Errorf("VersionStatus(%q, %q) = %q, want %q", tt.current, tt.latest, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckForUpdatesAlertInterval(t *testing.T) {
 	// Create a temp directory for mocking the home directory config files
 	tmpDir, err := os.MkdirTemp("", "agentsecrets-test-")
