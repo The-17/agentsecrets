@@ -1,0 +1,177 @@
+openapi: 3.1.0
+info:
+  title: AgentSecrets Resolver
+  version: 1.0.0
+  description: |
+    One cloud-mode call surface for the AgentSecrets plugin.
+
+    The caller sends a target request with `{{KEY}}` handles in the headers,
+    body, or scope. The resolver substitutes values it holds and returns the
+    upstream status, headers, and body. The response never contains a secret
+    value.
+
+    `basic` and `query` injection styles are not expressible in this contract.
+    Use local mode, which delegates to the CLI and keychain.
+servers:
+  - url: https://resolver.agentsecrets.tech
+security:
+  - bearerAuth: []
+paths:
+  /v1/resolve:
+    post:
+      operationId: resolve
+      summary: Resolve handles and call the target
+      description: |
+        Handles use the `{{KEY}}` form. A caller must send at least one handle
+        or the request is rejected. The resolver applies the workload token's
+        workspace, project, and environment binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveRequest'
+            examples:
+              bearer:
+                summary: Bearer token in a GET request
+                value:
+                  target_url: https://api.stripe.com/v1/customers
+                  method: GET
+                  headers:
+                    Accept: application/json
+                    Authorization: Bearer {{STRIPE_SECRET_KEY}}
+                  body: ''
+                  scope:
+                    environment: development
+              body:
+                summary: JSON body handle
+                value:
+                  target_url: https://api.example.com/v1/token
+                  method: POST
+                  headers:
+                    Content-Type: application/json
+                  body: '{"grant_type":"client_credentials","client_secret":"{{CLIENT_SECRET}}"}'
+                  scope:
+                    environment: production
+      responses:
+        '200':
+          description: The target responded. The body is returned as a string.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolveResponse'
+        '400':
+          description: Malformed request, no handles, or an unsupported target.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid workload token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The token is not authorized for this target, scope, or environment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Resolver quota exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: The target failed or the resolver could not reach it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Static workload token. Prefer a token file on the client.
+  schemas:
+    ResolveRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - target_url
+        - method
+        - headers
+        - body
+      properties:
+        target_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          description: Absolute HTTPS target URL.
+        method:
+          type: string
+          enum:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Request headers. Handles may appear in values.
+        body:
+          type: string
+          description: Request body as a string. Handles may appear in the text.
+        scope:
+          $ref: '#/components/schemas/Scope'
+    Scope:
+      type: object
+      additionalProperties: false
+      properties:
+        workspace_id:
+          type: string
+        project_id:
+          type: string
+        environment:
+          type: string
+          enum:
+            - development
+            - staging
+            - production
+      description: Optional binding. The token's own binding is authoritative.
+    ResolveResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status_code
+        - headers
+        - body
+      properties:
+        status_code:
+          type: integer
+          minimum: 100
+          maximum: 599
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: string
+        redacted:
+          type: boolean
+          description: True when the resolver applied response redaction.
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        message:
+          type: string

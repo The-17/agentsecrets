@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentsecrets-plugin"
+version = "0.1.0"
+description = "Zero-knowledge credential tools for AI agent frameworks"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "AgentSecrets" }]
+dependencies = []
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.2"]
+crewai = ["crewai>=0.30"]
+autogen = ["autogen-core>=0.4"]
+llamaindex = ["llama-index-core>=0.11"]
+all = [
+  "langchain-core>=0.2",
+  "crewai>=0.30",
+  "autogen-core>=0.4",
+  "llama-index-core>=0.11",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentsecrets_plugin*"]
