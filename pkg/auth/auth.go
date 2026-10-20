@@ -67,11 +67,12 @@ type SignupRequest struct {
 //  1. Generate keypair + encrypt private key (crypto.SetupUser)
 //  2. Send registration to API
 //  3. Auto-login with PerformLogin (passing the keypair to skip decryption)
-func (s *Service) Signup(req SignupRequest) error {
+//  4. Create and upload the vault; the result carries the one-time recovery key
+func (s *Service) Signup(req SignupRequest) (*LoginResult, error) {
 	// Generate keys
 	keys, err := crypto.SetupUser(req.Password)
 	if err != nil {
-		return fmt.Errorf("signup: %w", err)
+		return nil, fmt.Errorf("signup: %w", err)
 	}
 
 	// Build API request body
@@ -87,7 +88,7 @@ func (s *Service) Signup(req SignupRequest) error {
 	}
 
 	if err := s.API.CallNoContent("auth.signup", "POST", data, nil, nil, http.StatusCreated); err != nil {
-		return fmt.Errorf("signup: API call failed: %w", err)
+		return nil, fmt.Errorf("signup: API call failed: %w", err)
 	}
 
 	// Auto-login after signup — pass the keypair so we skip decryption
@@ -106,56 +107,70 @@ func (s *Service) Signup(req SignupRequest) error {
 //
 // Flow:
 //  1. Call API login → get tokens + encrypted keys + workspaces
-//  2. If no keypair: derive key from password → decrypt private key
+//  2. If no keypair: unlock the vault, else decrypt the legacy key, else heal via the bridge
 //  3. Store email + tokens + keypair
-//  4. Decrypt all workspace keys → cache in config
-//  5. Set personal workspace as default
-func (s *Service) PerformLogin(email, password string, privateKey, publicKey []byte) error {
+//  4. Create, repair, or pin the vault record
+//  5. Decrypt all workspace keys → cache in config
+//  6. Set personal workspace as default
+func (s *Service) PerformLogin(email, password string, privateKey, publicKey []byte) (*LoginResult, error) {
 	// 1. Authenticate with API
 	resp, err := s.API.Call("auth.login", "POST", map[string]string{
 		"email":    email,
 		"password": password,
 	}, nil, nil)
 	if err != nil {
-		return fmt.Errorf("login: API call failed: %w", err)
+		return nil, fmt.Errorf("login: API call failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return s.API.DecodeError(resp)
+		return nil, s.API.DecodeError(resp)
 	}
 
 	// Parse response
 	var loginResp loginResponse
 	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return fmt.Errorf("login: failed to parse response: %w", err)
+		return nil, fmt.Errorf("login: failed to parse response: %w", err)
 	}
 
-	// 2. If no keypair provided (login flow), decrypt from server response
+	result := &LoginResult{}
+	userID := loginResp.Data.User.ID
+	record, recordVersion, err := s.loginVault(loginResp.Data, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. If no keypair provided (login flow), unlock from the vault or legacy blob.
+	var (
+		fromVault bool
+		bridgeVK  []byte
+	)
 	if privateKey == nil {
-		encPrivKey := loginResp.Data.EncryptedPrivateKey
-		salt := loginResp.Data.KeySalt
-		pubKeyB64 := loginResp.Data.User.PublicKey
-
-		if encPrivKey == "" || salt == "" || pubKeyB64 == "" {
-			return fmt.Errorf("login: encryption keys missing from server response")
-		}
-
-		// Decrypt private key using password
-		privateKey, err = crypto.DecryptPrivateKey(encPrivKey, password, salt)
+		privateKey, fromVault, bridgeVK, err = s.unlockLoginKey(
+			userID, password, record,
+			loginResp.Data.EncryptedPrivateKey, loginResp.Data.KeySalt,
+		)
 		if err != nil {
-			return fmt.Errorf("login: %w", err)
+			return nil, err
 		}
 
-		// Decode public key from response
+		pubKeyB64 := loginResp.Data.User.PublicKey
+		if pubKeyB64 == "" {
+			return nil, fmt.Errorf("login: public key missing from server response")
+		}
 		publicKey, err = base64.StdEncoding.DecodeString(pubKeyB64)
 		if err != nil {
-			return fmt.Errorf("login: invalid public key in response: %w", err)
+			return nil, fmt.Errorf("login: invalid public key in response: %w", err)
 		}
 	}
 
 	if err := config.SetEmail(email); err != nil {
-		return fmt.Errorf("login: failed to save email: %w", err)
+		return nil, fmt.Errorf("login: failed to save email: %w", err)
+	}
+	if userID != "" {
+		if err := config.SetUserID(userID); err != nil {
+			return nil, fmt.Errorf("login: failed to save account id: %w", err)
+		}
 	}
 
 	// Compute and store local password hash for allowlist verification
@@ -170,7 +185,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	globalCfg.Email = email
 	globalCfg.PasswordHash = passwordHash
 	if err := config.SaveGlobalConfig(globalCfg); err != nil {
-		return fmt.Errorf("login: failed to save global config: %w", err)
+		return nil, fmt.Errorf("login: failed to save global config: %w", err)
 	}
 
 	accessToken := coalesce(loginResp.AccessToken, loginResp.Data.Access)
@@ -179,14 +194,30 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		coalesce(loginResp.RefreshToken, loginResp.Data.Refresh),
 		coalesce(loginResp.ExpiresAt, loginResp.Data.ExpiresAt),
 	); err != nil {
-		return fmt.Errorf("login: failed to save tokens: %w", err)
+		return nil, fmt.Errorf("login: failed to save tokens: %w", err)
 	}
 
 	if err := keyring.StoreKeypair(email, privateKey, publicKey); err != nil {
-		return fmt.Errorf("login: failed to save keypair: %w", err)
+		return nil, fmt.Errorf("login: failed to save keypair: %w", err)
 	}
 
-	// 4. Decrypt and cache all workspace keys
+	// 4. Create a vault for a legacy account, heal a stale envelope, or pin the
+	// existing proof key. Failures here are warnings, not login blockers.
+	state := &vaultLoginState{
+		UserID:     userID,
+		Password:   password,
+		PrivateKey: privateKey,
+		Record:     record,
+		Version:    recordVersion,
+		FromVault:  fromVault,
+		BridgeVK:   bridgeVK,
+		Result:     result,
+	}
+	if err := s.ensureVault(state); err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+
+	// 5. Decrypt and cache all workspace keys
 	workspaceCache := make(map[string]config.WorkspaceCacheEntry)
 
 	for _, ws := range loginResp.Data.Workspaces {
@@ -209,14 +240,14 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	}
 
 	if len(workspaceCache) == 0 {
-		return nil
+		return result, nil
 	}
 
 	if err := config.StoreWorkspaceCache(workspaceCache); err != nil {
-		return fmt.Errorf("login: failed to cache workspace keys: %w", err)
+		return nil, fmt.Errorf("login: failed to cache workspace keys: %w", err)
 	}
 
-	// 5. Set personal workspace as default (if none selected)
+	// 6. Set personal workspace as default (if none selected)
 	if config.GetSelectedWorkspaceID() == "" {
 		id := ""
 		for k, ws := range workspaceCache {
@@ -232,7 +263,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		}
 	}
 
-	return nil
+	return result, nil
 }
 
 // Logout clears all stored credentials and invalidates the server session.
@@ -268,11 +299,14 @@ type loginData struct {
 	ExpiresAt           string           `json:"expires_at"`
 	EncryptedPrivateKey string           `json:"encrypted_private_key"`
 	KeySalt             string           `json:"key_salt"`
+	Vault               json.RawMessage  `json:"vault"`
+	VaultVersion        int              `json:"vault_version"`
 	User                loginUser        `json:"user"`
 	Workspaces          []loginWorkspace `json:"workspaces"`
 }
 
 type loginUser struct {
+	ID        string `json:"id"`
 	PublicKey string `json:"public_key"`
 	Email     string `json:"email"`
 }

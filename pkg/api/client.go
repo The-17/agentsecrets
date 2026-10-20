@@ -26,10 +26,12 @@ const DefaultBaseURL = "https://api.agentsecrets.tech/api"
 // endpointMap defines all API routes, matching the Python ENDPOINT_MAP exactly
 var endpointMap = map[string]map[string]string{
 	"auth": {
-		"signup":  "auth/register/",
-		"login":   "auth/login/",
-		"logout":  "auth/logout/",
-		"refresh": "auth/refresh/",
+		"signup":          "auth/register/",
+		"login":           "auth/login/",
+		"logout":          "auth/logout/",
+		"refresh":         "auth/refresh/",
+		"vault":           "auth/vault/",
+		"change_password": "auth/change-password/",
 	},
 	"secrets": {
 		"list":            "secrets/{project_id}/",

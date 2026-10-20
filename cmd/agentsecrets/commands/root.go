@@ -254,6 +254,8 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
+	rootCmd.AddCommand(passwordCmd)
+	rootCmd.AddCommand(vaultCmd)
 	rootCmd.AddCommand(statusCmd)
 
 	// Add auth middleware to commands that require it

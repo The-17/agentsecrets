@@ -292,13 +292,16 @@ func runSignup() error {
 	fmt.Println()
 
 	// Create account with spinner
+	var result *auth.LoginResult
 	if err := ui.Spinner("Creating your account...", func() error {
-		return app.Auth().Signup(auth.SignupRequest{
+		var err error
+		result, err = app.Auth().Signup(auth.SignupRequest{
 			FirstName: firstName,
 			LastName:  lastName,
 			Email:     email,
 			Password:  password,
 		})
+		return err
 	}); err != nil {
 		ui.ErrorWithSuggestions(
 			fmt.Errorf("Signup failed: %w", err),
@@ -310,6 +313,7 @@ func runSignup() error {
 	}
 
 	ui.Success("Account created and logged in!")
+	showVaultResult(result, password)
 	return nil
 }
 

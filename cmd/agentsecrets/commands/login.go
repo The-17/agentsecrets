@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -75,8 +76,11 @@ func performLogin() error {
 
 	fmt.Println()
 
+	var result *auth.LoginResult
 	if err := ui.Spinner("Logging in...", func() error {
-		return app.Auth().PerformLogin(email, password, nil, nil)
+		var err error
+		result, err = app.Auth().PerformLogin(email, password, nil, nil)
+		return err
 	}); err != nil {
 		ui.ErrorWithSuggestions(
 			fmt.Errorf("Login failed: %w", err),
@@ -89,5 +93,6 @@ func performLogin() error {
 
 	fmt.Println()
 	ui.Success("Logged in successfully!")
+	showVaultResult(result, password)
 	return nil
 }

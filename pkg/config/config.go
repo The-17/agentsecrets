@@ -79,6 +79,8 @@ type GlobalConfig struct {
 	SelectedEnvironment string                         `json:"selected_environment,omitempty"` // "development", "staging", "production"
 	Workspaces          map[string]WorkspaceCacheEntry `json:"workspaces,omitempty"`
 	PasswordHash        string                         `json:"password_hash,omitempty"` // Added for local password verification
+	UserID              string                         `json:"user_id,omitempty"`       // Server-side account id bound into vault AAD
+	VaultPubKey         string                         `json:"vault_pubkey,omitempty"`  // Pinned Ed25519 vault proof key (trust on first unlock)
 	DefaultStorageMode  int                            `json:"default_storage_mode"`    // 1 = keychain (default), 2 = env_file
 	LastUpdateCheck     int64                          `json:"last_update_check,omitempty"`
 	LatestVersion       string                         `json:"latest_version,omitempty"`
@@ -622,6 +624,44 @@ func SetEmail(email string) error {
 		c = &GlobalConfig{}
 	}
 	c.Email = email
+	return SaveGlobalConfig(c)
+}
+
+// GetUserID returns the server-side account id, or empty string.
+func GetUserID() string {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		return ""
+	}
+	return config.UserID
+}
+
+// SetUserID stores the server-side account id.
+func SetUserID(id string) error {
+	c, _ := LoadGlobalConfig()
+	if c == nil {
+		c = &GlobalConfig{}
+	}
+	c.UserID = id
+	return SaveGlobalConfig(c)
+}
+
+// GetVaultPubKey returns the pinned vault proof key, or empty string.
+func GetVaultPubKey() string {
+	config, err := LoadGlobalConfig()
+	if err != nil {
+		return ""
+	}
+	return config.VaultPubKey
+}
+
+// SetVaultPubKey pins the vault proof key for this account.
+func SetVaultPubKey(key string) error {
+	c, _ := LoadGlobalConfig()
+	if c == nil {
+		c = &GlobalConfig{}
+	}
+	c.VaultPubKey = key
 	return SaveGlobalConfig(c)
 }
 

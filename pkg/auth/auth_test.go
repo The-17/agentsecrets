@@ -68,7 +68,7 @@ func TestSignupFlow(t *testing.T) {
 		Email:     "test@example.com",
 		Password:  "password123",
 	}
-	err := svc.Signup(req)
+	_, err := svc.Signup(req)
 	if err != nil {
 		t.Fatalf("Signup failed: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestLoginFlow(t *testing.T) {
 
 	// 3. Perform login
 	dummyKey := make([]byte, 32)
-	err := svc.PerformLogin("test@example.com", "password123", dummyKey, dummyKey)
+	_, err := svc.PerformLogin("test@example.com", "password123", dummyKey, dummyKey)
 	if err != nil {
 		t.Logf("PerformLogin warning (keyring likely failed): %v", err)
 	}
@@ -149,7 +149,7 @@ func TestLoginFailure(t *testing.T) {
 	svc := NewService(client)
 
 	dummyKey := make([]byte, 32)
-	err := svc.PerformLogin("test@example.com", "wrong-pass", dummyKey, dummyKey)
+	_, err := svc.PerformLogin("test@example.com", "wrong-pass", dummyKey, dummyKey)
 	if err == nil {
 		t.Error("PerformLogin should have failed for unauthorized credentials")
 	}
