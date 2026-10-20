@@ -6,9 +6,10 @@
 //   - Argon2id instead of PBKDF2-SHA256 for key derivation
 //
 // Key hierarchy:
-//   Password → (Argon2id) → Password-Derived Key → decrypts Private Key
-//   Private Key → (NaCl SealedBox) → decrypts Workspace Key
-//   Workspace Key → (AES-256-GCM) → encrypts/decrypts Secrets
+//
+//	Password → (Argon2id) → Password-Derived Key → decrypts Private Key
+//	Private Key → (NaCl SealedBox) → decrypts Workspace Key
+//	Workspace Key → (AES-256-GCM) → encrypts/decrypts Secrets
 package crypto
 
 import (
@@ -21,6 +22,7 @@ import (
 	"io"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/nacl/box"
 )
 
@@ -155,6 +157,19 @@ func GenerateKeypair() (privateKey, publicKey []byte, err error) {
 		return nil, nil, fmt.Errorf("failed to generate keypair: %w", err)
 	}
 	return priv[:], pub[:], nil
+}
+
+// PublicFromPrivate derives the X25519 public key from an existing private key.
+// Used when a vault unlock recovers the private key without the original keypair.
+func PublicFromPrivate(privateKey []byte) ([]byte, error) {
+	if len(privateKey) != KeySize {
+		return nil, fmt.Errorf("private key must be %d bytes", KeySize)
+	}
+	publicKey, err := curve25519.X25519(privateKey, curve25519.Basepoint)
+	if err != nil {
+		return nil, fmt.Errorf("derive public key: %w", err)
+	}
+	return publicKey, nil
 }
 
 // GenerateWorkspaceKey creates a random 32-byte key for AES-256-GCM encryption.

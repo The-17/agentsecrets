@@ -218,9 +218,19 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	}
 
 	// 5. Decrypt and cache all workspace keys
+	if err := cacheWorkspaces(privateKey, publicKey, loginResp.Data.Workspaces); err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+
+	return result, nil
+}
+
+// cacheWorkspaces decrypts workspace keys and stores them for later commands.
+// It selects the personal workspace as default when none is selected.
+func cacheWorkspaces(privateKey, publicKey []byte, workspaces []loginWorkspace) error {
 	workspaceCache := make(map[string]config.WorkspaceCacheEntry)
 
-	for _, ws := range loginResp.Data.Workspaces {
+	for _, ws := range workspaces {
 		encryptedWsKey, err := base64.StdEncoding.DecodeString(ws.EncryptedWorkspaceKey)
 		if err != nil {
 			continue // Skip this workspace on decode error
@@ -240,14 +250,14 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	}
 
 	if len(workspaceCache) == 0 {
-		return result, nil
+		return nil
 	}
 
 	if err := config.StoreWorkspaceCache(workspaceCache); err != nil {
-		return nil, fmt.Errorf("login: failed to cache workspace keys: %w", err)
+		return fmt.Errorf("failed to cache workspace keys: %w", err)
 	}
 
-	// 6. Set personal workspace as default (if none selected)
+	// Set personal workspace as default (if none selected)
 	if config.GetSelectedWorkspaceID() == "" {
 		id := ""
 		for k, ws := range workspaceCache {
@@ -263,7 +273,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		}
 	}
 
-	return result, nil
+	return nil
 }
 
 // Logout clears all stored credentials and invalidates the server session.

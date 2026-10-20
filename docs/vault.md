@@ -70,12 +70,30 @@ escrow and no recovery backdoor.
 Removing the password factor requires a confirmed recovery key. A passkey alone
 is not sufficient in this release.
 
-The CLI has no password-less sign-in yet. The password envelope, the recovery
-envelope, and the bridge are all proven to unlock the same vault in
-`pkg/vault`, but obtaining a session still requires the password. Until OPAQUE
-or OAuth separates identity from unlock, a forgotten password is not recovered
-from the CLI, and the recovery key's value is that it is already in place for
-that next phase.
+### Signing in with the recovery key
+
+`agentsecrets login --recovery` restores access without the password:
+
+1. The client asks for a challenge and gets the account's recovery view: the
+   sealed private key, the vault proof key, and the `recovery` envelopes only.
+   The password envelope is never part of this response.
+2. The client unlocks the vault key locally with the recovery key.
+3. It signs the server's challenge with the Ed25519 key derived from the vault
+   key, and sends only the signature.
+4. The server verifies the signature against the pinned `vault_pubkey` and
+   issues a session marked `recovery`.
+5. The client rewraps the password envelope under a new password, signs the new
+   vault, and writes both the vault and the legacy blob in one transaction.
+
+The recovery key never leaves the client. The challenge is single-use, expires
+after five minutes, and is rate-limited to five per account per 15 minutes. An
+unknown email gets a decoy challenge, so the endpoint does not confirm whether
+an account exists.
+
+The recovery-scoped session can reset the password without the old one. That is
+the whole point, and it means a stolen recovery key is now an account-takeover
+factor. Treat it like a password. After the reset, the next normal login gets a
+session without the `recovery` claim.
 
 ## Server endpoints
 
@@ -84,6 +102,9 @@ that next phase.
 | `GET` | `/api/auth/vault/` | Read the vault and its version |
 | `PUT` | `/api/auth/vault/` | Replace the vault with `expected_version` (CAS) |
 | `PATCH` | `/api/auth/change-password/` | Update the legacy blob and, optionally, the vault in one transaction |
+| `POST` | `/api/auth/recover/challenge/` | Issue a single-use challenge and the recovery-only vault view |
+| `POST` | `/api/auth/recover/verify/` | Verify the vault-key signature and issue a recovery session |
+| `PATCH` | `/api/auth/recover/password/` | Set a new password from a recovery session (no old password) |
 
 A server that does not implement these routes returns `404` or `405`. The CLI
 treats that as "vault not supported yet", prints a warning, and continues on the
@@ -92,9 +113,10 @@ legacy key path.
 ## CLI
 
 ```bash
-agentsecrets init                 # creates the vault and shows the recovery key once
-agentsecrets login                # unlocks the vault, or migrates a legacy account
-agentsecrets vault status         # envelopes and whether the recovery key is confirmed
+agentsecrets init                       # creates the vault and shows the recovery key once
+agentsecrets login                      # unlocks the vault, or migrates a legacy account
+agentsecrets login --recovery           # forgot the password: recovery key + new password
+agentsecrets vault status               # envelopes and whether the recovery key is confirmed
 agentsecrets vault recovery rotate
 agentsecrets password change
 ```
@@ -137,9 +159,14 @@ removed only after the legacy blob is gone.
   sunset.
 - **Passkeys are specified but not shipped.** The CLI rejects a passkey-only
   account with a clear message rather than guessing.
-- **Password reset without a factor is not a recovery path.** Email-based
-  forgotten-password recovery and the 30-day disabled-account retention window
-  are design work, not implemented behavior.
+- **The recovery endpoint returns part of the vault before authentication.**
+  It returns the recovery envelopes only, never the password envelope, so it
+  does not create an offline password-guessing surface. Anyone who knows an
+  email can still learn that the account exists; unknown emails get a decoy.
+- **Email-based identity recovery is not implemented.** The recovery key is the
+  only forgotten-password path. Email-based recovery would prove identity only;
+  the vault would still require the recovery key. The 30-day disabled-account
+  retention window for a forced reset is design work.
 - **Losing every factor is unrecoverable.** That is the cost of having no
   escrow.
 

@@ -740,6 +740,17 @@ func (v *Vault) Sign(userID string, vk []byte) error {
 	return nil
 }
 
+// SignChallenge signs an arbitrary server challenge with the vault signing key.
+// The server verifies it against the pinned vault public key, which proves the
+// caller holds the vault key without revealing it.
+func SignChallenge(vk, payload []byte) ([]byte, error) {
+	seed, err := hkdfKey(vk, nil, "as:v1/vault-sign")
+	if err != nil {
+		return nil, err
+	}
+	return ed25519.Sign(ed25519.NewKeyFromSeed(seed), payload), nil
+}
+
 // Verify checks the stored proof against the stored vault public key.
 func (v *Vault) Verify(userID string) error {
 	if v.Proof == nil {

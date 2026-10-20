@@ -104,11 +104,12 @@ agentsecrets proxy start        # any agent via HTTP proxy
 
 ## Account recovery
 
-Your account has a client-held vault and a one-time recovery key. The server
-stores ciphertext and metadata only, and never receives the recovery key.
+Your account has a client-held vault and a recovery key. The server stores
+ciphertext and metadata only, and never receives the recovery key.
 
 ```bash
 agentsecrets vault status                  # envelopes and confirmation state
+agentsecrets login --recovery              # forgot your password: unlock with the key, set a new one
 agentsecrets vault recovery rotate         # new key, old key retired after you confirm
 agentsecrets password change               # re-wraps the vault and the legacy blob
 ```
