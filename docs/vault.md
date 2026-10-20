@@ -21,16 +21,17 @@ derived from a password. The account's X25519 private key is encrypted under
 the VK. The VK is then wrapped once per unlock factor, so every factor unlocks
 the same vault:
 
-| Envelope | Key-encryption key |
+| Factor | Key-encryption key |
 |---|---|
-| `password` | `Argon2id(password, salt_p)` |
-| `recovery` | `HKDF(recovery_key, salt_r)` |
-| `passkey` | `HKDF(WebAuthn PRF(passkey, salt_i), credential_id)` |
-| `bridge` | `HKDF(X25519 private key, salt_b)` |
+| `password` envelope | `Argon2id(password, salt_p)` |
+| `recovery` envelope | `HKDF(recovery_key, salt_r)` |
+| `passkey` envelope | `HKDF(WebAuthn PRF(passkey, salt_i), credential_id)` |
+| `bridge` blob | `HKDF(X25519 private key, salt_b)` |
 
-The bridge exists only for cross-version compatibility. It lets a newer client
-re-wrap the vault after an older client changes the password without updating
-the vault.
+The bridge is a separate sealed blob, not an envelope, so `vault status` lists
+`password` and `recovery` only. It exists for cross-version compatibility. It
+lets a newer client re-wrap the vault after an older client changes the
+password without updating the vault.
 
 Every unwrap is bound to the account id through length-prefixed AAD, so a vault
 copied to another account fails to open. The operator's AAD is never built from
@@ -68,6 +69,13 @@ escrow and no recovery backdoor.
 
 Removing the password factor requires a confirmed recovery key. A passkey alone
 is not sufficient in this release.
+
+The CLI has no password-less sign-in yet. The password envelope, the recovery
+envelope, and the bridge are all proven to unlock the same vault in
+`pkg/vault`, but obtaining a session still requires the password. Until OPAQUE
+or OAuth separates identity from unlock, a forgotten password is not recovered
+from the CLI, and the recovery key's value is that it is already in place for
+that next phase.
 
 ## Server endpoints
 
