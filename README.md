@@ -102,6 +102,23 @@ agentsecrets mcp install        # Claude Desktop + Cursor
 agentsecrets proxy start        # any agent via HTTP proxy
 ```
 
+## Account recovery
+
+Your account has a client-held vault and a one-time recovery key. The server
+stores ciphertext and metadata only, and never receives the recovery key.
+
+```bash
+agentsecrets vault status                  # envelopes and confirmation state
+agentsecrets vault recovery rotate         # new key, old key retired after you confirm
+agentsecrets password change               # re-wraps the vault and the legacy blob
+```
+
+Store the recovery key somewhere you can reach without this machine. It is
+shown once and is not consumed by use. If you lose every unlock factor, the
+account cannot be recovered. See [docs/vault.md](docs/vault.md) for the design,
+the threat model, and the migration and sunset plan.
+
+
 ## What This Looks Like in Practice
 
 ```
@@ -130,6 +147,7 @@ The agent managed the entire workflow, and no credential value appeared at any s
 | [Auth Injection Styles](https://agentsecrets.tech/docs/proxy/injection-styles) | All six injection modes: bearer, header, query, basic, JSON body, and form field |
 | [Zero-Trust Proxy Pipeline](https://agentsecrets.tech/docs/proxy/overview) | The full request pipeline, including allowlisting, capability checks, SSRF protection, and response redaction |
 | [Encryption Model](https://agentsecrets.tech/docs/security/encryption) | X25519 key exchange, AES-256-GCM, Argon2id, OS keychain storage, and SHA-256 audit chaining |
+| [Account Vault](docs/vault.md) | Client-held vault key, recovery key, envelope policy, proof pinning, and the legacy migration window |
 | [Build on AgentSecrets](https://agentsecrets.tech/docs/sdk/overview) | Python SDK, zero-knowledge MCP template, and the JS/TS SDK (coming soon) |
 | [Full Command Reference]([https://agentsecrets.tech/docs](https://agentsecrets.tech/docs/cli/account)) | Every subcommand across account, workspace, project, environment, secrets, proxy, and audit |
 
