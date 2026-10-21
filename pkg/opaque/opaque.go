@@ -113,3 +113,6 @@ func LoginFinish(client *opaque.Client, ke2, credentialID string) (ke3 []byte, s
 
 // EncodeB64 exposes the encoding used on the wire so callers stay consistent.
 func EncodeB64(raw []byte) string { return encodeB64(raw) }
+
+// DecodeB64 is the inverse of EncodeB64 for server responses.
+func DecodeB64(s string) ([]byte, error) { return decodeB64(s) }
