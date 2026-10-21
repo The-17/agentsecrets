@@ -1,8 +1,10 @@
 module github.com/The-17/agentsecrets
 
-go 1.24.0
+go 1.26.0
 
 require (
+	github.com/bytemare/ecc v0.9.0
+	github.com/bytemare/opaque v0.18.0
 	github.com/charmbracelet/huh v0.8.0
 	github.com/charmbracelet/huh/spinner v0.0.0-20260216111231-bffc99a26329
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -11,18 +13,22 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mark3labs/mcp-go v0.44.0
 	github.com/spf13/cobra v1.10.2
-	github.com/zalando/go-keyring v0.2.6
-	golang.org/x/crypto v0.48.0
-	golang.org/x/sys v0.41.0
-	golang.org/x/term v0.40.0
+	golang.org/x/crypto v0.49.0
+	golang.org/x/sys v0.42.0
+	golang.org/x/term v0.41.0
 )
 
 require (
-	al.essio.dev/pkg/shellescape v1.5.1 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
+	filippo.io/nistec v0.0.4 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/bytemare/hash v0.6.2 // indirect
+	github.com/bytemare/hash2curve v0.5.4 // indirect
+	github.com/bytemare/ksf v0.5.0 // indirect
+	github.com/bytemare/secp256k1 v0.3.0 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/charmbracelet/bubbles v0.21.1-0.20250623103423-23b8fd6302d7 // indirect
 	github.com/charmbracelet/bubbletea v1.3.10 // indirect
@@ -31,9 +37,8 @@ require (
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
-	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/gtank/ristretto255 v0.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
@@ -52,7 +57,7 @@ require (
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.37.6 // indirect
 	modernc.org/mathutil v1.6.0 // indirect

@@ -23,7 +23,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          # go.mod requires 1.26 for the OPAQUE sidecar's bytemare/opaque.
+          go-version: "1.26"
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
