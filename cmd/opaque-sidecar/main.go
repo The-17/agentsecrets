@@ -314,8 +314,18 @@ func (s *sidecar) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("ke3: %w", err))
 		return
 	}
-	if len(ke3Raw) != 64 {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("ke3: wrong length %d", len(ke3Raw)))
+	if len(ke3Raw) == 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ke3: empty"))
+		return
+	}
+	dser, err := s.conf.Deserializer()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	ke3, err := dser.KE3(ke3Raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ke3: %w", err))
 		return
 	}
 	expected, err := unb64(state.ClientMAC)
@@ -323,7 +333,14 @@ func (s *sidecar) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("server_state: %w", err))
 		return
 	}
-	if subtle.ConstantTimeCompare(ke3Raw, expected) != 1 {
+	// The library verifies the client MAC over the KE3 transcript. Comparing
+	// raw bytes here instead would never match a serialized message.
+	server, err := s.server()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := server.LoginFinish(ke3, expected); err != nil {
 		writeErr(w, http.StatusUnauthorized, fmt.Errorf("authentication failed"))
 		return
 	}
