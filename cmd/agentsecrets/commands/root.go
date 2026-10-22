@@ -285,6 +285,7 @@ func init() {
 	rootCmd.AddCommand(NewEnvCmd())
 	rootCmd.AddCommand(NewExecCmd())
 	rootCmd.AddCommand(docsCmd)
+	rootCmd.AddCommand(migrateCmd)
 }
 
 // ensureSudoCached makes sure a sudo credential is cached before a spinner

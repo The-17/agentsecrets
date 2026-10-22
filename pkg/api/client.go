@@ -106,6 +106,11 @@ var endpointMap = map[string]map[string]string{
 	"users": {
 		"public_key": "users/{email}/public-key/",
 	},
+	"migration": {
+		"token":  "migration/token/",
+		"export": "migration/export/",
+		"import": "migration/import/",
+	},
 }
 
 // publicEndpoints are endpoints that don't require an auth token
@@ -114,6 +119,9 @@ var publicEndpoints = map[string]bool{
 	"auth.login":     true,
 	"auth.refresh":   true,
 	"telemetry.sync": true,
+	// migration.export authenticates with the single-use migration token in the
+	// body, not the caller's access token, so a 401 must not trigger a refresh.
+	"migration.export": true,
 }
 
 // Client handles all HTTP communication with the AgentSecrets API server.
