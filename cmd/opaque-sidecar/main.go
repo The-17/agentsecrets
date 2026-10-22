@@ -353,6 +353,8 @@ func main() {
 		"generate throwaway key material when OPAQUE_SERVER_KEY_MATERIAL is unset (local development only)")
 	printKeys := flag.Bool("print-keys", false,
 		"print a fresh key material value for OPAQUE_SERVER_KEY_MATERIAL and exit")
+	allowPublicBind := flag.Bool("allow-public-bind", false,
+		"allow binding a non-loopback address (only when a tunnel or private network protects the sidecar)")
 	flag.Parse()
 
 	if *printKeys {
@@ -386,7 +388,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              *addr,
-		Handler:           mux,
+		Handler:           newRateLimiter(60, time.Second).middleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -394,7 +396,11 @@ func main() {
 
 	host, port, _ := net.SplitHostPort(*addr)
 	if host != "127.0.0.1" && host != "localhost" && host != "" {
-		log.Fatalf("refusing to bind non-loopback address %q: the sidecar is internal only", host)
+		if !*allowPublicBind {
+			log.Fatalf("refusing to bind non-loopback address %q: the sidecar is internal only. "+
+				"Pass -allow-public-bind only when a tunnel or private network protects it.", host)
+		}
+		log.Printf("WARNING: binding non-loopback address %q; the bearer token is the only access control", host)
 	}
 	log.Printf("opaque sidecar listening on %s", net.JoinHostPort(host, port))
 	log.Fatal(server.ListenAndServe())
