@@ -18,7 +18,14 @@ type LoginResult struct {
 	RecoveryKey  string
 	VaultVersion int
 	VaultCreated bool
-	Warnings     []string
+	// RecoveryConfirmed reports whether the server's vault record says the
+	// recovery key has been proven saved. Enrollment removes the password
+	// factor, so it must not run until this is true.
+	RecoveryConfirmed bool
+	// OpaqueLogin reports that this session was authenticated through OPAQUE
+	// rather than a password, so enrollment is already done.
+	OpaqueLogin bool
+	Warnings    []string
 }
 
 type vaultEnvelope struct {

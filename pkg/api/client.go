@@ -26,15 +26,20 @@ const DefaultBaseURL = "https://api.agentsecrets.tech/api"
 // endpointMap defines all API routes, matching the Python ENDPOINT_MAP exactly
 var endpointMap = map[string]map[string]string{
 	"auth": {
-		"signup":            "auth/register/",
-		"login":             "auth/login/",
-		"logout":            "auth/logout/",
-		"refresh":           "auth/refresh/",
-		"vault":             "auth/vault/",
-		"change_password":   "auth/change-password/",
-		"recover_challenge": "auth/recover/challenge/",
-		"recover_verify":    "auth/recover/verify/",
-		"recover_password":  "auth/recover/password/",
+		"signup":                 "auth/register/",
+		"login":                  "auth/login/",
+		"logout":                 "auth/logout/",
+		"refresh":                "auth/refresh/",
+		"vault":                  "auth/vault/",
+		"change_password":        "auth/change-password/",
+		"recover_challenge":      "auth/recover/challenge/",
+		"recover_verify":         "auth/recover/verify/",
+		"recover_password":       "auth/recover/password/",
+		"capabilities":           "auth/capabilities/",
+		"opaque_register_start":  "auth/opaque/register/start/",
+		"opaque_register_finish": "auth/opaque/register/finish/",
+		"opaque_login_start":     "auth/opaque/login/start/",
+		"opaque_login_finish":    "auth/opaque/login/finish/",
 	},
 	"secrets": {
 		"list":            "secrets/{project_id}/",
@@ -42,8 +47,8 @@ var endpointMap = map[string]map[string]string{
 		"get":             "secrets/{project_id}/{environment}/{key}/",
 		"update":          "secrets/{project_id}/{environment}/{key}/",
 		"delete":          "secrets/{project_id}/{environment}/{key}/",
-		"get_policy": "secrets/{project_id}/{environment}/{key}/policy/",
-		"set_policy": "secrets/{project_id}/{environment}/{key}/policy/",
+		"get_policy":      "secrets/{project_id}/{environment}/{key}/policy/",
+		"set_policy":      "secrets/{project_id}/{environment}/{key}/policy/",
 		"rotate_stage":    "secrets/{project_id}/{environment}/{key}/versions/",
 		"rotate_promote":  "secrets/{project_id}/{environment}/{key}/promote/",
 		"rotate_rollback": "secrets/{project_id}/{environment}/{key}/rollback/",
@@ -76,20 +81,20 @@ var endpointMap = map[string]map[string]string{
 		"allowlist_log":    "workspaces/{workspace_id}/allowlist/log/",
 	},
 	"agents": {
-		"list":             "workspaces/{workspace_id}/agents/",
-		"register":         "workspaces/{workspace_id}/agents/",
-		"list_project":     "workspaces/{workspace_id}/projects/{project_id}/agents/",
-		"register_project": "workspaces/{workspace_id}/projects/{project_id}/agents/",
-		"delete":           "workspaces/{workspace_id}/agents/{registration_id}/",
-		"token_issue":      "workspaces/{workspace_id}/agents/{registration_id}/tokens/",
-		"token_list":       "workspaces/{workspace_id}/agents/{registration_id}/tokens/",
-		"token_revoke":     "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/",
-		"token_rotate":     "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/rotate/",
+		"list":                  "workspaces/{workspace_id}/agents/",
+		"register":              "workspaces/{workspace_id}/agents/",
+		"list_project":          "workspaces/{workspace_id}/projects/{project_id}/agents/",
+		"register_project":      "workspaces/{workspace_id}/projects/{project_id}/agents/",
+		"delete":                "workspaces/{workspace_id}/agents/{registration_id}/",
+		"token_issue":           "workspaces/{workspace_id}/agents/{registration_id}/tokens/",
+		"token_list":            "workspaces/{workspace_id}/agents/{registration_id}/tokens/",
+		"token_revoke":          "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/",
+		"token_rotate":          "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/rotate/",
 		"token_rotation_policy": "workspaces/{workspace_id}/agents/{registration_id}/tokens/{token_id}/rotation-policy/",
-		"get_capabilities": "workspaces/{workspace_id}/agents/{registration_id}/capabilities/",
-		"set_capabilities": "workspaces/{workspace_id}/agents/{registration_id}/capabilities/",
-		"token_validate":   "internal/agents/verify/",
-		"token_revoked":    "workspaces/{workspace_id}/agents/revoked-tokens/",
+		"get_capabilities":      "workspaces/{workspace_id}/agents/{registration_id}/capabilities/",
+		"set_capabilities":      "workspaces/{workspace_id}/agents/{registration_id}/capabilities/",
+		"token_validate":        "internal/agents/verify/",
+		"token_revoked":         "workspaces/{workspace_id}/agents/revoked-tokens/",
 	},
 	"log": {
 		"list":    "audit/logs/",
@@ -106,6 +111,11 @@ var endpointMap = map[string]map[string]string{
 	"users": {
 		"public_key": "users/{email}/public-key/",
 	},
+	"migration": {
+		"token":  "migration/token/",
+		"export": "migration/export/",
+		"import": "migration/import/",
+	},
 }
 
 // publicEndpoints are endpoints that don't require an auth token
@@ -114,6 +124,18 @@ var publicEndpoints = map[string]bool{
 	"auth.login":     true,
 	"auth.refresh":   true,
 	"telemetry.sync": true,
+	// OPAQUE start/finish and capabilities are unauthenticated on the server.
+	// A 401 from any of them means "invalid credentials" or "not enrolled", so
+	// it must reach the caller verbatim instead of triggering a token refresh
+	// and a retry that turns one real failure into two confusing ones.
+	"auth.capabilities":          true,
+	"auth.opaque_register_start": true,
+	"auth.opaque_login_start":    true,
+	"auth.opaque_login_finish":   true,
+	// Export is authorized by the migration token in the body alone, matching
+	// the server's auth=None route. Attaching the session JWT here would let an
+	// expired session refresh on a call that is meant to be token-only.
+	"migration.export": true,
 }
 
 // Client handles all HTTP communication with the AgentSecrets API server.

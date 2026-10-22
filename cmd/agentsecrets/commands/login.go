@@ -104,8 +104,40 @@ func performLogin() error {
 
 	fmt.Println()
 	ui.Success("Logged in successfully!")
-	showVaultResult(result, password)
+	justConfirmed := showVaultResult(result, password)
+	enrollOpaqueAfterLogin(email, password, result, justConfirmed)
 	return nil
+}
+
+// enrollOpaqueAfterLogin upgrades an account to OPAQUE once the vault exists
+// and the recovery key has been confirmed, either just now or on a previous
+// device.
+//
+// Two hard gates. Enrollment removes the password factor, so it must never run
+// before recovery works, or a lost recovery key strands the account. And it must
+// never run for an account already on OPAQUE, or every login would rotate the
+// server's registration record. Every failure is a warning: the account keeps
+// working on its password.
+func enrollOpaqueAfterLogin(email, password string, result *auth.LoginResult, justConfirmed bool) {
+	if result == nil || result.OpaqueLogin {
+		return
+	}
+	if !result.RecoveryConfirmed && !justConfirmed {
+		return
+	}
+	caps, err := app.Auth().FetchCapabilities()
+	if err != nil || !caps.Opaque {
+		return
+	}
+
+	if err := ui.Spinner("Enabling passwordless login (OPAQUE)...", func() error {
+		return app.Auth().EnrollOpaque(email, password)
+	}); err != nil {
+		ui.Warning(fmt.Sprintf("Passwordless login was not enabled: %v", err))
+		ui.Info("Your password login still works. Nothing changed for this account.")
+		return
+	}
+	ui.Success("Passwordless login enabled. This account no longer uses a password on the server.")
 }
 
 // performRecovery restores a session with the recovery key, then rewraps the
@@ -197,5 +229,10 @@ func performRecovery() error {
 	fmt.Println()
 	ui.Success("Account recovered. Your new password is active.")
 	showVaultResult(result, newPassword)
+	// Recovery proves the recovery key works, so the enrollment precondition is
+	// already satisfied even though no new key was displayed. The server clears
+	// the old OPAQUE record during recovery, so this re-enrolls with the new
+	// password instead of leaving the account on a record it can no longer match.
+	enrollOpaqueAfterLogin(strings.TrimSpace(email), newPassword, result, true)
 	return nil
 }

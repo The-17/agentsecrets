@@ -30,25 +30,27 @@ func showRecoveryKey(key string) bool {
 }
 
 // showVaultResult prints non-fatal vault warnings and, when a new vault was
-// created, shows the one-time recovery key and offers to confirm it.
-func showVaultResult(result *auth.LoginResult, password string) {
+// created, shows the one-time recovery key and offers to confirm it. It reports
+// whether the recovery key was confirmed during this call.
+func showVaultResult(result *auth.LoginResult, password string) bool {
 	if result == nil {
-		return
+		return false
 	}
 	for _, warning := range result.Warnings {
 		ui.Warning(warning)
 	}
 	if result.RecoveryKey == "" {
-		return
+		return false
 	}
 	if !showRecoveryKey(result.RecoveryKey) {
 		ui.Warning("Recovery not confirmed. Rotate a new key later with 'agentsecrets vault recovery rotate'.")
-		return
+		return false
 	}
 
 	if err := app.Auth().ConfirmRecovery(password); err != nil {
 		ui.Warning(fmt.Sprintf("Could not confirm recovery: %v", err))
-		return
+		return false
 	}
 	ui.Success("Recovery key confirmed.")
+	return true
 }

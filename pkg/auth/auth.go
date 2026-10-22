@@ -9,11 +9,13 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -113,7 +115,9 @@ func (s *Service) Signup(req SignupRequest) (*LoginResult, error) {
 //  5. Decrypt all workspace keys → cache in config
 //  6. Set personal workspace as default
 func (s *Service) PerformLogin(email, password string, privateKey, publicKey []byte) (*LoginResult, error) {
-	// 1. Authenticate with API
+	// 1. Authenticate. An enrolled account has no password factor, so a
+	// password_login_disabled answer means "run the OPAQUE exchange", not
+	// "fail". The password still never crosses the wire on that path.
 	resp, err := s.API.Call("auth.login", "POST", map[string]string{
 		"email":    email,
 		"password": password,
@@ -123,22 +127,21 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, s.API.DecodeError(resp)
-	}
-
-	// Parse response
-	var loginResp loginResponse
-	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return nil, fmt.Errorf("login: failed to parse response: %w", err)
-	}
-
-	result := &LoginResult{}
-	userID := loginResp.Data.User.ID
-	record, recordVersion, err := s.loginVault(loginResp.Data, userID)
+	loginResp, err := s.authenticate(email, password, resp)
 	if err != nil {
 		return nil, err
 	}
+
+	result := &LoginResult{}
+	userID := (*loginResp).Data.User.ID
+	record, recordVersion, err := s.loginVault((*loginResp).Data, userID)
+	if err != nil {
+		return nil, err
+	}
+	result.RecoveryConfirmed = record != nil && record.RecoveryConfirmed
+	// The OPAQUE finish response carries the derived session key; password
+	// login does not. This is how the caller knows not to re-enroll.
+	result.OpaqueLogin = (*loginResp).Data.SessionKey != ""
 
 	// 2. If no keypair provided (login flow), unlock from the vault or legacy blob.
 	var (
@@ -148,13 +151,13 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	if privateKey == nil {
 		privateKey, fromVault, bridgeVK, err = s.unlockLoginKey(
 			userID, password, record,
-			loginResp.Data.EncryptedPrivateKey, loginResp.Data.KeySalt,
+			(*loginResp).Data.EncryptedPrivateKey, (*loginResp).Data.KeySalt,
 		)
 		if err != nil {
 			return nil, err
 		}
 
-		pubKeyB64 := loginResp.Data.User.PublicKey
+		pubKeyB64 := (*loginResp).Data.User.PublicKey
 		if pubKeyB64 == "" {
 			return nil, fmt.Errorf("login: public key missing from server response")
 		}
@@ -188,11 +191,11 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		return nil, fmt.Errorf("login: failed to save global config: %w", err)
 	}
 
-	accessToken := coalesce(loginResp.AccessToken, loginResp.Data.Access)
+	accessToken := coalesce((*loginResp).AccessToken, (*loginResp).Data.Access)
 	if err := config.StoreTokens(
 		accessToken,
-		coalesce(loginResp.RefreshToken, loginResp.Data.Refresh),
-		coalesce(loginResp.ExpiresAt, loginResp.Data.ExpiresAt),
+		coalesce((*loginResp).RefreshToken, (*loginResp).Data.Refresh),
+		coalesce((*loginResp).ExpiresAt, (*loginResp).Data.ExpiresAt),
 	); err != nil {
 		return nil, fmt.Errorf("login: failed to save tokens: %w", err)
 	}
@@ -218,11 +221,42 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 	}
 
 	// 5. Decrypt and cache all workspace keys
-	if err := cacheWorkspaces(privateKey, publicKey, loginResp.Data.Workspaces); err != nil {
+	if err := cacheWorkspaces(privateKey, publicKey, (*loginResp).Data.Workspaces); err != nil {
 		return nil, fmt.Errorf("login: %w", err)
 	}
 
 	return result, nil
+}
+
+// authenticate returns the server login payload, switching to OPAQUE when the
+// account has no password factor.
+func (s *Service) authenticate(email, password string, resp *http.Response) (*loginResponse, error) {
+	if resp.StatusCode == http.StatusOK {
+		var out loginResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, fmt.Errorf("login: failed to parse response: %w", err)
+		}
+		return &out, nil
+	}
+
+	if s.passwordLoginDisabled(resp) {
+		return s.opaqueLogin(email, password)
+	}
+	return nil, s.API.DecodeError(resp)
+}
+
+// passwordLoginDisabled reports whether the server refused because the account
+// is enrolled in OPAQUE. Any other failure stays a failure.
+func (s *Service) passwordLoginDisabled(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusUnauthorized {
+		return false
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return bytes.Contains(body, []byte("password_login_disabled"))
 }
 
 // cacheWorkspaces decrypts workspace keys and stores them for later commands.
@@ -311,6 +345,7 @@ type loginData struct {
 	KeySalt             string           `json:"key_salt"`
 	Vault               json.RawMessage  `json:"vault"`
 	VaultVersion        int              `json:"vault_version"`
+	SessionKey          string           `json:"session_key"`
 	User                loginUser        `json:"user"`
 	Workspaces          []loginWorkspace `json:"workspaces"`
 }

@@ -313,7 +313,8 @@ func runSignup() error {
 	}
 
 	ui.Success("Account created and logged in!")
-	showVaultResult(result, password)
+	justConfirmed := showVaultResult(result, password)
+	enrollOpaqueAfterLogin(email, password, result, justConfirmed)
 	return nil
 }
 
