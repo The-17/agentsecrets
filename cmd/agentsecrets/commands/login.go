@@ -113,11 +113,11 @@ func performLogin() error {
 // and the recovery key has been confirmed, either just now or on a previous
 // device.
 //
-// Two hard gates. Enrollment removes the password factor, so it must never run
-// before recovery works, or a lost recovery key strands the account. And it must
-// never run for an account already on OPAQUE, or every login would rotate the
-// server's registration record. Every failure is a warning: the account keeps
-// working on its password.
+// Two hard gates. Enrollment makes OPAQUE the preferred login, so it must never
+// run before recovery works, or a lost recovery key strands the account. And it
+// must never run for an account already on OPAQUE, or every login would rotate
+// the server's registration record. Every failure is a warning: the account
+// keeps working on its password.
 func enrollOpaqueAfterLogin(email, password string, result *auth.LoginResult, justConfirmed bool) {
 	if result == nil || result.OpaqueLogin {
 		return
@@ -137,7 +137,11 @@ func enrollOpaqueAfterLogin(email, password string, result *auth.LoginResult, ju
 		ui.Info("Your password login still works. Nothing changed for this account.")
 		return
 	}
-	ui.Success("Passwordless login enabled. This account no longer uses a password on the server.")
+	// The password factor is intentionally kept on the server. Older CLI
+	// versions cannot perform the OPAQUE exchange and cannot be updated, so
+	// removing the password would lock them out of the account entirely.
+	ui.Success("Passwordless login enabled. This account now prefers OPAQUE.")
+	ui.Info("Your password still works, including from older versions of this CLI.")
 }
 
 // performRecovery restores a session with the recovery key, then rewraps the
