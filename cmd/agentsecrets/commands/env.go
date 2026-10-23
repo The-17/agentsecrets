@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -18,9 +17,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/internal/envguard"
-	"github.com/The-17/agentsecrets/pkg/api"
 	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/proxy"
@@ -47,6 +46,7 @@ func NewEnvCmd() *cobra.Command {
 		applies.
 
 		--cloud              resolve secrets via AgentSecrets Cloud
+		--local              resolve secrets from the local keychain
 		--only KEY[,KEY...]  inject only these secrets (default: all)
 		--sandbox            run the child with no network egress (Linux only)`,
 		Example: `  agentsecrets env -- npm run dev
@@ -63,7 +63,9 @@ func runEnv(cmd *cobra.Command, args []string) error {
 	telemetry.RecordIntegration("env")
 
 	// DisableFlagParsing is active, so leading flags are parsed by hand.
-	useCloud := false
+	// flagMode stays empty unless the user passes --cloud/--local; the router
+	// then applies env and saved-config precedence.
+	flagMode := ""
 	sandbox := false
 	var onlyKeys []string
 parseArgs:
@@ -72,7 +74,10 @@ parseArgs:
 		case args[0] == "--help" || args[0] == "-h":
 			return cmd.Help()
 		case args[0] == "--cloud":
-			useCloud = true
+			flagMode = string(gateway.ModeCloud)
+			args = args[1:]
+		case args[0] == "--local":
+			flagMode = string(gateway.ModeLocal)
 			args = args[1:]
 		case args[0] == "--sandbox":
 			sandbox = true
@@ -99,55 +104,47 @@ parseArgs:
 		return fmt.Errorf("no command specified. Usage: agentsecrets env [--cloud] [--only KEYS] [--sandbox] -- <command> [args...]")
 	}
 
-	// Check environment variable triggers for Cloud Mode
-	if envVal := strings.ToLower(os.Getenv("AGENTSECRETS_USE_CLOUD")); envVal == "true" || envVal == "1" {
-		useCloud = true
+	// One router decision for the whole command, and the router picks the
+	// handler. env keeps no cloud branch of its own: the local path below is
+	// the existing keychain behavior, unchanged, and cloud lives in the router.
+	selection, err := gateway.Select(flagMode)
+	if err != nil {
+		return err
 	}
-	token := os.Getenv("AGENTSECRETS_TOKEN")
-	if token != "" {
-		useCloud = true
-	}
+	useCloud := selection.Mode == gateway.ModeCloud
 
 	var secrets map[string]string
-	var err error
 	var project *config.ProjectConfig
 
-	if useCloud {
-		if token == "" {
-			return fmt.Errorf("cloud resolution active but AGENTSECRETS_TOKEN is not set. Please provide a valid workload token (agt_...)")
-		}
-
-		serverURL := os.Getenv("AGENTSECRETS_SERVER_URL")
-		if serverURL == "" {
-			serverURL = config.GetServerURL()
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		secrets, err = api.FetchWorkloadEnv(ctx, serverURL, token)
-		if err != nil {
-			return fmt.Errorf("cloud resolution failed: %w", err)
-		}
-		ui.Info(fmt.Sprintf("Cloud Engine: Injected %d secrets into process memory", len(secrets)))
-	} else {
-		// Local Offline Engine Mode
-		project, err = config.LoadProjectConfig()
-		if err != nil || project == nil || project.ProjectID == "" {
-			return fmt.Errorf("no active project. Run: agentsecrets project use <name> (or pass AGENTSECRETS_TOKEN / --cloud for cloud resolution)")
+	localResolve := func() (map[string]string, error) {
+		var loadErr error
+		project, loadErr = config.LoadProjectConfig()
+		if loadErr != nil || project == nil || project.ProjectID == "" {
+			return nil, fmt.Errorf("no active project. Run: agentsecrets project use <name> (or pass AGENTSECRETS_TOKEN / --cloud for cloud resolution)")
 		}
 
 		// Ensure keychain-auth session is established before reading secrets.
 		if err := ensureKeychainAuthForEnv(); err != nil {
-			return err
+			return nil, err
 		}
 
-		// Resolve all secrets from local OS keychain
 		envName := config.ResolveEnvironment()
-		secrets, err = keyring.GetAllProjectSecrets(project.ProjectID, envName)
-		if err != nil {
-			return fmt.Errorf("failed to load secrets from keychain: %w", err)
+		found, loadErr := keyring.GetAllProjectSecrets(project.ProjectID, envName)
+		if loadErr != nil {
+			return nil, fmt.Errorf("failed to load secrets from keychain: %w", loadErr)
 		}
+		return found, nil
+	}
+
+	secrets, err = gateway.SecretsForEnv(selection, localResolve)
+	if err != nil {
+		if useCloud {
+			return fmt.Errorf("cloud resolution failed: %w", err)
+		}
+		return err
+	}
+	if useCloud {
+		ui.Info(fmt.Sprintf("Cloud Engine: Injected %d secrets into process memory", len(secrets)))
 	}
 
 	// --only narrows what is injected. The default stays "all secrets": a codebase

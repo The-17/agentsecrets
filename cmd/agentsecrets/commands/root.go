@@ -12,6 +12,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/api"
 	"github.com/The-17/agentsecrets/pkg/config"
 	clierrors "github.com/The-17/agentsecrets/pkg/errors"
+	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -267,7 +268,7 @@ func init() {
 	// Commands that read secrets or display sensitive info need auth verification.
 	// The keychainAuthMiddleware handles this.
 	secretsCmd.PersistentPreRunE = keychainAuthMiddleware
-	callCmd.PersistentPreRunE = keychainAuthMiddleware
+	callCmd.PersistentPreRunE = callMiddleware
 
 	statusCmd.PersistentPreRunE = daemonOnlyMiddleware
 	loginCmd.PersistentPreRunE = daemonOnlyMiddleware
@@ -286,6 +287,7 @@ func init() {
 	rootCmd.AddCommand(NewExecCmd())
 	rootCmd.AddCommand(docsCmd)
 	rootCmd.AddCommand(migrateCmd)
+	rootCmd.AddCommand(modeCmd)
 }
 
 // ensureSudoCached makes sure a sudo credential is cached before a spinner
@@ -560,6 +562,24 @@ func keychainAuthMiddleware(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return app.Auth().EnsureAuth(cmd, args)
+}
+
+// callMiddleware prepares a `call` according to its mode.
+//
+// Local resolution reads the OS keychain, so it needs the keychain-auth daemon
+// and a login. Cloud resolution talks to the resolver with a workload token and
+// needs neither, so a cloud-only machine must not be forced through keychain
+// registration just to make a call. The mode decision is the router's; this
+// only reacts to it.
+func callMiddleware(cmd *cobra.Command, args []string) error {
+	selection, err := resolveCallMode(cmd)
+	if err != nil {
+		return err
+	}
+	if selection.Mode == gateway.ModeCloud {
+		return nil
+	}
+	return keychainAuthMiddleware(cmd, args)
 }
 
 // daemonOnlyMiddleware is a PersistentPreRunE that ensures the keychain-auth daemon

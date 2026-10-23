@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -107,6 +108,16 @@ var statusCmd = &cobra.Command{
 			serverType = ui.BrandStyle.Render("Self-Hosted Server (Custom URL)")
 		}
 		ui.StatusRow("Server:", fmt.Sprintf("%s (%s)", target.URL, serverType))
+
+		// Credential resolution mode. Shown for every user, logged in or not,
+		// because it changes what `call`/`env`/`exec` do next.
+		if selection, err := gateway.Select(""); err == nil {
+			modeDisplay := string(selection.Mode)
+			if selection.Source != "default" {
+				modeDisplay += fmt.Sprintf(" (from %s)", selection.Source)
+			}
+			ui.StatusRow("Mode:", modeDisplay)
+		}
 
 		// Environment info
 		env, source := config.ResolveEnvironmentWithSource()
