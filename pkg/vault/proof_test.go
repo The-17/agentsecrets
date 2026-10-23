@@ -164,7 +164,6 @@ func TestValidateStructure(t *testing.T) {
 		{"missing pubkey", func(v *Vault) { v.VaultPubKey = "" }},
 		{"no envelopes", func(v *Vault) { v.Envelopes = nil }},
 		{"duplicate id", func(v *Vault) { v.Envelopes[1].ID = v.Envelopes[0].ID }},
-		{"unknown type", func(v *Vault) { v.Envelopes[0].Type = "sms" }},
 		{"bad kdf", func(v *Vault) { v.Envelopes[0].KDF = "pbkdf2" }},
 		{"bad aad", func(v *Vault) { v.Envelopes[0].AADVersion = 9 }},
 		{"empty salt", func(v *Vault) { v.Envelopes[0].Salt = "" }},
@@ -184,6 +183,35 @@ func TestValidateStructure(t *testing.T) {
 	}
 	if err := cloneVault(base).Validate(); err != nil {
 		t.Fatalf("valid record rejected: %v", err)
+	}
+}
+
+// TestUnknownEnvelopeTypeIsTolerated is the forward-compatibility contract.
+//
+// A vault is shared state written by whichever client enrolled a factor, and
+// installed clients cannot be updated. If an unknown envelope type were fatal,
+// a newer client adding a factor would make the whole vault unreadable on every
+// older client. Older clients must ignore what they cannot unlock.
+func TestUnknownEnvelopeTypeIsTolerated(t *testing.T) {
+	base, _, _, userID := newTestVault(t)
+	v := cloneVault(base)
+	// Mutate an envelope that is not the password one, so the password factor
+	// remains available to prove the vault still unlocks.
+	for i := range v.Envelopes {
+		if v.Envelopes[i].Type == TypeRecovery {
+			v.Envelopes[i].Type = "sms"
+			break
+		}
+	}
+
+	if err := v.Validate(); err != nil {
+		t.Fatalf("unknown envelope type made the vault unreadable: %v", err)
+	}
+
+	// The known envelope must still work: tolerance must not mean the vault
+	// stops unlocking through a factor this build does understand.
+	if _, err := v.UnlockWithPassword(userID, "correct horse battery staple"); err != nil {
+		t.Fatalf("password unlock broke after an unknown envelope was added: %v", err)
 	}
 }
 
