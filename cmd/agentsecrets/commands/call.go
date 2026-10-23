@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -26,18 +27,30 @@ var (
 	callFormFields []string // "field=SECRET_NAME"
 	callSetHeaders []string // "Name=Value" plain headers (non-secret)
 	callOutput     string   // "text" (default) or "json"
+	callMode       string   // "" (router decides), "cloud", or "local"
 )
 
 var callCmd = &cobra.Command{
 	Use:   "call",
 	Short: "Make an authenticated API call (credentials never exposed)",
 	Long: `Make a one-shot authenticated API call. Credentials are resolved
-	from the OS keychain and injected into the request — they are never
-	printed or exposed to your AI assistant.
+	by the mode router and injected into the request — they are never printed
+	or exposed to your AI assistant.
+
+	Local mode (default): the OS keychain resolves the secret inside the local
+	proxy, so allowlist, policy, SSRF, redaction, and audit all run as usual.
+	Cloud mode: the cloud resolver substitutes {{KEY}} handles server-side.
+
+	Mode precedence: --cloud/--local or --mode, then AGENTSECRETS_MODE or
+	AGENTSECRETS_USE_CLOUD, then the saved mode ('agentsecrets mode'), then
+	local.
 
 	Examples:
 	# Bearer token (most common)
 	agentsecrets call --url https://api.stripe.com/v1/balance --bearer STRIPE_KEY
+
+	# Force the cloud resolver for one call
+	agentsecrets call --cloud --url https://api.stripe.com/v1/balance --bearer STRIPE_KEY
 
 	# POST with body
 	agentsecrets call --url https://api.stripe.com/v1/charges \
@@ -72,6 +85,9 @@ func init() {
 	callCmd.Flags().StringArrayVar(&callFormFields, "form-field", nil, "Form injection: field=SECRET_KEY (repeatable)")
 	callCmd.Flags().StringArrayVar(&callSetHeaders, "set-header", nil, "Plain header: Name=Value, no secret lookup (repeatable)")
 	callCmd.Flags().StringVar(&callOutput, "output", "text", "Output format: text or json")
+	callCmd.Flags().StringVar(&callMode, "mode", "", "Resolution mode: local or cloud (default: router decides)")
+	callCmd.Flags().Bool("cloud", false, "Resolve through the cloud resolver for this call (shorthand for --mode cloud)")
+	callCmd.Flags().Bool("local", false, "Resolve from the local keychain for this call (shorthand for --mode local)")
 	_ = callCmd.MarkFlagRequired("url")
 
 	_ = callCmd.RegisterFlagCompletionFunc("bearer", autocompleteSecretKeys)
@@ -83,6 +99,11 @@ func runCall(cmd *cobra.Command, args []string) error {
 	case "", outputText, outputJSON:
 	default:
 		return fmt.Errorf("--output must be %q or %q, got %q", outputText, outputJSON, callOutput)
+	}
+
+	selection, err := resolveCallMode(cmd)
+	if err != nil {
+		return err
 	}
 
 	// Build injections from flags
@@ -151,17 +172,17 @@ func runCall(cmd *cobra.Command, args []string) error {
 	}
 
 	callStart := time.Now()
-	result, err := proxy.CallViaProxy(proxy.CallRequest{
+	result, err := gateway.Call(gateway.CallRequest{
 		TargetURL:  callURL,
 		Method:     callMethod,
 		Headers:    headers,
 		Body:       body,
 		Injections: injections,
 		AgentToken: callToken,
-	})
+	}, selection)
 	durationMs := time.Since(callStart).Milliseconds()
 	if err != nil {
-		// CallViaProxy failed before any HTTP response (e.g. proxy unreachable).
+		// The transport failed before any HTTP response (e.g. proxy unreachable).
 		if callOutput == outputJSON {
 			return emitCallJSON(callResultJSON{
 				Headers:    map[string][]string{},
@@ -206,6 +227,30 @@ func runCall(cmd *cobra.Command, args []string) error {
 	// Print response (clean stdout for piping)
 	fmt.Printf("HTTP %d\n\n%s\n", result.StatusCode, string(result.Body))
 	return nil
+}
+
+// resolveCallMode applies the flag layer and asks the router for the rest.
+// --cloud/--local are shorthands for --mode; passing both is a usage error
+// rather than a silent winner. It is separate from runCall so the middleware
+// can make the same decision before any keychain work starts.
+func resolveCallMode(cmd *cobra.Command) (gateway.Selection, error) {
+	flagMode := callMode
+	cloudFlag, _ := cmd.Flags().GetBool("cloud")
+	localFlag, _ := cmd.Flags().GetBool("local")
+	if cloudFlag && localFlag {
+		return gateway.Selection{}, fmt.Errorf("--cloud and --local are mutually exclusive")
+	}
+	if cloudFlag {
+		flagMode = string(gateway.ModeCloud)
+	}
+	if localFlag {
+		flagMode = string(gateway.ModeLocal)
+	}
+	sel, err := gateway.Select(flagMode)
+	if err != nil {
+		return gateway.Selection{}, err
+	}
+	return sel, nil
 }
 
 // Output format values for --output.
@@ -260,7 +305,7 @@ type callResultJSON struct {
 // text mode's error semantics: a >= 400 status populates "error" (from the
 // upstream JSON error/message when present, else a generic HTTP summary) so a
 // programmatic consumer branches identically to a stderr reader.
-func buildCallJSON(result *proxy.CallResult, durationMs int64) callResultJSON {
+func buildCallJSON(result *gateway.CallResult, durationMs int64) callResultJSON {
 	headers := result.Headers
 	if headers == nil {
 		headers = map[string][]string{}
@@ -268,18 +313,22 @@ func buildCallJSON(result *proxy.CallResult, durationMs int64) callResultJSON {
 
 	body := string(result.Body)
 
-	// The engine redacts both the body and header values, so check both — a
-	// response can carry a redacted header (e.g. an echoed Set-Cookie) with an
-	// otherwise-clean body.
-	redacted := strings.Contains(body, proxy.RedactionPlaceholder)
-	for _, vals := range headers {
-		if redacted {
-			break
-		}
-		for _, v := range vals {
-			if strings.Contains(v, proxy.RedactionPlaceholder) {
-				redacted = true
+	// Both transports redact the body and header values, so a response can
+	// carry a redacted header (e.g. an echoed Set-Cookie) with an otherwise
+	// clean body. The transports already report this; trust their verdict and
+	// fall back to scanning for older callers that build a result by hand.
+	redacted := result.Redacted
+	if !redacted {
+		redacted = strings.Contains(body, proxy.RedactionPlaceholder)
+		for _, vals := range headers {
+			if redacted {
 				break
+			}
+			for _, v := range vals {
+				if strings.Contains(v, proxy.RedactionPlaceholder) {
+					redacted = true
+					break
+				}
 			}
 		}
 	}

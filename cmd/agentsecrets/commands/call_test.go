@@ -6,12 +6,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/The-17/agentsecrets/pkg/proxy"
+	"github.com/The-17/agentsecrets/pkg/gateway"
 )
 
 // TestBuildCallJSONSuccess mirrors the success path.
 func TestBuildCallJSONSuccess(t *testing.T) {
-	result := &proxy.CallResult{
+	result := &gateway.CallResult{
 		StatusCode: 200,
 		Headers:    map[string][]string{"Content-Type": {"application/json"}},
 		Body:       []byte(`{"ok": true}`),
@@ -40,7 +40,7 @@ func TestBuildCallJSONSuccess(t *testing.T) {
 // TestBuildCallJSONError400 mirrors the >=400 error path.
 // Note: the function prefers Message over Error when both are present.
 func TestBuildCallJSONError400(t *testing.T) {
-	result := &proxy.CallResult{
+	result := &gateway.CallResult{
 		StatusCode: 404,
 		Headers:    map[string][]string{},
 		Body:       []byte(`{"error":"not_found","message":"not found"}`),

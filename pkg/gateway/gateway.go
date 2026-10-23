@@ -530,14 +530,16 @@ func containsPlaceholder(body []byte, headers map[string][]string) bool {
 //
 // The router decides who handles the request and nothing else:
 //
-//   - cloud: this package fetches from the workload-env endpoint.
+//   - cloud: this package fetches from the workload-env endpoint, passing
+//     environment through so `--env qa` narrows the same way it does locally.
+//     An empty environment keeps the token's own binding.
 //   - local: the caller's local resolver runs unchanged, so the keychain
 //     session, audit, and masking path stay exactly as they are.
 //
 // The local callback exists because local resolution needs the caller's
 // keychain-auth session and project context. Passing it in keeps the mode
 // decision here without duplicating local behavior in this package.
-func SecretsForEnv(sel Selection, local func() (map[string]string, error)) (map[string]string, error) {
+func SecretsForEnv(sel Selection, local func() (map[string]string, error), environment string) (map[string]string, error) {
 	switch sel.Mode {
 	case ModeCloud:
 		token := TokenFromEnv()
@@ -550,7 +552,7 @@ func SecretsForEnv(sel Selection, local func() (map[string]string, error)) (map[
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		secrets, err := api.FetchWorkloadEnv(ctx, config.GetServerURL(), token)
+		secrets, err := api.FetchWorkloadEnv(ctx, config.GetServerURL(), token, environment)
 		if err != nil {
 			return nil, &ResolveError{Mode: ModeCloud, Msg: "cloud resolution failed", Err: err}
 		}

@@ -235,7 +235,7 @@ func TestSecretsForEnvLocalUsesCallback(t *testing.T) {
 	got, err := SecretsForEnv(Selection{Mode: ModeLocal}, func() (map[string]string, error) {
 		called = true
 		return map[string]string{"A": "1"}, nil
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("SecretsForEnv: %v", err)
 	}
@@ -247,7 +247,6 @@ func TestSecretsForEnvLocalUsesCallback(t *testing.T) {
 	}
 }
 
-// TestSecretsForEnvCloudFetchesWorkloadEnv verifies the cloud env path.
 // TestLocalModeNeverCallsTheResolver proves the router's local branch cannot
 // reach the cloud: with a resolver listening and a token set, a local selection
 // must still use the local callback only.
@@ -265,7 +264,7 @@ func TestLocalModeNeverCallsTheResolver(t *testing.T) {
 
 	got, err := SecretsForEnv(Selection{Mode: ModeLocal}, func() (map[string]string, error) {
 		return map[string]string{"LOCAL": "yes"}, nil
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("SecretsForEnv: %v", err)
 	}
@@ -277,11 +276,14 @@ func TestLocalModeNeverCallsTheResolver(t *testing.T) {
 	}
 }
 
+// TestSecretsForEnvCloudFetchesWorkloadEnv verifies the cloud env path,
+// including that a named environment is forwarded rather than dropped.
 func TestSecretsForEnvCloudFetchesWorkloadEnv(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envToken, "workload-token")
 	t.Setenv(envServerURL, "")
 
+	var gotEnv string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/workloads/env/" {
 			t.Errorf("path = %q", r.URL.Path)
@@ -289,16 +291,24 @@ func TestSecretsForEnvCloudFetchesWorkloadEnv(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer workload-token" {
 			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
 		}
+		var payload struct {
+			Env string `json:"env"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		gotEnv = payload.Env
 		_, _ = w.Write([]byte(`{"data":{"secrets":{"DATABASE_URL":"postgres://x"}}}`))
 	}))
 	defer srv.Close()
 	t.Setenv(envServerURL, srv.URL)
 
-	got, err := SecretsForEnv(Selection{Mode: ModeCloud}, nil)
+	got, err := SecretsForEnv(Selection{Mode: ModeCloud}, nil, "qa")
 	if err != nil {
 		t.Fatalf("SecretsForEnv: %v", err)
 	}
 	if got["DATABASE_URL"] != "postgres://x" {
 		t.Errorf("got %v", got)
+	}
+	if gotEnv != "qa" {
+		t.Errorf("environment = %q, want qa forwarded to the workload endpoint", gotEnv)
 	}
 }
