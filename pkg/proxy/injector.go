@@ -86,7 +86,7 @@ func InjectAll(req *http.Request, creds []string, injs []Injection) error {
 					}
 				}
 			}
-			if err := setNested(bodyMap, inj.Target, creds[i]); err != nil {
+			if err := SetNested(bodyMap, inj.Target, creds[i]); err != nil {
 				return err
 			}
 			bodyDirty = true
@@ -135,9 +135,11 @@ func InjectAll(req *http.Request, creds []string, injs []Injection) error {
 	return nil
 }
 
-// setNested sets value at a dot-separated path inside m, creating nested maps
-// as needed (shared by InjectAll and injectBody).
-func setNested(m map[string]interface{}, path, value string) error {
+// SetNested sets value at a dot-separated path inside m, creating nested maps
+// as needed (shared by InjectAll and injectBody). Exported so the cloud
+// resolver's {{KEY}} body-handle builder applies the exact same path semantics
+// as local injection: `--body-field a.b` must mean the same thing in both modes.
+func SetNested(m map[string]interface{}, path, value string) error {
 	parts := strings.Split(path, ".")
 	current := m
 	for i, part := range parts {
@@ -226,7 +228,7 @@ func injectBody(req *http.Request, value string, path string) error {
 	}
 
 	// Set value at nested path (e.g. "auth.key" → bodyMap["auth"]["key"])
-	if err := setNested(bodyMap, path, value); err != nil {
+	if err := SetNested(bodyMap, path, value); err != nil {
 		return err
 	}
 
