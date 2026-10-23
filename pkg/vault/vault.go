@@ -844,7 +844,14 @@ func (v *Vault) Validate() error {
 				return fmt.Errorf("%w: invalid passkey envelope", ErrVersion)
 			}
 		default:
-			return fmt.Errorf("%w: unknown envelope type %q", ErrVersion, env.Type)
+			// An envelope type this build does not recognise is ignored, not
+			// rejected. A vault is shared state written by whichever client
+			// enrolled a factor, and clients already installed cannot be
+			// updated. Failing here would make the whole vault unreadable on
+			// every older client the moment a newer one added a factor. The
+			// proof still covers this envelope, so it cannot be tampered with;
+			// this build simply cannot unlock it.
+			continue
 		}
 	}
 	if v.RecoveryConfirmed && !hasInvisible {
