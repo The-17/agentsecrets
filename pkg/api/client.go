@@ -59,6 +59,7 @@ var endpointMap = map[string]map[string]string{
 		"delete":   "projects/{workspace_id}/{project_name}/",
 		"invite":   "projects/{workspace_id}/{project_name}/invite/",
 		"transfer": "projects/{workspace_id}/{project_name}/transfer/",
+		"environments": "projects/{project_id}/environments/",
 	},
 	"workspaces": {
 		"list":             "workspaces/",
@@ -469,8 +470,64 @@ type WorkloadEnvResponse struct {
 	Secrets       map[string]string `json:"secrets"`
 }
 
+// ProjectEnvironment is one entry of the control plane's environment inventory.
+// An environment exists there once the project holds a secret under that name.
+type ProjectEnvironment struct {
+	Name        string `json:"name"`
+	IsStandard  bool   `json:"is_standard"`
+	SecretCount int    `json:"secret_count"`
+}
+
+// FetchProjectEnvironments returns every environment the project holds, as the
+// control plane sees it: the standard three plus any custom names. Callers must
+// prefer this over the local cache, which only knows names this machine has
+// touched, so a custom environment created on the dashboard would otherwise be
+// invisible to the CLI.
+func FetchProjectEnvironments(c *Client, projectID string) ([]ProjectEnvironment, error) {
+	if c == nil {
+		return nil, fmt.Errorf("project environments: no API client")
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return nil, fmt.Errorf("project environments: project id is required")
+	}
+	inventory, err := CallJSON[struct {
+		Environments []ProjectEnvironment `json:"environments"`
+	}](c, "projects.environments", "GET", nil, map[string]string{
+		"project_id": projectID,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("project environments: %w", err)
+	}
+	return inventory.Environments, nil
+}
+
+// decodeDetail pulls the human-readable reason out of an error response. The
+// control plane answers with {"detail": ...} for handler refusals and with the
+// CustomResponse envelope {"message": ...} elsewhere, so both are read.
+func decodeDetail(resp *http.Response) string {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil || len(raw) == 0 {
+		return http.StatusText(resp.StatusCode)
+	}
+	var envelope struct {
+		Detail  string `json:"detail"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	if envelope.Detail != "" {
+		return envelope.Detail
+	}
+	if envelope.Message != "" {
+		return envelope.Message
+	}
+	return strings.TrimSpace(string(raw))
+}
+
 // FetchWorkloadEnv retrieves scoped project secrets over TLS using an agent workload token.
-func FetchWorkloadEnv(ctx context.Context, serverURL, token string) (map[string]string, error) {
+// environment selects a non-default environment; empty means the token's own.
+func FetchWorkloadEnv(ctx context.Context, serverURL, token, environment string) (map[string]string, error) {
 	// Workload tokens are opaque `secrets.token_urlsafe(32)` values (43 chars,
 	// no prefix) issued by the control plane and verified server-side by
 	// sha256(raw_token). Do NOT impose an "agt_" prefix here: the "agt_" strings
@@ -485,7 +542,19 @@ func FetchWorkloadEnv(ctx context.Context, serverURL, token string) (map[string]
 		targetURL = strings.TrimRight(serverURL, "/") + "/api/workloads/env/"
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, nil)
+	// The server takes the environment as a JSON body field, not a query param.
+	// Omitting it keeps the token's own binding, which is what a bare
+	// `agentsecrets env --cloud` must do.
+	var body io.Reader
+	if environment != "" {
+		payload, err := json.Marshal(map[string]string{"env": environment})
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode workload request: %w", err)
+		}
+		body = bytes.NewReader(payload)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workload request: %w", err)
 	}
@@ -501,11 +570,20 @@ func FetchWorkloadEnv(ctx context.Context, serverURL, token string) (map[string]
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// The control plane answers 401 for a bad token and 403 for a token that
+		// is valid but not permitted (no can_env_read). Reporting both as "invalid
+		// token" hid the real reason and sent people to re-issue a working token.
+		if detail := decodeDetail(resp); detail != "" {
+			return nil, fmt.Errorf("%s", detail)
+		}
 		return nil, fmt.Errorf("authentication failed: invalid, expired, or revoked workload token")
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("server returned error status: %d", resp.StatusCode)
+		// Surface the server's own message: an entitlement or capability refusal
+		// (for example a custom environment the plan does not cover) explains
+		// itself far better than a bare status code.
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, decodeDetail(resp))
 	}
 
 	var envelope struct {

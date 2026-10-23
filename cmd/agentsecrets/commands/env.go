@@ -30,13 +30,12 @@ import (
 
 func NewEnvCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "env [--cloud] [--only KEYS] [--sandbox] -- <command> [args...]",
+		Use:   "env [--cloud] [--env NAME] [--only KEYS] [--sandbox] -- <command> [args...]",
 		Short: "Inject secrets as environment variables into a child process",
 		Long: `Resolves secrets and injects them as environment variables into the specified command.
 		Supports Dual-Engine resolution:
 		- Local Engine (Default): Resolves from local OS keychain (offline, 0ms latency).
 		- Cloud Engine: Resolves from AgentSecrets Cloud over TLS via AGENTSECRETS_TOKEN or --cloud.
-
 		The child is made non-dumpable where the OS allows (Linux, macOS) so no
 		other process can read its environment, and secret values are
 		filtered from its stdout/stderr text. That filtering is hygiene, not
@@ -47,10 +46,16 @@ func NewEnvCmd() *cobra.Command {
 		applies.
 
 		--cloud              resolve secrets via AgentSecrets Cloud
+		--env NAME           environment to resolve (default: the active one, or the
+		                     workload token's own binding when resolving in the cloud).
+		                     Any valid name works: development, staging, production, or
+		                     a custom environment such as qa or preview-pr-12.
 		--only KEY[,KEY...]  inject only these secrets (default: all)
 		--sandbox            run the child with no network egress (Linux only)`,
 		Example: `  agentsecrets env -- npm run dev
   agentsecrets env --cloud -- npm run dev
+  agentsecrets env --env qa -- npm run dev
+  agentsecrets env --cloud --env preview-pr-12 -- node server.js
   agentsecrets env --only DATABASE_URL -- ./run-migrations.sh
   agentsecrets env --sandbox -- ./seed.sh
   AGENTSECRETS_TOKEN=agt_prod_... agentsecrets env -- node server.js`,
@@ -65,6 +70,7 @@ func runEnv(cmd *cobra.Command, args []string) error {
 	// DisableFlagParsing is active, so leading flags are parsed by hand.
 	useCloud := false
 	sandbox := false
+	envName := ""
 	var onlyKeys []string
 parseArgs:
 	for len(args) > 0 {
@@ -77,6 +83,17 @@ parseArgs:
 		case args[0] == "--sandbox":
 			sandbox = true
 			args = args[1:]
+		case args[0] == "--env" || strings.HasPrefix(args[0], "--env="):
+			val := strings.TrimPrefix(strings.TrimPrefix(args[0], "--env"), "=")
+			args = args[1:]
+			if val == "" {
+				if len(args) == 0 {
+					return fmt.Errorf("--env requires an environment name")
+				}
+				val = args[0]
+				args = args[1:]
+			}
+			envName = val
 		case args[0] == "--only" || strings.HasPrefix(args[0], "--only="):
 			val := strings.TrimPrefix(strings.TrimPrefix(args[0], "--only"), "=")
 			args = args[1:]
@@ -109,8 +126,20 @@ parseArgs:
 	}
 
 	var secrets map[string]string
-	var err error
 	var project *config.ProjectConfig
+	var err error
+
+	// Resolve and validate the requested environment. An empty value means "use
+	// the active environment", which ResolveEnvironment already normalized.
+	requestedEnv := ""
+	if strings.TrimSpace(envName) != "" {
+		requestedEnv, err = config.ParseEnvironment(envName)
+		if err != nil {
+			return fmt.Errorf("--env: %w", err)
+		}
+	} else if !useCloud {
+		requestedEnv = config.ResolveEnvironment()
+	}
 
 	if useCloud {
 		if token == "" {
@@ -125,7 +154,7 @@ parseArgs:
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		secrets, err = api.FetchWorkloadEnv(ctx, serverURL, token)
+		secrets, err = api.FetchWorkloadEnv(ctx, serverURL, token, requestedEnv)
 		if err != nil {
 			return fmt.Errorf("cloud resolution failed: %w", err)
 		}
@@ -143,8 +172,7 @@ parseArgs:
 		}
 
 		// Resolve all secrets from local OS keychain
-		envName := config.ResolveEnvironment()
-		secrets, err = keyring.GetAllProjectSecrets(project.ProjectID, envName)
+		secrets, err = keyring.GetAllProjectSecrets(project.ProjectID, requestedEnv)
 		if err != nil {
 			return fmt.Errorf("failed to load secrets from keychain: %w", err)
 		}
