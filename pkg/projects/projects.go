@@ -39,6 +39,25 @@ func NewService(client *api.Client) *Service {
 // so tests can inject deterministic keys without touching the OS keychain.
 var workspaceKeyResolver = config.GetWorkspaceKey
 
+// environments returns every environment the project holds. The control plane's
+// inventory wins because the local cache only knows names this machine has
+// touched; invite and transfer must cover custom environments created elsewhere
+// or they would silently drop those secrets. A failed call falls back to local.
+func (s *Service) environments(projectID, projectRoot string) ([]string, error) {
+	if inventory, err := api.FetchProjectEnvironments(s.API, projectID); err == nil {
+		names := make([]string, 0, len(inventory))
+		for _, env := range inventory {
+			if name, parseErr := config.ParseEnvironment(env.Name); parseErr == nil {
+				names = append(names, name)
+			}
+		}
+		if len(names) > 0 {
+			return names, nil
+		}
+	}
+	return config.LocalEnvironments(projectID, projectRoot)
+}
+
 // List returns all projects for the currently selected workspace
 func (s *Service) List() ([]Project, error) {
 	return api.CallJSON[[]Project](s.API, "projects.list", "GET", nil, nil, nil)
@@ -303,7 +322,11 @@ func (s *Service) Invite(email, role string) error {
 		}
 
 		apiSecrets := []map[string]string{}
-		environments := config.ValidEnvironments
+		root, _ := config.GetProjectRoot()
+		environments, err := s.environments(project.ProjectID, root)
+		if err != nil {
+			return fmt.Errorf("list environments: %w", err)
+		}
 
 		for _, env := range environments {
 			scrtResp, err := s.API.Call("secrets.list", "GET", nil, map[string]string{"project_id": project.ProjectID}, map[string]string{"environment": env})
@@ -451,7 +474,13 @@ func (s *Service) Transfer(projectName, targetWorkspaceID string) (*TransferResu
 	}
 	items := []reencItem{}
 
-	for _, env := range config.ValidEnvironments {
+	root, _ := config.GetProjectRoot()
+	environments, err := s.environments(project.ID, root)
+	if err != nil {
+		return nil, fmt.Errorf("transfer project: list environments: %w", err)
+	}
+
+	for _, env := range environments {
 		resp, err := s.API.Call("secrets.list", "GET", nil,
 			map[string]string{"project_id": project.ID},
 			map[string]string{"environment": env})

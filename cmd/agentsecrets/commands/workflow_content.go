@@ -56,7 +56,7 @@ __BT____BT____BT__
 ## ENVIRONMENTS
 
 __BT____BT____BT__bash
-agentsecrets environment list                 # View environments (development, staging, production)
+agentsecrets environment list                 # View environments (development, staging, production, and any custom ones)
 agentsecrets environment switch <name>        # Switch active environment
 agentsecrets secrets diff --from <x> --to <y> # Compare keys and values across environments
 agentsecrets environment copy <from> <to>     # Copy secrets across environments

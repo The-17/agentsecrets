@@ -158,9 +158,22 @@ var secretsRotationStatusCmd = &cobra.Command{
 	RunE:  runSecretsRotationStatus,
 }
 
+// envFlagValue normalizes an optional --env flag. An empty value means "use the
+// active environment", which ResolveEnvironment already normalized.
+func envFlagValue(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	return config.ParseEnvironment(raw)
+}
+
 func runSecretsRotate(cmd *cobra.Command, args []string) error {
 	key := args[0]
-	env, _ := cmd.Flags().GetString("env")
+	envRaw, _ := cmd.Flags().GetString("env")
+	env, err := envFlagValue(envRaw)
+	if err != nil {
+		return fmt.Errorf("--env: %w", err)
+	}
 	inlineValue, _ := cmd.Flags().GetString("value")
 	generate, _ := cmd.Flags().GetBool("generate")
 	genLength, _ := cmd.Flags().GetInt("length")
@@ -284,7 +297,11 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 
 func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 	key := args[0]
-	env, _ := cmd.Flags().GetString("env")
+	envRaw, _ := cmd.Flags().GetString("env")
+	env, err := envFlagValue(envRaw)
+	if err != nil {
+		return fmt.Errorf("--env: %w", err)
+	}
 	policyType, _ := cmd.Flags().GetString("type")
 	periodDays, _ := cmd.Flags().GetInt("period-days")
 	overlapHours, _ := cmd.Flags().GetInt("overlap-hours")
@@ -366,7 +383,11 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 
 func runSecretsRotationStatus(cmd *cobra.Command, args []string) error {
 	key := args[0]
-	env, _ := cmd.Flags().GetString("env")
+	envRaw, _ := cmd.Flags().GetString("env")
+	env, err := envFlagValue(envRaw)
+	if err != nil {
+		return fmt.Errorf("--env: %w", err)
+	}
 
 	status, err := app.Secrets().RotationStatus(key, env)
 	if err != nil {
@@ -405,7 +426,7 @@ func init() {
 	secretsSetCmd.Flags().String("from-command", "", "Use the command's stdout as the value")
 	secretsSetCmd.Flags().String("extract", "", "With --from-command: dot-separated JSON path in the command output that holds the value")
 	secretsSetCmd.Flags().String("output", "text", "Output format: text or json")
-	secretsSetCmd.Flags().String("env", "", "Target environment (development, staging, production); defaults to the active one")
+	secretsSetCmd.Flags().String("env", "", "Target environment: development, staging, production, or a custom name ("+config.EnvironmentNameRule+"); defaults to the active one")
 	secretsDiffCmd.Flags().StringVar(&diffFrom, "from", "", "Source environment for cross-environment diff")
 	secretsDiffCmd.Flags().StringVar(&diffTo, "to", "", "Target environment for cross-environment diff")
 
@@ -428,7 +449,7 @@ func init() {
 		secretsRotationSetCmd,
 		secretsRotationStatusCmd,
 	)
-	secretsRotateCmd.Flags().String("env", "", "environment (development, staging, production)")
+	secretsRotateCmd.Flags().String("env", "", "environment (development, staging, production, or a custom name)")
 	secretsRotateCmd.Flags().String("value", "", "new value inline (prefer --generate or prompt; inline values linger in shell history)")
 	secretsRotateCmd.Flags().Bool("generate", false, "generate a random value")
 	secretsRotateCmd.Flags().Int("length", 32, "generated value length in bytes")
@@ -439,7 +460,7 @@ func init() {
 	secretsRotateCmd.Flags().String("expected-current", "", "compare-and-swap: only promote if this is still the current version")
 	secretsRotateCmd.Flags().Bool("confirm", false, "skip confirmation prompts")
 	secretsRotateCmd.ValidArgsFunction = autocompleteSecretKeys
-	secretsRotationSetCmd.Flags().String("env", "", "environment (development, staging, production)")
+	secretsRotationSetCmd.Flags().String("env", "", "environment (development, staging, production, or a custom name)")
 	secretsRotationSetCmd.Flags().String("type", "value_client", "rotation class: value_client, value_auto, or value_provider")
 	secretsRotationSetCmd.Flags().Int("period-days", 0, "rotation cadence in days (1-365)")
 	secretsRotationSetCmd.Flags().String("adapter", "", "provider adapter for value_provider (currently: postgres)")
@@ -449,7 +470,7 @@ func init() {
 	secretsRotationSetCmd.Flags().Int("length-bytes", 0, "minted credential length 16-256 (provider default 32)")
 	secretsRotationSetCmd.Flags().Int("overlap-hours", 0, "routine-rotation grace window in hours")
 	secretsRotationSetCmd.Flags().Bool("disable", false, "disarm the rotation cadence")
-	secretsRotationStatusCmd.Flags().String("env", "", "environment (development, staging, production)")
+	secretsRotationStatusCmd.Flags().String("env", "", "environment (development, staging, production, or a custom name)")
 }
 
 func runSecretsSet(cmd *cobra.Command, args []string) error {
@@ -487,8 +508,12 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 	if extract != "" && fromCommand == "" {
 		return fmt.Errorf("--extract only applies to --from-command")
 	}
-	if envFlag != "" && !config.IsValidEnvironment(envFlag) {
-		return fmt.Errorf("invalid --env %q (valid: development, staging, production)", envFlag)
+	if envFlag != "" {
+		normalized, err := envFlagValue(envFlag)
+		if err != nil {
+			return fmt.Errorf("--env: %w", err)
+		}
+		envFlag = normalized
 	}
 	if envFlag != "" && allEnvs {
 		return fmt.Errorf("--env and --all-envs are mutually exclusive")
@@ -607,7 +632,7 @@ func storeSecretValues(kv map[string]string, env string, quiet bool) ([]secrets.
 	if allEnvs {
 		if !quiet {
 			names := strings.Join(sortedKeys(kv), ", ")
-			if !confirmProceed(false, fmt.Sprintf("This will set %s in development, staging, and production. Continue? (y/n): ", names)) {
+			if !confirmProceed(false, fmt.Sprintf("This will set %s in %s. Continue? (y/n): ", names, strings.Join(config.StandardEnvironments, ", "))) {
 				ui.Info("Cancelled.")
 				return nil, nil
 			}
@@ -615,7 +640,7 @@ func storeSecretValues(kv map[string]string, env string, quiet bool) ([]secrets.
 		if err := verifyPasswordLocally(); err != nil {
 			return nil, err
 		}
-		for _, e := range config.ValidEnvironments {
+		for _, e := range config.StandardEnvironments {
 			var setErr error
 			if quiet {
 				setErr = app.Secrets().BatchSet(kv, e)
@@ -787,9 +812,13 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 	}
 
 	activeEnv := config.ResolveEnvironment()
-	envs := config.ValidEnvironments
+	root, _ := config.GetProjectRoot()
+	envs, err := app.Secrets().Environments(project.ProjectID, root)
+	if err != nil {
+		return err
+	}
 
-	presence := make(map[string][3]bool)
+	presence := make(map[string][]bool)
 	allKeysSet := make(map[string]bool)
 
 	for i, env := range envs {
@@ -799,6 +828,9 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 		}
 		for _, k := range keys {
 			p := presence[k]
+			if p == nil {
+				p = make([]bool, len(envs))
+			}
 			p[i] = true
 			presence[k] = p
 			allKeysSet[k] = true
@@ -811,32 +843,8 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Sort keys
-	var sortedKeys []string
-	for k := range allKeysSet {
-		sortedKeys = append(sortedKeys, k)
-	}
-	sort.Strings(sortedKeys)
-
-	headers := []string{"Key", "DEV", "STAGING", "PROD"}
-	rows := make([][]string, len(sortedKeys))
-
-	for i, k := range sortedKeys {
-		p := presence[k]
-		row := []string{ui.BrandStyle.Render(k)}
-
-		for j := 0; j < 3; j++ {
-			if p[j] {
-				row = append(row, ui.SuccessStyle.Render("*"))
-			} else {
-				row = append(row, ui.DimStyle.Render("-"))
-			}
-		}
-		rows[i] = row
-	}
-
 	fmt.Printf("\nEnvironment: %s\n\n", ui.BrandStyle.Render(activeEnv))
-	fmt.Println(ui.RenderTable(headers, rows))
+	fmt.Println(renderEnvPresenceTable(envs, presence, allKeysSet))
 	fmt.Println()
 	ui.Info("Showing cached keys. Use --remote for latest from cloud.")
 	return nil
@@ -844,13 +852,22 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 
 func runSecretsListRemote(cmd *cobra.Command, args []string) error {
 	activeEnv := config.ResolveEnvironment()
-	envs := config.ValidEnvironments
+
+	project, err := config.LoadProjectConfig()
+	if err != nil || project == nil || project.ProjectID == "" {
+		return fmt.Errorf("no project configured in current directory")
+	}
+	root, _ := config.GetProjectRoot()
+	envs, err := app.Secrets().Environments(project.ProjectID, root)
+	if err != nil {
+		return err
+	}
 
 	type envResult struct {
 		env  string
 		keys []string
 	}
-	results := make(chan envResult, 3)
+	results := make(chan envResult, len(envs))
 	var wg sync.WaitGroup
 
 	if err := ui.Spinner("Fetching keys from all environments...", func() error {
@@ -927,7 +944,7 @@ func renderEnvPresenceTable(envs []string, presence map[string][]bool, allKeysSe
 	headers := make([]string, 0, len(envs)+1)
 	headers = append(headers, "Key")
 	for _, e := range envs {
-		headers = append(headers, envColumnLabel(e))
+		headers = append(headers, config.EnvironmentColumnLabel(e))
 	}
 
 	rows := make([][]string, len(sortedKeys))
@@ -946,19 +963,6 @@ func renderEnvPresenceTable(envs []string, presence map[string][]bool, allKeysSe
 	}
 
 	return ui.RenderTable(headers, rows)
-}
-
-// envColumnLabel returns the short, upper-cased column header for an environment
-// name (e.g. "development" -> "DEV", "production" -> "PROD").
-func envColumnLabel(env string) string {
-	switch env {
-	case "development":
-		return "DEV"
-	case "production":
-		return "PROD"
-	default:
-		return strings.ToUpper(env)
-	}
 }
 
 func runSecretsPull(cmd *cobra.Command, args []string) error {
@@ -1199,9 +1203,18 @@ func runSecretsDelete(cmd *cobra.Command, args []string) error {
 func runSecretsDiff(cmd *cobra.Command, args []string) error {
 	var diff *secrets.DiffResult
 
+	from, err := envFlagValue(diffFrom)
+	if err != nil {
+		return fmt.Errorf("--from: %w", err)
+	}
+	to, err := envFlagValue(diffTo)
+	if err != nil {
+		return fmt.Errorf("--to: %w", err)
+	}
+
 	if err := ui.Spinner("Comparing secrets & allowlist...", func() error {
 		var e error
-		diff, e = app.Secrets().Diff(diffFrom, diffTo)
+		diff, e = app.Secrets().Diff(from, to)
 		return e
 	}); err != nil {
 		ui.Error(fmt.Sprintf("Diff: %v", err))
@@ -1255,12 +1268,12 @@ func runSecretsDiff(cmd *cobra.Command, args []string) error {
 	}
 
 	sourceName := "Local"
-	if diffFrom != "" {
-		sourceName = upperFirst(diffFrom)
+	if from != "" {
+		sourceName = upperFirst(from)
 	}
 	targetName := "Cloud"
-	if diffTo != "" {
-		targetName = upperFirst(diffTo)
+	if to != "" {
+		targetName = upperFirst(to)
 	} else {
 		targetName = upperFirst(config.ResolveEnvironment())
 	}
@@ -1314,7 +1327,7 @@ func runSecretsDiff(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println()
 	}
-	if diffFrom == "" {
+	if from == "" {
 		if len(diff.Added) > 0 {
 			fmt.Printf("Run %s to upload local changes.\n", ui.BrandStyle.Render("agentsecrets secrets push"))
 		}

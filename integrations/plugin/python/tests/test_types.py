@@ -84,13 +84,32 @@ class CallRequestTests(unittest.TestCase):
         ).prepared()
         self.assertNotIn("Content-Type", request.headers)
 
-    def test_rejects_invalid_environment(self) -> None:
-        with self.assertRaises(InvalidRequest):
-            CallRequest(
+    def test_accepts_custom_environment_names(self) -> None:
+        for name in ("qa", "preview-pr-12", "uat"):
+            request = CallRequest(
                 url="https://api.example.com",
                 injections={"bearer": "KEY"},
-                environment="qa",
+                environment=name,
             )
+            self.assertEqual(request.environment, name)
+
+    def test_normalizes_environment_case_and_whitespace(self) -> None:
+        request = CallRequest(
+            url="https://api.example.com",
+            injections={"bearer": "KEY"},
+            environment="  QA  ",
+        )
+        self.assertEqual(request.environment, "qa")
+
+    def test_rejects_invalid_environment(self) -> None:
+        for name in ("", "has space", "-lead", "9qa", "root", "admin", "api", "internal", "default"):
+            with self.subTest(name=name):
+                with self.assertRaises(InvalidRequest):
+                    CallRequest(
+                        url="https://api.example.com",
+                        injections={"bearer": "KEY"},
+                        environment=name,
+                    )
 
     def test_from_mapping_accepts_camel_agent_id(self) -> None:
         request = CallRequest.from_mapping(

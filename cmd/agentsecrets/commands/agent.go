@@ -44,6 +44,10 @@ var agentRegisterCmd = &cobra.Command{
 		if environment == "" {
 			environment = config.ResolveEnvironment()
 		}
+		environment, err := config.ParseEnvironment(environment)
+		if err != nil {
+			return err
+		}
 
 		workspaceID, err := requireWorkspace()
 		if err != nil {
@@ -240,6 +244,10 @@ var agentTokenIssueCmd = &cobra.Command{
 
 		if environment == "" {
 			environment = config.ResolveEnvironment()
+		}
+		environment, err := config.ParseEnvironment(environment)
+		if err != nil {
+			return err
 		}
 
 		workspaceID, err := requireWorkspace()
@@ -623,7 +631,7 @@ func init() {
 	agentRegisterCmd.Flags().StringP("project", "p", "", "scope to a specific project")
 	agentRegisterCmd.Flags().StringP("label", "l", "", "human label for the first token")
 	agentRegisterCmd.Flags().StringP("expires", "e", "", "token expiry (e.g. 30d, 90d)")
-	agentRegisterCmd.Flags().String("env", "", "environment for the token (development, staging, production)")
+	agentRegisterCmd.Flags().String("env", "", "environment for the token (development, staging, production, or a custom name)")
 	agentRegisterCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
 	agentRegisterCmd.Flags().Bool("env-read", false, "grant headless environment delivery scope (can_env_read) at creation")
 	agentRegisterCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve) at creation")
@@ -634,7 +642,7 @@ func init() {
 	// Flags for token issue
 	agentTokenIssueCmd.Flags().StringP("label", "l", "", "label for this token")
 	agentTokenIssueCmd.Flags().StringP("expires", "e", "", "token expiry (e.g. 30d, 90d)")
-	agentTokenIssueCmd.Flags().String("env", "", "environment for the token (development, staging, production)")
+	agentTokenIssueCmd.Flags().String("env", "", "environment for the token (development, staging, production, or a custom name)")
 	agentTokenIssueCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
 
 	// Flags for token list
@@ -812,7 +820,11 @@ func validateSecretsExist(projectID string, keys []string) error {
 	knownKeys := make(map[string]bool)
 
 	// 1. Check local keyring
-	envs := config.ValidEnvironments
+	root, _ := config.GetProjectRoot()
+	envs, err := app.Secrets().Environments(projectID, root)
+	if err != nil {
+		return fmt.Errorf("list environments: %w", err)
+	}
 	for _, env := range envs {
 		if localKeys, err := keyring.ListProjectKeyNames(projectID, env); err == nil {
 			for _, k := range localKeys {

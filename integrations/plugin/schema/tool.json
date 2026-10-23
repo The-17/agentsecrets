@@ -32,8 +32,8 @@
       },
       "environment": {
         "type": "string",
-        "enum": ["development", "staging", "production"],
-        "description": "Asserts the expected environment. Cloud checks the token binding; local checks the active CLI environment."
+        "pattern": "^[a-z][a-z0-9-]{1,31}$",
+        "description": "Asserts the expected environment: lowercase letters, numbers and hyphens, starting with a letter, 2 to 32 characters. Standard names are development, staging, production; other valid names are custom and resolve on Pro plans only. Cloud checks the token binding; local checks the active CLI environment."
       },
       "path": {
         "type": "string",

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
 from .errors import InvalidRequest
+from .environment import parse_environment
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 TARGETED_STYLES = ("header", "query", "body", "form")
@@ -117,8 +118,7 @@ class CallRequest:
         object.__setattr__(self, "headers", normalized)
 
         if self.environment is not None:
-            if self.environment not in ("development", "staging", "production"):
-                raise InvalidRequest("environment must be development, staging, or production")
+            object.__setattr__(self, "environment", parse_environment(self.environment))
 
         parsed = parse_injections(dict(self.injections))
         object.__setattr__(

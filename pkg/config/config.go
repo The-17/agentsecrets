@@ -76,7 +76,7 @@ type GlobalConfig struct {
 	Email               string                         `json:"email,omitempty"`
 	SelectedWorkspaceID string                         `json:"selected_workspace_id,omitempty"`
 	SelectedProjectID   string                         `json:"selected_project_id,omitempty"`
-	SelectedEnvironment string                         `json:"selected_environment,omitempty"` // "development", "staging", "production"
+	SelectedEnvironment string                         `json:"selected_environment,omitempty"` // standard or custom environment name
 	Workspaces          map[string]WorkspaceCacheEntry `json:"workspaces,omitempty"`
 	PasswordHash        string                         `json:"password_hash,omitempty"` // Added for local password verification
 	UserID              string                         `json:"user_id,omitempty"`       // Server-side account id bound into vault AAD
@@ -108,7 +108,7 @@ type ProjectConfig struct {
 	ProjectID     string `json:"project_id"`
 	ProjectName   string `json:"project_name"`
 	Description   string `json:"description"`
-	Environment   string `json:"environment"` // "development", "staging", "production"
+	Environment   string `json:"environment"` // standard or custom environment name
 	WorkspaceID   string `json:"workspace_id"`
 	WorkspaceName string `json:"workspace_name"`
 	LastPull      string `json:"last_pull"`
@@ -950,19 +950,6 @@ func SetStorageMode(mode int) error {
 
 // --- Environment Resolution ---
 
-// ValidEnvironments is the list of valid environment names.
-var ValidEnvironments = []string{"development", "staging", "production"}
-
-// IsValidEnvironment returns true if the given string is a valid environment name.
-func IsValidEnvironment(env string) bool {
-	for _, valid := range ValidEnvironments {
-		if env == valid {
-			return true
-		}
-	}
-	return false
-}
-
 // ResolveEnvironment returns the active environment for the current context.
 // Resolution order:
 // 1. AGENTSECRETS_ENV environment variable
@@ -979,24 +966,25 @@ func ResolveEnvironment() string {
 func ResolveEnvironmentWithSource() (string, string) {
 	// 1. Check env var
 	if env := os.Getenv("AGENTSECRETS_ENV"); env != "" {
-		if !IsValidEnvironment(env) {
-			fmt.Fprintf(os.Stderr, "Warning: AGENTSECRETS_ENV=%s is not a valid environment. Using development.\nValid environments: development, staging, production\n", env)
+		name, err := ParseEnvironment(env)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: AGENTSECRETS_ENV=%s is not a valid environment (%v). Using development.\n", env, err)
 			return "development", "default"
 		}
-		return env, "AGENTSECRETS_ENV"
+		return name, "AGENTSECRETS_ENV"
 	}
 
 	// 2. Check project.json (use existing project root walk-up logic)
 	if p, err := LoadProjectConfig(); err == nil && p != nil {
-		if p.Environment != "" && IsValidEnvironment(p.Environment) {
-			return p.Environment, "project.json"
+		if name, err := ParseEnvironment(p.Environment); err == nil {
+			return name, "project.json"
 		}
 	}
 
 	// 3. Check global config
 	if c, err := LoadGlobalConfig(); err == nil && c != nil {
-		if c.SelectedEnvironment != "" && IsValidEnvironment(c.SelectedEnvironment) {
-			return c.SelectedEnvironment, "global config"
+		if name, err := ParseEnvironment(c.SelectedEnvironment); err == nil {
+			return name, "global config"
 		}
 	}
 

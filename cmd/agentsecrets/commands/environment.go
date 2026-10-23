@@ -19,8 +19,10 @@ import (
 var environmentCmd = &cobra.Command{
 	Use:     "environment",
 	Aliases: []string{"env-switch"},
-	Short:   "Manage environments (development, staging, production)",
-	Long:    `Switch between environments, list secret counts per environment, and copy or merge secrets across environments.`,
+	Short:   "Manage environments (standard and custom)",
+	Long: `Switch between environments, list secret counts per environment, and copy or merge secrets across environments.
+
+An environment is any name matching ` + config.EnvironmentNameRule + `. The standard three are ` + strings.Join(config.StandardEnvironments, ", ") + `.`,
 }
 
 var envSwitchCmd = &cobra.Command{
@@ -73,10 +75,9 @@ func init() {
 }
 
 func runEnvSwitch(cmd *cobra.Command, args []string) error {
-	environment := args[0]
-
-	if !config.IsValidEnvironment(environment) {
-		return fmt.Errorf("Unknown environment '%s'.\nValid environments: development, staging, production.", environment)
+	environment, err := config.ParseEnvironment(args[0])
+	if err != nil {
+		return err
 	}
 
 	// Check for potentially unsaved local changes
@@ -139,17 +140,21 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 	activeEnv := config.ResolveEnvironment()
 
+	root, _ := config.GetProjectRoot()
+	environments, err := app.Secrets().Environments(project.ProjectID, root)
+	if err != nil {
+		return err
+	}
+
 	// Try to fetch environment data from API
 	type envInfo struct {
 		Environment string `json:"environment"`
 		SecretCount int    `json:"secret_count"`
 	}
 
-	var environments []envInfo
-
 	// Fetch environment data in parallel
-	results := make(chan envInfo, 3)
-	for _, env := range config.ValidEnvironments {
+	results := make(chan envInfo, len(environments))
+	for _, env := range environments {
 		go func(e string) {
 			count := 0
 			resp, err := app.API().Call("secrets.list", "GET", nil, map[string]string{
@@ -174,45 +179,24 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		}(env)
 	}
 
-	for i := 0; i < len(config.ValidEnvironments); i++ {
-		environments = append(environments, <-results)
-	}
-
-	// Sort to match order: development, staging, production
-	ordered := make([]envInfo, 3)
-	for _, env := range environments {
-		switch env.Environment {
-		case "development":
-			ordered[0] = env
-		case "staging":
-			ordered[1] = env
-		case "production":
-			ordered[2] = env
-		}
-	}
-	environments = ordered
-
-	// Fallback if API call failed or returned no data
-	if len(environments) == 0 {
-		for _, name := range config.ValidEnvironments {
-			environments = append(environments, envInfo{
-				Environment: name,
-				SecretCount: 0,
-			})
-		}
+	counts := make(map[string]int, len(environments))
+	for i := 0; i < len(environments); i++ {
+		info := <-results
+		counts[info.Environment] = info.SecretCount
 	}
 
 	fmt.Println()
-	for _, env := range environments {
+	for _, name := range environments {
+		count := counts[name]
 		marker := ""
-		if env.Environment == activeEnv {
+		if name == activeEnv {
 			marker = "   ← active"
 		}
 		secretsLabel := "secrets"
-		if env.SecretCount == 1 {
+		if count == 1 {
 			secretsLabel = "secret"
 		}
-		fmt.Printf("  %-14s %2d %s%s\n", env.Environment, env.SecretCount, secretsLabel, marker)
+		fmt.Printf("  %-14s %2d %s%s\n", name, count, secretsLabel, marker)
 	}
 	fmt.Println()
 
@@ -220,13 +204,13 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvCopy(cmd *cobra.Command, args []string) error {
-	from, to := args[0], args[1]
-
-	if !config.IsValidEnvironment(from) {
-		return fmt.Errorf("Unknown environment '%s'.\nValid environments: development, staging, production.", from)
+	from, err := config.ParseEnvironment(args[0])
+	if err != nil {
+		return err
 	}
-	if !config.IsValidEnvironment(to) {
-		return fmt.Errorf("Unknown environment '%s'.\nValid environments: development, staging, production.", to)
+	to, err := config.ParseEnvironment(args[1])
+	if err != nil {
+		return err
 	}
 	if from == to {
 		return fmt.Errorf("Source and destination environments must be different.")
@@ -307,13 +291,13 @@ func runEnvCopy(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvMerge(cmd *cobra.Command, args []string) error {
-	from, to := args[0], args[1]
-
-	if !config.IsValidEnvironment(from) {
-		return fmt.Errorf("Unknown environment '%s'.\nValid environments: development, staging, production.", from)
+	from, err := config.ParseEnvironment(args[0])
+	if err != nil {
+		return err
 	}
-	if !config.IsValidEnvironment(to) {
-		return fmt.Errorf("Unknown environment '%s'.\nValid environments: development, staging, production.", to)
+	to, err := config.ParseEnvironment(args[1])
+	if err != nil {
+		return err
 	}
 
 	project, err := config.LoadProjectConfig()
@@ -475,9 +459,27 @@ func runEnvClean(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// knownEnvironments lists the project's environments, standard three first. It
+// asks the control plane because the local cache can only see names this
+// machine has touched, and a custom environment created on the dashboard would
+// otherwise be invisible. Offline, it falls back to the local list, then to the
+// standard three.
+func knownEnvironments() []string {
+	p, err := config.LoadProjectConfig()
+	if err != nil || p == nil || p.ProjectID == "" {
+		return config.StandardEnvironments
+	}
+	root, _ := config.GetProjectRoot()
+	environments, err := app.Secrets().Environments(p.ProjectID, root)
+	if err != nil {
+		return config.StandardEnvironments
+	}
+	return environments
+}
+
 func autocompleteEnvironments(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	var completions []string
-	for _, env := range config.ValidEnvironments {
+	for _, env := range knownEnvironments() {
 		if strings.HasPrefix(strings.ToLower(env), strings.ToLower(toComplete)) {
 			completions = append(completions, env)
 		}
@@ -490,7 +492,7 @@ func autocompleteEnvironmentsMulti(cmd *cobra.Command, args []string, toComplete
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	var completions []string
-	for _, env := range config.ValidEnvironments {
+	for _, env := range knownEnvironments() {
 		if len(args) == 1 && env == args[0] {
 			continue
 		}

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 
+from .environment import NAME_PATTERN, NAME_RULE, STANDARD_ENVIRONMENTS
+
 TOOL_NAME = "agentsecrets_call"
 TOOL_DESCRIPTION = (
     "Call an HTTPS API with AgentSecrets-injected credentials. "
@@ -44,10 +46,14 @@ TOOL_SCHEMA = {
             },
             "environment": {
                 "type": "string",
-                "enum": ["development", "staging", "production"],
+                "pattern": NAME_PATTERN,
                 "description": (
-                    "Asserts the expected environment. Cloud checks the token binding; "
-                    "local checks the active CLI environment."
+                    "Asserts the expected environment: "
+                    + NAME_RULE
+                    + ". Standard names are "
+                    + ", ".join(STANDARD_ENVIRONMENTS)
+                    + "; other valid names are custom and resolve on Pro plans only. "
+                    "Cloud checks the token binding; local checks the active CLI environment."
                 ),
             },
             "path": {

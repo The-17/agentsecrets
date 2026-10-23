@@ -103,8 +103,9 @@ func (s *Server) handleSwitchEnvironment(ctx context.Context, req mcp.CallToolRe
 		return mcp.NewToolResultError("missing required parameter: environment"), nil
 	}
 
-	if !config.IsValidEnvironment(env) {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid environment %q — must be one of: development, staging, production", env)), nil
+	env, err := config.ParseEnvironment(env)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	// Load and update project config
@@ -137,6 +138,13 @@ func (s *Server) handleSwitchEnvironment(ctx context.Context, req mcp.CallToolRe
 func (s *Server) handlePullSecrets(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
 	envParam, _ := args["environment"].(string)
+	if envParam != "" {
+		normalized, err := config.ParseEnvironment(envParam)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		envParam = normalized
+	}
 
 	pc, err := config.LoadProjectConfig()
 	if err != nil {
@@ -147,9 +155,6 @@ func (s *Server) handlePullSecrets(ctx context.Context, req mcp.CallToolRequest)
 	didSwitch := false
 
 	if envParam != "" && envParam != activeEnv {
-		if !config.IsValidEnvironment(envParam) {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid environment %q", envParam)), nil
-		}
 		// Temporarily or permanently switch to pull
 		pc.Environment = envParam
 		if err := config.SaveProjectConfig(pc); err != nil {
@@ -203,6 +208,13 @@ func (s *Server) handleRotateKey(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	envParam, _ := args["environment"].(string)
+	if envParam != "" {
+		normalized, err := config.ParseEnvironment(envParam)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		envParam = normalized
+	}
 
 	pc, err := config.LoadProjectConfig()
 	if err != nil {
@@ -213,9 +225,6 @@ func (s *Server) handleRotateKey(ctx context.Context, req mcp.CallToolRequest) (
 	didSwitch := false
 
 	if envParam != "" && envParam != activeEnv {
-		if !config.IsValidEnvironment(envParam) {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid environment %q", envParam)), nil
-		}
 		pc.Environment = envParam
 		if err := config.SaveProjectConfig(pc); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to switch environment for key deletion: %v", err)), nil
@@ -263,8 +272,12 @@ func (s *Server) handleSecretStore(ctx context.Context, req mcp.CallToolRequest)
 	if keyName == "" {
 		return mcp.NewToolResultError("missing required parameter: key_name"), nil
 	}
-	if environment != "" && !config.IsValidEnvironment(environment) {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid environment %q — must be one of: development, staging, production", environment)), nil
+	if environment != "" {
+		normalized, err := config.ParseEnvironment(environment)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		environment = normalized
 	}
 
 	if source == "" {

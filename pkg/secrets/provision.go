@@ -180,8 +180,8 @@ func validateProvision(key, environment string) error {
 	if strings.TrimSpace(key) == "" {
 		return fmt.Errorf("provision: empty key name")
 	}
-	if !config.IsValidEnvironment(resolveEnv(environment)) {
-		return fmt.Errorf("provision: invalid environment %q", environment)
+	if _, err := config.ParseEnvironment(resolveEnv(environment)); err != nil {
+		return fmt.Errorf("provision: %w", err)
 	}
 	return nil
 }

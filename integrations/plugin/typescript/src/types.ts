@@ -1,10 +1,17 @@
 import { InvalidRequest } from "./errors.js";
+import { parseEnvironment } from "./environment.js";
 
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 export type Method = (typeof METHODS)[number];
 
-export const ENVIRONMENTS = ["development", "staging", "production"] as const;
-export type Environment = (typeof ENVIRONMENTS)[number];
+export { STANDARD_ENVIRONMENTS } from "./environment.js";
+export type { StandardEnvironment } from "./environment.js";
+
+/**
+ * Environment is an open string, not a closed union: custom names are valid
+ * everywhere an environment is accepted. `parseEnvironment` owns the rule.
+ */
+export type Environment = string;
 
 const TARGETED_STYLES = new Set(["header", "query", "body", "form"]);
 const UNTARGETED_STYLES = new Set(["bearer", "basic"]);
@@ -148,11 +155,10 @@ export function normalizeRequest(input: CallRequest | Record<string, unknown>): 
   }
 
   const environmentValue = raw.environment;
-  if (environmentValue !== undefined && environmentValue !== null) {
-    if (typeof environmentValue !== "string" || !ENVIRONMENTS.includes(environmentValue as Environment)) {
-      throw new InvalidRequest("environment must be development, staging, or production");
-    }
-  }
+  const normalizedEnvironment =
+    environmentValue !== undefined && environmentValue !== null
+      ? parseEnvironment(environmentValue)
+      : undefined;
 
   const path = raw.path;
   if (path !== undefined && typeof path !== "string") {
@@ -195,8 +201,8 @@ export function normalizeRequest(input: CallRequest | Record<string, unknown>): 
     headers,
     agent_id: agentValue,
     ...(body !== undefined ? { body } : {}),
-    ...(environmentValue !== undefined && environmentValue !== null
-      ? { environment: environmentValue as Environment }
+    ...(normalizedEnvironment !== undefined
+      ? { environment: normalizedEnvironment }
       : {}),
     ...(path !== undefined ? { path } : {}),
     ...(scope !== undefined ? { scope } : {}),

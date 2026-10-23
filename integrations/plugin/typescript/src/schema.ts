@@ -1,3 +1,5 @@
+import { NAME_PATTERN, NAME_RULE, STANDARD_ENVIRONMENTS } from "./environment.js";
+
 export const TOOL_NAME = "agentsecrets_call";
 export const TOOL_DESCRIPTION =
   "Call an HTTPS API with AgentSecrets-injected credentials. " +
@@ -47,10 +49,14 @@ export const TOOL_SCHEMA: ToolSchema = {
       },
       environment: {
         type: "string",
-        enum: ["development", "staging", "production"],
+        pattern: NAME_PATTERN,
         description:
-          "Asserts the expected environment. Cloud checks the token binding; " +
-          "local checks the active CLI environment.",
+          "Asserts the expected environment: " +
+          NAME_RULE +
+          ". Standard names are " +
+          STANDARD_ENVIRONMENTS.join(", ") +
+          "; other valid names are custom and resolve on Pro plans only. " +
+          "Cloud checks the token binding; local checks the active CLI environment.",
       },
       path: {
         type: "string",

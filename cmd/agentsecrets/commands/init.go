@@ -185,7 +185,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 		// If mode 2, create all .env files for standard environments
 		if modeToUse == 2 {
-			for _, envName := range config.ValidEnvironments {
+			for _, envName := range config.StandardEnvironments {
 				filename := ".env"
 				if envName != "development" {
 					filename = ".env." + envName

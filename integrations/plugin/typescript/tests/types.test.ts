@@ -80,16 +80,39 @@ test("does not set a content type for non-JSON bodies", () => {
   assert.equal(request.headers["Content-Type"], undefined);
 });
 
+test("accepts custom environment names", () => {
+  for (const name of ["qa", "preview-pr-12", "uat"]) {
+    const request = normalizeRequest({
+      url: "https://api.example.com",
+      injections: { bearer: "KEY" },
+      environment: name,
+    });
+    assert.equal(request.environment, name);
+  }
+});
+
+test("normalizes environment case and whitespace", () => {
+  const request = normalizeRequest({
+    url: "https://api.example.com",
+    injections: { bearer: "KEY" },
+    environment: "  QA  ",
+  });
+  assert.equal(request.environment, "qa");
+});
+
 test("rejects invalid environments", () => {
-  assert.throws(
-    () =>
-      normalizeRequest({
-        url: "https://api.example.com",
-        injections: { bearer: "KEY" },
-        environment: "qa",
-      }),
-    InvalidRequest,
-  );
+  for (const name of ["", "has space", "-lead", "9qa", "root", "admin", "api", "internal", "default"]) {
+    assert.throws(
+      () =>
+        normalizeRequest({
+          url: "https://api.example.com",
+          injections: { bearer: "KEY" },
+          environment: name,
+        }),
+      InvalidRequest,
+      `expected ${JSON.stringify(name)} to be rejected`,
+    );
+  }
 });
 
 test("accepts camelCase agent ids", () => {

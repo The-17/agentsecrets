@@ -334,8 +334,9 @@ func switchBridgeEnv(envParam string) (string, error) {
 	if env == "" {
 		return config.ResolveEnvironment(), nil
 	}
-	if !config.IsValidEnvironment(env) {
-		return "", fmt.Errorf("invalid environment %q — must be one of: development, staging, production", env)
+	env, err := config.ParseEnvironment(env)
+	if err != nil {
+		return "", err
 	}
 	if pc, err := config.LoadProjectConfig(); err == nil && pc != nil && pc.Environment != env {
 		pc.Environment = env
@@ -516,9 +517,11 @@ func bridgeSecretsList(a map[string]interface{}) error {
 	if env == "" {
 		env = config.ResolveEnvironment()
 	}
-	if !config.IsValidEnvironment(env) {
-		return fmt.Errorf("invalid environment %q", env)
+	normalized, err := config.ParseEnvironment(env)
+	if err != nil {
+		return err
 	}
+	env = normalized
 	pc, err := bridgeProject()
 	if err != nil {
 		return err
@@ -654,9 +657,11 @@ func bridgeSecretsDiff(a map[string]interface{}) error {
 	if env == "" {
 		env = config.ResolveEnvironment()
 	}
-	if !config.IsValidEnvironment(env) {
-		return fmt.Errorf("invalid environment %q", env)
+	normalized, err := config.ParseEnvironment(env)
+	if err != nil {
+		return err
 	}
+	env = normalized
 	diff, err := app.Secrets().Diff("", env)
 	if err != nil {
 		return fmt.Errorf("diff failed: %w", err)

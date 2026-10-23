@@ -891,7 +891,7 @@ func init() {
 		c.Flags().Bool("blocked", false, "only show calls blocked by the proxy")
 		c.Flags().Bool("redacted", false, "only show calls where response was redacted")
 		c.Flags().String("project", "", "filter to a specific project")
-		c.Flags().String("env", "", "filter by environment (development, staging, production)")
+		c.Flags().String("env", "", "filter by environment (development, staging, production, or a custom name)")
 		c.Flags().String("since", "", "e.g. 1h, 24h, 7d")
 		c.Flags().String("until", "", "upper bound for time range")
 		c.Flags().Int("limit", 50, "number of entries to show (default 50)")

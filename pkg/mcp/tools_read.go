@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -97,7 +98,7 @@ func checkKeyTool() mcp.Tool {
 func getCoverageTool() mcp.Tool {
 	return mcp.NewTool("get_coverage",
 		mcp.WithDescription(
-			"Show secret key coverage across all environments (development, staging, production). "+
+			"Show secret key coverage across every environment (development, staging, production, and any custom ones). "+
 				"Identifies keys missing from specific environments to help ensure parity.",
 		),
 	)
@@ -127,7 +128,7 @@ func diffSecretsTool() mcp.Tool {
 				"Never shows actual secret values.",
 		),
 		mcp.WithString("environment",
-			mcp.Description("Optional environment to diff (development, staging, production). Defaults to active env."),
+			mcp.Description("Optional environment to diff (development, staging, production, or a custom name). Defaults to active env."),
 		),
 	)
 }
@@ -244,14 +245,19 @@ func (s *Server) handleListKeys(ctx context.Context, req mcp.CallToolRequest) (*
 	remoteFlag, _ := args["remote"].(bool)
 
 	activeEnv := config.ResolveEnvironment()
-	envs := config.ValidEnvironments
 
 	projectID, _ := config.ResolveProjectContext()
 	if projectID == "" {
 		return mcp.NewToolResultError("no project configured in current directory"), nil
 	}
 
-	presence := make(map[string][3]bool)
+	root, _ := config.GetProjectRoot()
+	envs, err := s.getSecretsService().Environments(projectID, root)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	presence := make(map[string][]bool)
 	allKeysSet := make(map[string]bool)
 	keyCount := make(map[string]int)
 
@@ -275,6 +281,9 @@ func (s *Server) handleListKeys(ctx context.Context, req mcp.CallToolRequest) (*
 		keyCount[env] = len(keyNames)
 		for _, k := range keyNames {
 			p := presence[k]
+			if p == nil {
+				p = make([]bool, len(envs))
+			}
 			p[i] = true
 			presence[k] = p
 			allKeysSet[k] = true
@@ -323,12 +332,19 @@ func (s *Server) handleCheckKey(ctx context.Context, req mcp.CallToolRequest) (*
 	resEnvs := make(map[string]envStatus)
 	existsAnywhere := false
 
-	envsToCheck := config.ValidEnvironments
-	if envParam != "" {
-		if !config.IsValidEnvironment(envParam) {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid environment %q", envParam)), nil
+	envsToCheck := config.StandardEnvironments
+	if projectID, _ := config.ResolveProjectContext(); projectID != "" {
+		root, _ := config.GetProjectRoot()
+		if all, err := s.getSecretsService().Environments(projectID, root); err == nil {
+			envsToCheck = all
 		}
-		envsToCheck = []string{envParam}
+	}
+	if envParam != "" {
+		env, err := config.ParseEnvironment(envParam)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		envsToCheck = []string{env}
 	}
 
 	for _, env := range envsToCheck {
@@ -359,7 +375,15 @@ func (s *Server) handleCheckKey(ctx context.Context, req mcp.CallToolRequest) (*
 
 func (s *Server) handleGetCoverage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	svc := s.getSecretsService()
-	envs := config.ValidEnvironments
+
+	envs := config.StandardEnvironments
+	if projectID, _ := config.ResolveProjectContext(); projectID != "" {
+		root, _ := config.GetProjectRoot()
+		if all, err := svc.Environments(projectID, root); err == nil {
+			envs = all
+		}
+	}
+
 	lists := make(map[string][]secrets.SecretMetadata)
 	allUniqueKeys := make(map[string]bool)
 
@@ -374,79 +398,67 @@ func (s *Server) handleGetCoverage(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	type keyCoverage struct {
-		Key         string `json:"key"`
-		Development bool   `json:"development"`
-		Staging     bool   `json:"staging"`
-		Production  bool   `json:"production"`
+		Key          string   `json:"key"`
+		Development  bool     `json:"development"`
+		Staging      bool     `json:"staging"`
+		Production   bool     `json:"production"`
+		Environments []string `json:"environments"`
 	}
 
-	coverage := []keyCoverage{}
-	missing := map[string][]string{
-		"development": {},
-		"staging":     {},
-		"production":  {},
+	keys := make([]string, 0, len(allUniqueKeys))
+	for k := range allUniqueKeys {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	envCounts := make(map[string]int, len(envs))
+	missing := make(map[string][]string, len(envs))
+	for _, env := range envs {
+		envCounts[env] = len(lists[env])
+		missing[env] = []string{}
 	}
 
+	coverage := make([]keyCoverage, 0, len(keys))
 	fullyCoveredCount := 0
 	partiallyCoveredCount := 0
 
-	for k := range allUniqueKeys {
-		hasDev := false
-		hasStg := false
-		hasPrd := false
-
-		for _, item := range lists["development"] {
-			if item.Key == k {
-				hasDev = true
-				break
+	for _, k := range keys {
+		presentSet := make(map[string]bool, len(envs))
+		present := make([]string, 0, len(envs))
+		for _, env := range envs {
+			for _, item := range lists[env] {
+				if item.Key == k {
+					presentSet[env] = true
+					present = append(present, env)
+					break
+				}
 			}
 		}
-		for _, item := range lists["staging"] {
-			if item.Key == k {
-				hasStg = true
-				break
-			}
-		}
-		for _, item := range lists["production"] {
-			if item.Key == k {
-				hasPrd = true
-				break
+		for _, env := range envs {
+			if !presentSet[env] {
+				missing[env] = append(missing[env], k)
 			}
 		}
 
 		coverage = append(coverage, keyCoverage{
-			Key:         k,
-			Development: hasDev,
-			Staging:     hasStg,
-			Production:  hasPrd,
+			Key:          k,
+			Development:  presentSet["development"],
+			Staging:      presentSet["staging"],
+			Production:   presentSet["production"],
+			Environments: present,
 		})
 
-		if !hasDev {
-			missing["development"] = append(missing["development"], k)
-		}
-		if !hasStg {
-			missing["staging"] = append(missing["staging"], k)
-		}
-		if !hasPrd {
-			missing["production"] = append(missing["production"], k)
-		}
-
-		if hasDev && hasStg && hasPrd {
+		if len(present) == len(envs) {
 			fullyCoveredCount++
 		} else {
 			partiallyCoveredCount++
 		}
 	}
 
-	envCounts := map[string]int{
-		"development": len(lists["development"]),
-		"staging":     len(lists["staging"]),
-		"production":  len(lists["production"]),
-	}
-
 	return jsonResult(map[string]interface{}{
-		"coverage": coverage,
-		"missing":  missing,
+		"coverage":     coverage,
+		"missing":      missing,
+		"environments": envs,
 		"summary": map[string]interface{}{
 			"total_unique_keys": len(allUniqueKeys),
 			"fully_covered":     fullyCoveredCount,
@@ -612,10 +624,11 @@ func (s *Server) handleGetEnvironment(ctx context.Context, req mcp.CallToolReque
 	}
 
 	return jsonResult(map[string]interface{}{
-		"environment":        env,
-		"source":             source,
-		"project":            projectData,
-		"valid_environments": config.ValidEnvironments,
+		"environment":             env,
+		"source":                  source,
+		"project":                 projectData,
+		"standard_environments":   config.StandardEnvironments,
+		"environment_name_rule":   config.EnvironmentNameRule,
 	})
 }
 
@@ -627,9 +640,9 @@ func (s *Server) handleDiffSecrets(ctx context.Context, req mcp.CallToolRequest)
 	if env == "" {
 		env = config.ResolveEnvironment()
 	}
-
-	if !config.IsValidEnvironment(env) {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid environment %q", env)), nil
+	env, err := config.ParseEnvironment(env)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	svc := s.getSecretsService()
@@ -670,8 +683,13 @@ func (s *Server) handleDiffEnvironments(ctx context.Context, req mcp.CallToolReq
 		return mcp.NewToolResultError("missing required parameters: source and target"), nil
 	}
 
-	if !config.IsValidEnvironment(source) || !config.IsValidEnvironment(target) {
-		return mcp.NewToolResultError("invalid source or target environment"), nil
+	source, err := config.ParseEnvironment(source)
+	if err != nil {
+		return mcp.NewToolResultError("source environment: " + err.Error()), nil
+	}
+	target, err = config.ParseEnvironment(target)
+	if err != nil {
+		return mcp.NewToolResultError("target environment: " + err.Error()), nil
 	}
 
 	svc := s.getSecretsService()
