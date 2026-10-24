@@ -137,11 +137,11 @@ func enrollOpaqueAfterLogin(email, password string, result *auth.LoginResult, ju
 		ui.Info("Your password login still works. Nothing changed for this account.")
 		return
 	}
-	// The password factor is intentionally kept on the server. Older CLI
-	// versions cannot perform the OPAQUE exchange and cannot be updated, so
-	// removing the password would lock them out of the account entirely.
-	ui.Success("Passwordless login enabled. This account now prefers OPAQUE.")
-	ui.Info("Your password still works, including from older versions of this CLI.")
+	// Enrollment clears the password factor on the server. Only this CLI
+	// version enrolls, so an OPAQUE record always means the user upgraded;
+	// older binaries never hit this path on their own account.
+	ui.Success("Passwordless login enabled. This account no longer uses a password on the server.")
+	ui.Info("Older CLI versions can no longer sign in to it. Recovery with your recovery key still works.")
 }
 
 // performRecovery restores a session with the recovery key, then rewraps the
