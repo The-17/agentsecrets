@@ -80,6 +80,12 @@ func runEnvSwitch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Switching to a name nobody has used yet is legitimate: that is how a new
+	// custom environment starts. Say so quietly rather than refusing, because a
+	// typo would otherwise look identical to a working environment and a later
+	// `secrets push` would store real secrets under the misspelled name.
+	warnIfEnvironmentUnused(environment)
+
 	// Check for potentially unsaved local changes
 	prevEnv := config.ResolveEnvironment()
 	localEnvFile := fmt.Sprintf(".env.%s", prevEnv)
@@ -457,6 +463,23 @@ func runEnvClean(cmd *cobra.Command, args []string) error {
 
 	ui.Success(fmt.Sprintf("Cleaned %s environment.", activeEnv))
 	return nil
+}
+
+// warnIfEnvironmentUnused tells the user when they switched to a name no project
+// environment or local cache knows about. It never blocks: a custom environment
+// has to start somewhere, and the first `secrets set` is a valid way to start it.
+func warnIfEnvironmentUnused(environment string) {
+	p, err := config.LoadProjectConfig()
+	if err != nil || p == nil || p.ProjectID == "" {
+		return
+	}
+	for _, known := range knownEnvironments() {
+		if known == environment {
+			return
+		}
+	}
+	ui.Warning(fmt.Sprintf("No secrets are stored in %q yet.", environment))
+	ui.Info("Set one with 'agentsecrets secrets set KEY=VALUE' to start this environment.")
 }
 
 // knownEnvironments lists the project's environments, standard three first. It
