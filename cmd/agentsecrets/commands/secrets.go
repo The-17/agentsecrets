@@ -668,6 +668,9 @@ func storeSecretValues(kv map[string]string, env string, quiet bool) ([]secrets.
 	if env == "" {
 		env = config.ResolveEnvironment()
 	}
+	if err := requireProForCustomEnvironment(env); err != nil {
+		return nil, err
+	}
 	if env == "production" {
 		if err := verifyPasswordLocally(); err != nil {
 			return nil, err

@@ -75,6 +75,7 @@ var endpointMap = map[string]map[string]string{
 		"allowlist_add":    "workspaces/{workspace_id}/allowlist/",
 		"allowlist_remove": "workspaces/{workspace_id}/allowlist/{domain}/",
 		"allowlist_log":    "workspaces/{workspace_id}/allowlist/log/",
+		"billing_status":   "workspaces/{workspace_id}/billing/status/",
 	},
 	"agents": {
 		"list":             "workspaces/{workspace_id}/agents/",
@@ -499,6 +500,30 @@ func FetchProjectEnvironments(c *Client, projectID string) ([]ProjectEnvironment
 		return nil, fmt.Errorf("project environments: %w", err)
 	}
 	return inventory.Environments, nil
+}
+
+// FetchWorkspaceTier returns the workspace plan as the control plane reports it.
+//
+// The control plane answers with the resolver's plan rather than its cached
+// local mirror, so a workspace that has just upgraded is not reported as Free.
+// An error means "could not confirm", never "free": a caller must not refuse
+// paid work because a status read failed.
+func FetchWorkspaceTier(c *Client, workspaceID string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("workspace plan: no API client")
+	}
+	if strings.TrimSpace(workspaceID) == "" {
+		return "", fmt.Errorf("workspace plan: workspace id is required")
+	}
+	payload, err := CallJSON[struct {
+		Tier string `json:"tier"`
+	}](c, "workspaces.billing_status", "GET", nil, map[string]string{
+		"workspace_id": workspaceID,
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("workspace plan: %w", err)
+	}
+	return strings.ToLower(strings.TrimSpace(payload.Tier)), nil
 }
 
 // decodeDetail pulls the human-readable reason out of an error response. The

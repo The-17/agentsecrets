@@ -33,6 +33,18 @@ var envSwitchCmd = &cobra.Command{
 	RunE:  runEnvSwitch,
 }
 
+var envCreateCmd = &cobra.Command{
+	Use:   "create <environment>",
+	Short: "Create a custom environment (Pro)",
+	Long: `Creates a custom environment and switches to it.
+
+Custom environments are a Pro feature. The standard three (` + strings.Join(config.StandardEnvironments, ", ") + `) already exist in every project.
+
+An environment exists once it holds a secret, so the next step is to store one.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runEnvCreate,
+}
+
 var envListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all environments with secret counts",
@@ -68,6 +80,7 @@ func init() {
 	envMergeCmd.ValidArgsFunction = autocompleteEnvironmentsMulti
 
 	environmentCmd.AddCommand(envSwitchCmd)
+	environmentCmd.AddCommand(envCreateCmd)
 	environmentCmd.AddCommand(envListCmd)
 	environmentCmd.AddCommand(envCopyCmd)
 	environmentCmd.AddCommand(envMergeCmd)
@@ -77,6 +90,9 @@ func init() {
 func runEnvSwitch(cmd *cobra.Command, args []string) error {
 	environment, err := config.ParseEnvironment(args[0])
 	if err != nil {
+		return err
+	}
+	if err := requireProForCustomEnvironment(environment); err != nil {
 		return err
 	}
 
@@ -97,23 +113,52 @@ func runEnvSwitch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Update project.json if in a project directory
-	p, err := config.LoadProjectConfig()
-	if err == nil && p != nil {
-		p.Environment = environment
-		if err := config.SaveProjectConfig(p); err != nil {
-			return fmt.Errorf("failed to update project environment: %w", err)
-		}
-	}
-
-	// Update global config
-	if err := config.SetSelectedEnvironment(environment); err != nil {
-		return fmt.Errorf("failed to update global config: %w", err)
+	if err := setActiveEnvironment(environment); err != nil {
+		return err
 	}
 
 	ui.Success(fmt.Sprintf("Switched to %s.", environment))
 	ui.Info("Active context:")
 	printEnvStatus()
+	return nil
+}
+
+// setActiveEnvironment makes environment the one every later command resolves.
+// It writes project.json when there is a project and always writes the global
+// selection, so a switch survives leaving the directory.
+func setActiveEnvironment(environment string) error {
+	if p, err := config.LoadProjectConfig(); err == nil && p != nil {
+		p.Environment = environment
+		if err := config.SaveProjectConfig(p); err != nil {
+			return fmt.Errorf("failed to update project environment: %w", err)
+		}
+	}
+	if err := config.SetSelectedEnvironment(environment); err != nil {
+		return fmt.Errorf("failed to update global config: %w", err)
+	}
+	return nil
+}
+
+func runEnvCreate(cmd *cobra.Command, args []string) error {
+	environment, err := config.ParseEnvironment(args[0])
+	if err != nil {
+		return err
+	}
+	if config.IsStandardEnvironment(environment) {
+		return fmt.Errorf(
+			"%q is a standard environment and already exists. Switch to it with 'agentsecrets environment switch %s'",
+			environment, environment,
+		)
+	}
+	if err := requireProForCustomEnvironment(environment); err != nil {
+		return err
+	}
+	if err := setActiveEnvironment(environment); err != nil {
+		return err
+	}
+
+	ui.Success(fmt.Sprintf("Created %s and switched to it.", environment))
+	ui.Info("Store the first secret with 'agentsecrets secrets set KEY=VALUE'.")
 	return nil
 }
 
@@ -221,6 +266,9 @@ func runEnvCopy(cmd *cobra.Command, args []string) error {
 	if from == to {
 		return fmt.Errorf("Source and destination environments must be different.")
 	}
+	if err := requireProForCustomEnvironment(to); err != nil {
+		return err
+	}
 
 	project, err := config.LoadProjectConfig()
 	if err != nil || project.ProjectID == "" {
@@ -303,6 +351,9 @@ func runEnvMerge(cmd *cobra.Command, args []string) error {
 	}
 	to, err := config.ParseEnvironment(args[1])
 	if err != nil {
+		return err
+	}
+	if err := requireProForCustomEnvironment(to); err != nil {
 		return err
 	}
 
