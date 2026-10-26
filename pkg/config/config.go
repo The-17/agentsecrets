@@ -82,6 +82,7 @@ type GlobalConfig struct {
 	UserID              string                         `json:"user_id,omitempty"`       // Server-side account id bound into vault AAD
 	VaultPubKey         string                         `json:"vault_pubkey,omitempty"`  // Pinned Ed25519 vault proof key (trust on first unlock)
 	DefaultStorageMode  int                            `json:"default_storage_mode"`    // 1 = keychain (default), 2 = env_file
+	DefaultMode         string                         `json:"default_mode,omitempty"`  // "local" (default) or "cloud"
 	LastUpdateCheck     int64                          `json:"last_update_check,omitempty"`
 	LatestVersion       string                         `json:"latest_version,omitempty"`
 	LastUpdateAlert     int64                          `json:"last_update_alert,omitempty"`
@@ -945,6 +946,38 @@ func SetStorageMode(mode int) error {
 		c = &GlobalConfig{}
 	}
 	c.DefaultStorageMode = mode
+	return SaveGlobalConfig(c)
+}
+
+// GetDefaultMode returns the persisted credential resolution mode
+// ("local" or "cloud"), or "" when the user has not chosen one. An unset mode
+// is deliberately distinct from an explicit "local": cloud resolution spends a
+// billed entitlement, so it is never inferred from silence, and an explicit
+// local choice must survive an AGENTSECRETS_TOKEN in the environment. Mode
+// *selection* (flag, env, config) belongs to pkg/gateway; this is only the
+// stored preference.
+func GetDefaultMode() string {
+	c, err := LoadGlobalConfig()
+	if err != nil || c == nil {
+		return ""
+	}
+	if c.DefaultMode == "cloud" || c.DefaultMode == "local" {
+		return c.DefaultMode
+	}
+	return ""
+}
+
+// SetDefaultMode persists the credential resolution mode. It rejects values
+// other than "local" and "cloud" so a typo cannot silently fall back.
+func SetDefaultMode(mode string) error {
+	if mode != "local" && mode != "cloud" {
+		return fmt.Errorf("mode must be %q or %q, got %q", "local", "cloud", mode)
+	}
+	c, err := LoadGlobalConfig()
+	if err != nil || c == nil {
+		c = &GlobalConfig{}
+	}
+	c.DefaultMode = mode
 	return SaveGlobalConfig(c)
 }
 

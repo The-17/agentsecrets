@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 )
@@ -80,36 +81,59 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// The router decides where values come from. Both paths return plaintext
+	// here because the exec protocol hands values to a child provider; this is
+	// the one surface that must materialize them.
+	selection, err := gateway.Select("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mode: %v\n", err)
+		return &ExitError{Code: 1, Silent: true}
+	}
+
 	project, err := config.LoadProjectConfig()
 	if err != nil || project == nil || project.ProjectID == "" {
 		// Fall back to globally selected project (set by `agentsecrets project use`)
 		globalProjectID := config.GetSelectedProjectID()
-		if globalProjectID == "" {
+		if globalProjectID == "" && selection.Mode == gateway.ModeLocal {
 			fmt.Fprintln(os.Stderr, "no project configured in current directory")
 			return &ExitError{Code: 1, Silent: true}
 		}
 		project = &config.ProjectConfig{ProjectID: globalProjectID}
 	}
 
-	// Ensure keychain-auth session before reading secrets.
-	// exec uses DisableFlagParsing-like behavior so PersistentPreRunE may not fire.
-	if err := ensureKeychainAuthForExec(); err != nil {
-		fmt.Fprintf(os.Stderr, "keychain-auth: %v\n", err)
+	localResolve := func() (map[string]string, error) {
+		// Ensure keychain-auth session before reading secrets.
+		// exec uses DisableFlagParsing-like behavior so PersistentPreRunE may not fire.
+		if err := ensureKeychainAuthForExec(); err != nil {
+			fmt.Fprintf(os.Stderr, "keychain-auth: %v\n", err)
+			return nil, err
+		}
+
+		envName := config.ResolveEnvironment()
+		found := make(map[string]string, len(req.IDs))
+		for _, id := range req.IDs {
+			val, err := keyring.GetSecret(project.ProjectID, envName, id)
+			if err != nil || val == "" {
+				continue
+			}
+			found[id] = val
+		}
+		return found, nil
+	}
+
+	found, err := gateway.SecretsForEnv(selection, localResolve, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve: %v\n", err)
 		return &ExitError{Code: 1, Silent: true}
 	}
 
-	envName := config.ResolveEnvironment()
 	for _, id := range req.IDs {
-		val, err := keyring.GetSecret(project.ProjectID, envName, id)
-		if err != nil || val == "" {
+		val, ok := found[id]
+		if !ok || val == "" {
 			if resp.Errors == nil {
 				resp.Errors = make(map[string]ExecSecretError)
 			}
-			msg := "secret not found in keychain"
-			if err != nil {
-				msg = err.Error()
-			}
-			resp.Errors[id] = ExecSecretError{Message: msg}
+			resp.Errors[id] = ExecSecretError{Message: "secret not found in " + string(selection.Mode) + " scope"}
 		} else {
 			resp.Values[id] = val
 		}

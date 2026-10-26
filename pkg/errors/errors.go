@@ -73,6 +73,13 @@ func FromError(err error) *CLIError {
 		return cliErr
 	}
 
+	// A mode router failure knows its own code (bad token, blocked domain,
+	// quota). Declared at the consumer so this package stays dependency-free.
+	var classified interface{ AsCLIError() *CLIError }
+	if stderrors.As(err, &classified) {
+		return classified.AsCLIError()
+	}
+
 	// Keychain denials are a known, actionable class — never let them fall through
 	// to the generic "unexpected error" bucket, which tells the user to email
 	// support for something the CLI can explain and usually repair itself.
