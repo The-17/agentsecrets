@@ -63,14 +63,14 @@ def _join_headers(value: Any) -> dict[str, str]:
 
 
 class LocalHelperTransport:
-    """Call ``agentsecrets mcp bridge`` with JSON on stdin."""
+    """Call ``agentsecrets mcp`` with JSON on stdin."""
 
     def __init__(
         self,
         binary: str,
         *,
-        args: Sequence[str] = ("mcp", "bridge", "proxy.call"),
-        status_args: Sequence[str] = ("mcp", "bridge", "status"),
+        args: Sequence[str] = ("mcp", "proxy.call"),
+        status_args: Sequence[str] = ("mcp", "status"),
         timeout: float = 60.0,
         cwd: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,

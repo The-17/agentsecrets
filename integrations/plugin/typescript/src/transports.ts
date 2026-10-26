@@ -59,8 +59,8 @@ export class LocalHelperTransport {
 
   constructor(options: LocalHelperOptions) {
     this.binary = options.binary;
-    this.args = options.args ?? ["mcp", "bridge", "proxy.call"];
-    this.statusArgs = options.statusArgs ?? ["mcp", "bridge", "status"];
+    this.args = options.args ?? ["mcp", "proxy.call"];
+    this.statusArgs = options.statusArgs ?? ["mcp", "status"];
     this.timeoutMs = options.timeoutMs ?? 60_000;
     this.cwd = options.cwd;
     this.env = options.env ?? {};

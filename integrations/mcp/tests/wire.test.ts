@@ -121,10 +121,10 @@ describe('MCP stdio wire protocol', () => {
     notify('notifications/initialized');
   });
 
-  it('lists all 27 tools with schemas', async () => {
+  it('lists all 30 tools with schemas', async () => {
     const res = await send('tools/list');
     const result = res['result'] as { tools: Array<{ name: string; inputSchema?: unknown }> };
-    assert.equal(result.tools.length, 27);
+    assert.equal(result.tools.length, 30);
     const names = result.tools.map((t) => t.name);
     for (const want of ['proxy_call', 'secrets_list', 'project_use', 'workspace_switch', 'agent_token_issue', 'logs_detail', 'auth_status', 'auth_use_identity']) {
       assert.ok(names.includes(want), want);

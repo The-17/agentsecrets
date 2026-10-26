@@ -28,7 +28,7 @@ import json
 import os
 import sys
 
-if sys.argv[1:] == ["mcp", "bridge", "status"]:
+if sys.argv[1:] == ["mcp", "status"]:
     print(json.dumps({"ok": True, "data": {"environment": {"active": "staging", "source": "test"}}}))
     raise SystemExit(0)
 
@@ -58,7 +58,7 @@ import json
 import sys
 
 marker = {marker!r}
-if sys.argv[1:] == ["mcp", "bridge", "status"]:
+if sys.argv[1:] == ["mcp", "status"]:
     print(json.dumps({{"ok": True, "data": {{"environment": {{"active": "staging"}}}}}}))
     raise SystemExit(0)
 
@@ -91,7 +91,7 @@ class LocalHelperTransportTests(unittest.TestCase):
         return LocalHelperTransport(
             sys.executable,
             args=(str(script),),
-            status_args=(str(script), "mcp", "bridge", "status"),
+            status_args=(str(script), "mcp", "status"),
             timeout=2,
         )
 
@@ -108,7 +108,7 @@ class LocalHelperTransportTests(unittest.TestCase):
         transport = LocalHelperTransport(
             sys.executable,
             args=(str(script),),
-            status_args=(str(script), "mcp", "bridge", "status"),
+            status_args=(str(script), "mcp", "status"),
             timeout=2,
         )
         client = AgentSecretsClient(transport=transport)

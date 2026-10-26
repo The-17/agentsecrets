@@ -26,7 +26,7 @@ export class OAuthNotAvailable extends Error {
     super(
       `OAuth is not available on ${server} yet (no oauth endpoints). ` +
         `Use the terminal flow instead: run \`agentsecrets login\`, then ` +
-        `\`agentsecrets mcp bridge auth.export > ~/.agentsecrets/mcp-token\` ` +
+        `\`agentsecrets mcp auth.export > ~/.agentsecrets/mcp-token\` ` +
         `with mode 0600, and set AGENTSECRETS_TOKEN_FILE to that path. ` +
         `Then call auth_status to verify.`
     );

@@ -137,7 +137,7 @@ test("local helper reports its active environment", async () => {
     const transport = new LocalHelperTransport({
       binary: process.execPath,
       args: [script],
-      statusArgs: [script, "mcp", "bridge", "status"],
+      statusArgs: [script, "mcp", "status"],
     });
     assert.equal(transport.activeEnvironment(), "staging");
   });
@@ -152,7 +152,7 @@ test("environment mismatch fails before the proxy call", async () => {
     const transport = new LocalHelperTransport({
       binary: process.execPath,
       args: [script],
-      statusArgs: [script, "mcp", "bridge", "status"],
+      statusArgs: [script, "mcp", "status"],
     });
     const client = new AgentSecretsClient({ transport });
 

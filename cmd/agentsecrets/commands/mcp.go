@@ -16,12 +16,32 @@ import (
 )
 
 var mcpCmd = &cobra.Command{
-	Use:   "mcp",
-	Short: "MCP server for AI agent integration",
+	Use:   "mcp [verb] [json-args]",
+	Short: "MCP server and machine-readable interface for AI agent integration",
 	Long: `Connect AI clients to AgentSecrets over the Model Context Protocol.
 
 	` + mcpBridgePackage + ` is the published bridge (npx). This binary also
-	speaks MCP itself via "mcp serve".`,
+	speaks MCP itself via "mcp serve".
+
+	Without a subcommand, this command is the machine-readable JSON interface
+	the bridge calls: one privileged local operation, one JSON envelope on
+	stdout. Verbs:
+
+	  ping, status, auth.export,
+	  secrets.list, secrets.set, secrets.delete, secrets.pull, secrets.push, secrets.diff,
+	  proxy.call, proxy.status,
+	  project.list, project.create, project.use, project.update, project.delete,
+	  workspace.list, workspace.create, workspace.switch, workspace.members,
+	  agent.list, agent.delete, agent.token_issue,
+	  logs.list, logs.summary, logs.detail
+
+	Args are a single JSON object (argv or stdin). Stdout is always exactly one
+	envelope: {"ok":true,"data":...} or {"ok":false,"error":"..."}.
+
+	Mutating verbs are refused unless a human set AGENTSECRETS_MCP_ALLOW_WRITES=true
+	in the MCP client configuration. An agent cannot enable them itself.`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runMCPBridge,
 }
 
 // mcpBridgePackage is the published TypeScript MCP bridge. Client config names
@@ -76,6 +96,11 @@ func init() {
 	mcpCmd.AddCommand(mcpInstallCmd)
 	mcpInstallCmd.Flags().Bool("local", false, "Run this binary's `mcp serve` instead of the published npx bridge")
 }
+
+// Deprecated: the bridge used to be its own subcommand at "mcp bridge <verb>".
+// It is now the parent command's default action, so the supported spelling is
+// "agentsecrets mcp <verb>". Kept only so old client configs keep working;
+// remove after the next major version.
 
 func runMCPServe(cmd *cobra.Command, args []string) error {
 	// Pin project resolution before anything reads config: the client's cwd
@@ -277,104 +302,9 @@ func installOpenClawSkill(skillsDir string) error {
 		return fmt.Errorf("could not create skill directory: %w", err)
 	}
 
-	// Write SKILL.md — condensed version with guided setup workflow
-	skillContent := `---
-name: agentsecrets
-description: Zero-knowledge credential management — make authenticated API calls without exposing your keys
-version: 1.0.0
-tags:
-  - security
-  - credentials
-  - api
-homepage: https://github.com/The-17/agentsecrets
-metadata:
-  clawdbot:
-    summary: Secure credential proxy — agent makes API calls without seeing key values
-    author: The Seventeen
-    license: MIT
-requires:
-  binaries:
-    - name: agentsecrets
-      description: The AgentSecrets CLI binary
-      install: "pip install git+https://github.com/The-17/agentsecrets#subdirectory=pypi"
-files:
-  - "scripts/*"
----
-
-# AgentSecrets — Zero-Knowledge Credential Management
-
-Make authenticated API calls without ever exposing credentials. Keys stay in the OS keychain.
-
-## GUIDED SETUP WORKFLOW
-
-Follow this when a user first needs API authentication.
-
-### Step 1: Check installation
-` + "```bash" + `
-agentsecrets --version 2>/dev/null && echo "INSTALLED" || echo "NOT_INSTALLED"
-` + "```" + `
-If not installed, explain the security benefit and run: ` + "`pip install git+https://github.com/The-17/agentsecrets#subdirectory=pypi`" + `
-
-### Step 2: Initialize
-` + "```bash" + `
-agentsecrets status 2>/dev/null && echo "INITIALIZED" || echo "NOT_INITIALIZED"
-` + "```" + `
-If not initialized, run: ` + "`agentsecrets init --skip-login`" + `
-
-### Step 3: Collect credentials conversationally
-When the user needs an API key stored, ask naturally and store IMMEDIATELY:
-` + "```bash" + `
-agentsecrets secrets set KEY_NAME=<value_they_gave>
-` + "```" + `
-Then tell them: "Stored securely as KEY_NAME. You can delete the message with the raw key."
-
-**Naming**: STRIPE_KEY, OPENAI_KEY, GITHUB_TOKEN, GOOGLE_MAPS_KEY, etc. (uppercase, underscores)
-
-### Step 4: Confirm readiness
-List stored keys: ` + "`agentsecrets secrets list`" + `
-
-## MAKING API CALLS
-
-` + "```bash" + `
-agentsecrets call --url <API_URL> --method <METHOD> --bearer <KEY_NAME>
-` + "```" + `
-
-### Auth Styles
-| Pattern | Flag | Example |
-|---------|------|---------|
-| Bearer token | --bearer KEY | --bearer STRIPE_KEY |
-| Custom header | --header Name=KEY | --header X-API-Key=MY_KEY |
-| Query param | --query param=KEY | --query key=GMAP_KEY |
-| Basic auth | --basic KEY | --basic CREDENTIALS |
-| Body field | --body-field path=KEY | --body-field client_secret=SECRET |
-| Form field | --form-field name=KEY | --form-field api_key=KEY |
-
-### API Call Blocked by Zero-Trust Allowlist
-If an API call returns a 403 error stating the domain is not in the workspace allowlist:
-1. Do not bypass the proxy.
-2. Tell the user exactly what to run in their terminal to authorize the domain:
-   ` + "`agentsecrets workspace allowlist add <domain>`" + `
-   *(Wait for their confirmation that they have entered their password and added the domain)*
-3. Retry the API call.
-
-## CRITICAL RULES
-
-1. NEVER display or log actual key values after storing
-2. NEVER ask for a key already stored — use the name
-3. ALWAYS use agentsecrets call instead of curl
-4. ALWAYS suggest deleting chat messages containing raw keys
-5. If a key is missing, ask the user — don't guess
-6. Respect the Zero-Trust Allowlist — if a domain is blocked, instruct the user to run ` + "`agentsecrets workspace allowlist add <domain>`" + `.
-
-## Security & Privacy
-
-- Zero-knowledge: agent never sees credential values after storage
-- OS keychain: encrypted, system-protected
-- Full audit trail: key names only, never values
-- Local only: no cloud, no telemetry
-`
-
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644); err != nil {
+	// Write SKILL.md from the one shared source, so `init` and `mcp install`
+	// ship the same procedure. See skill_content.go.
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(InstalledSkill()), 0644); err != nil {
 		return fmt.Errorf("failed to write SKILL.md: %w", err)
 	}
 

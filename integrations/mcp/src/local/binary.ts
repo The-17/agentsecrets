@@ -1,5 +1,5 @@
 /**
- * Local binary backend: spawns `agentsecrets mcp bridge <verb>` with the
+ * Local binary backend: spawns `agentsecrets mcp <verb>` with the
  * JSON args on stdin and parses the stdout envelope. The helper inherits the CLI's keychain
  * session, proxy session token, token refresh, and E2EE workspace keys
  * through its own (registered, trusted) binary identity — the bridge
@@ -75,7 +75,7 @@ export interface PingInfo {
 let pingCache: { at: number; info: PingInfo } | null = null;
 const PING_TTL_MS = 60 * 1000;
 
-/** Capability handshake (`mcp bridge ping`), cached 60s. Null = unusable. */
+/** Capability handshake (`mcp ping`), cached 60s. Null = unusable. */
 export function pingBinary(binary?: string): PingInfo | null {
   const now = Date.now();
   if (pingCache && now - pingCache.at < PING_TTL_MS) return pingCache.info;
@@ -116,7 +116,7 @@ export function bridgeExec(binary: string, verb: string, args: Record<string, un
   // JSON argv is absent. This keeps secret values (secrets.set) out of the
   // process table AND sidesteps every platform's argv quoting (notably
   // cmd.exe quote-stripping for .cmd shims).
-  const argv = ['mcp', 'bridge', verb];
+  const argv = ['mcp', verb];
   // Script shims (.cmd/.bat from the npm wrapper, .ps1, bare node scripts)
   // cannot be exec'd directly on Windows — run them through a shell and let
   // Node do the platform quoting. Real binaries (.exe/ELF/Mach-O) spawn direct.
@@ -144,18 +144,18 @@ export function bridgeExec(binary: string, verb: string, args: Record<string, un
   const stderr = typeof out.stderr === 'string' ? out.stderr.trim() : '';
   if (out.status !== 0 && !stdout) {
     const tail = stderr.split('\n').slice(-5).join('\n');
-    throw new BridgeError(`agentsecrets mcp bridge ${verb} exited ${String(out.status)}${tail ? `: ${tail}` : ''}`);
+    throw new BridgeError(`agentsecrets mcp ${verb} exited ${String(out.status)}${tail ? `: ${tail}` : ''}`);
   }
   let env: BridgeEnvelope;
   try {
     env = JSON.parse(stdout || '{}') as BridgeEnvelope;
   } catch {
     throw new BridgeError(
-      `agentsecrets mcp bridge ${verb} returned non-JSON stdout${stderr ? ` (stderr: ${stderr.slice(0, 300)})` : ''}`
+      `agentsecrets mcp ${verb} returned non-JSON stdout${stderr ? ` (stderr: ${stderr.slice(0, 300)})` : ''}`
     );
   }
   if (!env || typeof env.ok !== 'boolean') {
-    throw new BridgeError(`agentsecrets mcp bridge ${verb} returned a malformed envelope.`);
+    throw new BridgeError(`agentsecrets mcp ${verb} returned a malformed envelope.`);
   }
   if (!env.ok) {
     throw new BridgeError(typeof env.error === 'string' && env.error ? env.error : `${verb} failed`);

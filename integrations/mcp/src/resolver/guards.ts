@@ -12,7 +12,7 @@ export function setupGuidance(): string {
   return (
     'Not authenticated. Options (no secrets in MCP config): ' +
     '1) call auth_login for browser OAuth (zero-config); ' +
-    '2) run `agentsecrets login` then `agentsecrets mcp bridge auth.export > ~/.agentsecrets/mcp-token` (0600) and set AGENTSECRETS_TOKEN_FILE to that path; ' +
+    '2) run `agentsecrets login` then `agentsecrets mcp auth.export > ~/.agentsecrets/mcp-token` (0600) and set AGENTSECRETS_TOKEN_FILE to that path; ' +
     '3) install the CLI so local mode activates automatically. ' +
     'Call auth_status to inspect the current state.'
   );

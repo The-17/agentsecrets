@@ -3,7 +3,7 @@
  * always sees the full surface. Mode guards live inside handlers
  * (dispatch), which return actionable guidance as isError results.
  *
- * 27 tools: proxy(2) secrets(6) projects(5) workspaces(4) agents(3)
+ * 30 tools: proxy(2) secrets(8) projects(5) workspaces(4) agents(4)
  * logs(3) auth(4).
  *
  * SDK v2 note: registerTool takes the Zod RAW SHAPE (schema.shape), not a
@@ -17,14 +17,16 @@ import { resolveCallCtx } from './resolver/index.js';
 import type { ContextInput } from './context.js';
 import { fail, type ToolResult } from './resolver/types.js';
 import { sanitize } from './tools/common.js';
+import { allowWrites, refusal, tierOf, tierReport } from './tiers.js';
 import { BRIDGE_VERSION } from './version.js';
 import {
   proxyCall, proxyStatus, proxyCallSchema, proxyStatusSchema, proxyCallDescription, proxyStatusDescription,
 } from './tools/proxy.js';
 import {
-  secretsList, secretsSet, secretsDelete, secretsPull, secretsPush, secretsDiff,
+  secretsList, secretsSet, secretsDelete, secretsPull, secretsPush, secretsDiff, secretsRotate, secretsRotationStatus,
   secretsListSchema, secretsSetSchema, secretsDeleteSchema, secretsPullSchema,
-  secretsPushSchema, secretsDiffSchema, secretsDescriptions,
+  secretsPushSchema, secretsDiffSchema, secretsRotateSchema, secretsRotationStatusSchema,
+  secretsDescriptions,
 } from './tools/secrets.js';
 import {
   projectList, projectCreate, projectUse, projectUpdate, projectDelete,
@@ -37,8 +39,8 @@ import {
   workspaceMembersSchema, workspaceDescriptions,
 } from './tools/workspaces.js';
 import {
-  agentList, agentDelete, agentTokenIssue,
-  agentListSchema, agentDeleteSchema, agentTokenIssueSchema, agentDescriptions,
+  agentList, agentDelete, agentTokenIssue, agentTokenRotate,
+  agentListSchema, agentDeleteSchema, agentTokenIssueSchema, agentTokenRotateSchema, agentDescriptions,
 } from './tools/agents.js';
 import {
   logsList, logsSummary, logsDetail,
@@ -70,9 +72,10 @@ export const SERVER_INSTRUCTIONS =
 export const TOOL_NAMES = [
   'proxy_call', 'proxy_status',
   'secrets_list', 'secrets_set', 'secrets_delete', 'secrets_pull', 'secrets_push', 'secrets_diff',
+  'secrets_rotation_status', 'secrets_rotate',
   'project_list', 'project_create', 'project_use', 'project_update', 'project_delete',
   'workspace_list', 'workspace_create', 'workspace_switch', 'workspace_members',
-  'agent_list', 'agent_delete', 'agent_token_issue',
+  'agent_list', 'agent_delete', 'agent_token_issue', 'agent_token_rotate',
   'logs_list', 'logs_summary', 'logs_detail',
   'auth_status', 'auth_login', 'auth_logout', 'auth_use_identity',
 ];
@@ -111,11 +114,23 @@ export function createBridgeServer(): McpServer {
   // the SDK's `Record<string, ZodType>` overload wants (same zod copy, so
   // structurally identical). One asserted boundary here keeps all 27 call
   // sites clean; drop it if the SDK ever accepts core shapes.
+  //
+  // Every tool is registered through `t`, which enforces its permission tier
+  // before the handler runs. A tool cannot reach the surface without a tier:
+  // `tierOf` throws on an unclassified name at startup, so a missing tier is a
+  // crash on boot rather than a silent bypass. See tiers.ts.
   const t = (name: string, description: string, inputSchema: { readonly [k: string]: object }, handler: Handler): void => {
+    const tier = tierOf(name);
+    const gated: Handler = async (call, args) => {
+      if (tier !== 'read' && !allowWrites()) {
+        return fail(refusal(name));
+      }
+      return handler(call, args);
+    };
     server.registerTool(
       name,
       { description, inputSchema: inputSchema as unknown as Record<string, ZodType> },
-      wrap(handler)
+      wrap(gated)
     );
   };
 
@@ -143,6 +158,8 @@ const REGISTERED_TOOLS: ToolDef[] = [
     { name: 'secrets_pull', description: secretsDescriptions.secrets_pull, shape: secretsPullSchema.shape, run: (c, a) => secretsPull(c, a as never) },
     { name: 'secrets_push', description: secretsDescriptions.secrets_push, shape: secretsPushSchema.shape, run: (c, a) => secretsPush(c, a as never) },
     { name: 'secrets_diff', description: secretsDescriptions.secrets_diff, shape: secretsDiffSchema.shape, run: (c, a) => secretsDiff(c, a as never) },
+    { name: 'secrets_rotation_status', description: secretsDescriptions.secrets_rotation_status, shape: secretsRotationStatusSchema.shape, run: (c, a) => secretsRotationStatus(c, a as never) },
+    { name: 'secrets_rotate', description: secretsDescriptions.secrets_rotate, shape: secretsRotateSchema.shape, run: (c, a) => secretsRotate(c, a as never) },
 
     { name: 'project_list', description: projectDescriptions.project_list, shape: projectListSchema.shape, run: (c, a) => projectList(c, a as never) },
     { name: 'project_create', description: projectDescriptions.project_create, shape: projectCreateSchema.shape, run: (c, a) => projectCreate(c, a as never) },
@@ -158,6 +175,7 @@ const REGISTERED_TOOLS: ToolDef[] = [
     { name: 'agent_list', description: agentDescriptions.agent_list, shape: agentListSchema.shape, run: (c, a) => agentList(c, a as never) },
     { name: 'agent_delete', description: agentDescriptions.agent_delete, shape: agentDeleteSchema.shape, run: (c, a) => agentDelete(c, a as never) },
     { name: 'agent_token_issue', description: agentDescriptions.agent_token_issue, shape: agentTokenIssueSchema.shape, run: (c, a) => agentTokenIssue(c, a as never) },
+    { name: 'agent_token_rotate', description: agentDescriptions.agent_token_rotate, shape: agentTokenRotateSchema.shape, run: (c, a) => agentTokenRotate(c, a as never) },
 
     { name: 'logs_list', description: logsDescriptions.logs_list, shape: logsListSchema.shape, run: (c, a) => logsList(c, a as never) },
     { name: 'logs_summary', description: logsDescriptions.logs_summary, shape: logsSummarySchema.shape, run: (c, a) => logsSummary(c, a as never) },

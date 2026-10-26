@@ -9,6 +9,9 @@
  */
 
 import { z } from 'zod';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { CallCtx } from '../resolver/index.js';
 import { callControl } from '../resolver/index.js';
 import { fail, type ToolResult } from '../resolver/types.js';
@@ -18,6 +21,36 @@ import { encryptSecret, decryptSecret } from '../crypto.js';
 import { envPathFor, readDotenv, writeDotenv, deleteDotenvKey } from '../dotenv.js';
 import { recordSecretCount } from '../telemetry.js';
 import { loadProjectConfig, saveProjectConfig } from '../auth/cliFiles.js';
+
+const execFileAsync = promisify(execFile);
+
+function generateRandomValue(byteLength: number): string {
+  return randomBytes(byteLength).toString('base64url');
+}
+
+function cryptoRandomId(): string {
+  return randomUUID();
+}
+
+/** Run a command and return its stdout as the new secret value (never logged). */
+async function captureCommand(command: string, extract?: string): Promise<string> {
+  const { stdout } = await execFileAsync('sh', ['-c', command], { maxBuffer: 1 << 20 });
+  const out = stdout.replace(/\r?\n+$/, '');
+  if (!extract) return out;
+  try {
+    const doc = JSON.parse(out) as Record<string, unknown>;
+    let cur: unknown = doc;
+    for (const seg of extract.split('.')) {
+      const m = cur as Record<string, unknown>;
+      cur = m?.[seg];
+    }
+    if (typeof cur === 'string') return cur;
+    if (cur === null || cur === undefined) return '';
+    return JSON.stringify(cur);
+  } catch {
+    return out;
+  }
+}
 
 const contextFields = {
   project: z.string().optional().describe('Project name or ID (defaults to current context)'),
@@ -61,6 +94,29 @@ export const secretsDiffSchema = z.object({
   environment: z.string().optional(),
 });
 export type SecretsDiffArgs = z.infer<typeof secretsDiffSchema>;
+
+export const secretsRotateSchema = z.object({
+  key: z.string().min(1).describe('Secret key name to rotate (e.g. STRIPE_KEY)'),
+  ...contextFields,
+  environment: z.string().optional(),
+  // Value-blind staging — like the CLI: generate a random value, capture a
+  // command's stdout, or pass the raw value inside this single call.
+  generate: z.boolean().optional().describe('Mint a random value in-process and stage it (never returned)'),
+  length: z.number().int().positive().optional().describe('Bytes for generate (default 32)'),
+  command: z.string().optional().describe('Shell command whose stdout is the new value (never logged/returned)'),
+  extract: z.string().optional().describe('Dot path to the field holding the value in command output (e.g. "data.key")'),
+  value: z.string().optional().describe('New value, travels inside this call only; never logged or returned'),
+  reason: z.enum(['routine', 'compromise']).optional().describe('Rotation reason (default routine)'),
+  confirm: z.literal(true).describe('Required: acknowledges this stages a new secret version'),
+});
+export type SecretsRotateArgs = z.infer<typeof secretsRotateSchema>;
+
+export const secretsRotationStatusSchema = z.object({
+  key: z.string().min(1),
+  ...contextFields,
+  environment: z.string().optional(),
+});
+export type SecretsRotationStatusArgs = z.infer<typeof secretsRotationStatusSchema>;
 
 function needProject(call: CallCtx): { projectId: string } {
   const id = call.ctx.project?.projectId;
@@ -237,6 +293,63 @@ export async function secretsDiff(call: CallCtx, args: SecretsDiffArgs): Promise
   });
 }
 
+export async function secretsRotate(call: CallCtx, args: SecretsRotateArgs): Promise<ToolResult> {
+  return dispatch(call, 'secrets.rotate', { ...args, confirm: true }, async () => {
+    needJwt(call.creds);
+    const { projectId } = needProject(call);
+    const env = args.environment ?? call.ctx.env.name;
+    const reason = args.reason ?? 'routine';
+    if (reason !== 'routine' && reason !== 'compromise') throw new Error('reason must be routine or compromise');
+
+    // Stage a NEW pending version, value-blind. The value never appears in the
+    // result or logs. Promotion/rollback stays human-only via the CLI.
+    let plaintext: string;
+    if (args.generate) {
+      plaintext = generateRandomValue(args.length ?? 32);
+    } else if (args.command) {
+      plaintext = await captureCommand(args.command, args.extract);
+    } else if (args.value !== undefined) {
+      plaintext = args.value;
+    } else {
+      throw new Error('Provide one of: generate (bool), command (string), or value (string)');
+    }
+    if (plaintext === '') throw new Error('empty value: nothing staged');
+
+    const wsKey = needWorkspaceKey(call.creds, 'secrets_rotate');
+    const encrypted = encryptSecret(plaintext, wsKey);
+    const staged = (await callControl(call).post(
+      'secrets.rotate_stage',
+      { ciphertext: encrypted, rotation_id: 'mcp-' + cryptoRandomId(), reason },
+      { project_id: projectId, environment: env, key: args.key.toUpperCase() }
+    )) as { version_id?: string };
+    return withContext(call, {
+      status: 'staged',
+      key: args.key,
+      environment: env,
+      version: staged.version_id ?? null,
+      reason,
+      next_step: 'Update the value at the provider out-of-band, then the human promotes with `agentsecrets secrets rotate KEY --promote` (requires the human’s password).',
+    });
+  });
+}
+
+export async function secretsRotationStatus(call: CallCtx, args: SecretsRotationStatusArgs): Promise<ToolResult> {
+  return dispatch(call, 'secrets.rotation_status', { ...args }, async () => {
+    const { projectId } = needProject(call);
+    const env = args.environment ?? call.ctx.env.name;
+    const status = (await callControl(call).get(
+      'secrets.rotation_status',
+      { project_id: projectId, environment: env, key: args.key.toUpperCase() }
+    )) as Record<string, unknown>;
+    return withContext(call, {
+      key: args.key,
+      environment: env,
+      rotation: status,
+      note: 'To rotate, a human runs `agentsecrets secrets rotate KEY [--promote|--rollback|--abort]`. Promotion needs the human’s confirmation and password.',
+    });
+  });
+}
+
 export const secretsDescriptions = {
   secrets_list:
     'FIRST STEP before any credentialed call: discover which secret KEY NAMES exist in a project. ' +
@@ -260,4 +373,13 @@ export const secretsDescriptions = {
   secrets_diff:
     'Compare local .env key NAMES against shared storage to spot drift (added/removed/changed, names only). ' +
     'WHEN: something works locally but not remotely (or vice versa), or before a pull/push. Values are never shown.',
+  secrets_rotation_status:
+    'Read a secret’s rotation cadence and version history (metadata only — never values). ' +
+    'WHEN: you need to know when a key was last rotated or when it is due. ' +
+    'This is a read; it does not change anything. Actual rotation is staged here but promoted by the human via the CLI.',
+  secrets_rotate:
+    'Stage a NEW pending version of a secret value (value-blind: generate, command, or inline). ' +
+    'WHEN: the human wants a key rotated and has handed you a fresh value, or asked you to mint one. ' +
+    'The new value is encrypted before transit and is NEVER returned or logged. ' +
+    'Promotion (making it live) stays with the human via `agentsecrets secrets rotate KEY --promote` — this tool only stages.',
 };

@@ -41,7 +41,7 @@ A workload token (an agent identity, `agt_...`) carries its exact scope — work
 
 **2. Check state.** Ask your assistant: *"Use agentsecrets auth_status."* It reports the mode, what's connected, and the exact next step.
 
-**3. Connect.** If you have the CLI, you're already done. Otherwise ask for `auth_login`: open the URL it returns **yourself in a browser**, approve, then `auth_status` again. On machines without a browser, run `agentsecrets login` in a terminal, then `agentsecrets mcp bridge auth.export > ~/.agentsecrets/mcp-token && chmod 600 ~/.agentsecrets/mcp-token`, and point `AGENTSECRETS_TOKEN_FILE` at that path.
+**3. Connect.** If you have the CLI, you're already done. Otherwise ask for `auth_login`: open the URL it returns **yourself in a browser**, approve, then `auth_status` again. On machines without a browser, run `agentsecrets login` in a terminal, then `agentsecrets mcp auth.export > ~/.agentsecrets/mcp-token && chmod 600 ~/.agentsecrets/mcp-token`, and point `AGENTSECRETS_TOKEN_FILE` at that path.
 
 **4. Pin an identity (cloud mode).** Ask for `auth_use_identity`. It lists your agent identities, issues a scoped token for the bridge, and stores it directly — the value is never shown, not even to you in chat. Repeat once per workspace.
 

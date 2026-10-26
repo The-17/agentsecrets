@@ -41,6 +41,16 @@ export const agentTokenIssueSchema = z.object({
 });
 export type AgentTokenIssueArgs = z.infer<typeof agentTokenIssueSchema>;
 
+export const agentTokenRotateSchema = z.object({
+  agent: z.string().describe('Agent name or registration ID (areg_...) the token belongs to'),
+  token_id: z.string().describe('The token ID to rotate'),
+  workspace: z.string().optional(),
+  compromise: z.boolean().optional().describe('true = immediate revoke of the old token (poison family); default routine (overlap)'),
+  overlap_hours: z.number().int().nonnegative().optional().describe('Overlap window before the old token dies (routine only; default 24)'),
+  confirm: z.literal(true).describe('Required: acknowledges this mints a new credential and may poison the old family'),
+});
+export type AgentTokenRotateArgs = z.infer<typeof agentTokenRotateSchema>;
+
 export interface AgentShape {
   id: string;
   name: string;
@@ -224,6 +234,37 @@ export async function agentTokenIssue(call: CallCtx, args: AgentTokenIssueArgs):
   });
 }
 
+/**
+ * Rotate a workload token: a new value with overlap (routine) or immediate
+ * revoke of the old (compromise). Like the CLI, it requires confirm:true and
+ * (server-side) the human's auth, because it mints a durable credential and in
+ * compromise mode poisons the old family. The new token value is NEVER returned
+ * — the human retrieves it from the terminal.
+ */
+export async function agentTokenRotate(call: CallCtx, args: AgentTokenRotateArgs): Promise<ToolResult> {
+  return dispatch(call, 'agent.token_rotate', { ...args, confirm: true }, async () => {
+    needJwt(call.creds);
+    const workspaceId = await resolveWorkspaceId(call, args.workspace);
+    const reg = await resolveRegistration(call, workspaceId, args.agent);
+    const compromise = args.compromise ?? false;
+    const overlapHours = compromise ? 0 : (args.overlap_hours ?? 24);
+    const rotated = (await callControl(call).post(
+      'agents.token_rotate',
+      compromise ? { overlap_hours: 0, reason: 'compromise' } : { overlap_hours: overlapHours, reason: 'routine' },
+      { workspace_id: workspaceId, registration_id: reg.id, token_id: args.token_id }
+    )) as { token_id?: string; rotation?: { family_id?: string; overlap_until?: string } };
+    return withContext(call, {
+      status: 'rotated',
+      agent: args.agent,
+      token_id: rotated.token_id ?? args.token_id,
+      family_id: rotated.rotation?.family_id ?? null,
+      reason: compromise ? 'compromise' : 'routine',
+      old_valid_until: rotated.rotation?.overlap_until ?? null,
+      warning: 'The new token value is shown ONCE in the terminal `agent token rotate` output and is NOT returned here. Store it via the CLI if needed.',
+    });
+  });
+}
+
 export const agentDescriptions = {
   agent_list:
     'See registered agent identities in a workspace — named credential-holders (CI jobs, bots, other assistants) with their token metadata (label, status, expiry). ' +
@@ -235,4 +276,9 @@ export const agentDescriptions = {
     'Mint a new credential (token) for an agent identity AND pin it as this workspace\u2019s bridge identity. ' +
     'The value goes straight into secure storage and is NEVER displayed — not even to you. ' +
     'WHEN: setting up headless access, or auth_use_identity directed you here. Prefer auth_use_identity for the guided flow.',
+  agent_token_rotate:
+    'Rotate a workload token for an agent identity: new value with overlap (routine) or immediate revoke (compromise). ' +
+    'WHEN: a token leaked (compromise) or on a routine cadence. Requires confirm:true AND the human\u2019s auth. ' +
+    'The new token value is NEVER returned — the human gets it from the terminal. ' +
+    'This mints a durable credential, so it is refused unless a human enabled writes in the MCP client configuration.',
 };

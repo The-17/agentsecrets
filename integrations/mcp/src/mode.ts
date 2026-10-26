@@ -2,7 +2,7 @@
  * Backend mode resolution.
  *
  * - `local`: delegate privileged operations to the installed CLI via
- *   `agentsecrets mcp bridge`. Full capability (keychain, proxy session,
+ *   `agentsecrets mcp`. Full capability (keychain, proxy session,
  *   refresh, E2EE), zero credentials in bridge config.
  * - `cloud`: direct HTTPS — control-plane API for management (user JWT),
  *   cloud resolver /v1/resolve for credentialed calls (workload token =

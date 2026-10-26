@@ -9,6 +9,10 @@ import (
 // security surface. These tests pin the contract: read and verify yes, mutate
 // no, and never a route that puts a value in the transcript.
 
+// skillBodyExpanded exposes the shared body for the drift test without making
+// it part of the package's public surface.
+func skillBodyExpanded() string { return expand(skillBody) }
+
 // TestWorkflowNeverTeachesDelete proves the generated procedure does not hand
 // the agent a destructive verb.
 func TestWorkflowNeverTeachesDelete(t *testing.T) {
@@ -83,18 +87,41 @@ func TestWorkflowNeverAsksForAValueInChat(t *testing.T) {
 }
 
 // TestWorkflowCoversBothRuntimes proves the procedure is runtime-neutral, so it
-// does not need a rewrite when a team moves to cloud.
+// does not need a rewrite when a team moves to cloud. It asserts the expanded
+// text, not the placeholder tokens the generator uses internally.
 func TestWorkflowCoversBothRuntimes(t *testing.T) {
 	for _, want := range []string{
 		"agentsecrets mode",
-		"__BT__local__BT__",
-		"__BT__cloud__BT__",
+		"`local`",
+		"`cloud`",
 		"[REDACTED_BY_AGENTSECRETS]",
 		"[REDACTED]",
 	} {
 		if !strings.Contains(workflowContentTemplate, want) {
 			t.Errorf("workflow is missing runtime detail %q", want)
 		}
+	}
+	if strings.Contains(workflowContentTemplate, "__FENCE__") || strings.Contains(workflowContentTemplate, "__B__") {
+		t.Error("workflow still contains generator placeholders; expand() was not applied")
+	}
+}
+
+// TestInstalledSkillMatchesWorkflow proves both distribution paths ship the same
+// procedure. Two copies drifting apart is the bug this consolidation fixed.
+func TestInstalledSkillMatchesWorkflow(t *testing.T) {
+	wf := workflowContentTemplate
+	sk := InstalledSkill()
+	if !strings.Contains(sk, skillBodyExpanded()) {
+		t.Fatal("installed skill body differs from the shared body")
+	}
+	if !strings.Contains(wf, skillBodyExpanded()) {
+		t.Fatal("workflow body differs from the shared body")
+	}
+	if !strings.Contains(sk, "name: agentsecrets") {
+		t.Error("installed skill is missing its name frontmatter")
+	}
+	if !strings.Contains(wf, "description:") {
+		t.Error("workflow is missing its description frontmatter")
 	}
 }
 

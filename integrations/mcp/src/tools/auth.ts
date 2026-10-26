@@ -18,6 +18,7 @@ import { resolveServer } from '../auth/cliFiles.js';
 import { fail, ok, type ToolResult } from '../resolver/types.js';
 import { withContext } from './common.js';
 import { needJwt } from '../resolver/guards.js';
+import { tierReport } from '../tiers.js';
 import { loadSession, saveSession } from '../auth/session.js';
 import { discoverEndpoints, startLogin, OAuthNotAvailable, type PendingLogin } from '../auth/oauth.js';
 import { fetchAgents, pinBridgeIdentity } from './agents.js';
@@ -90,6 +91,7 @@ export async function authStatus(call: CallCtx, _args: AuthStatusArgs): Promise<
       workspace: call.ctx.project?.workspaceName ?? null,
       environment: call.ctx.env.name,
     },
+    permissions: tierReport(),
     next,
   });
 }
@@ -139,7 +141,7 @@ function tokenFileInstructions(reason?: string): Record<string, unknown> {
     instructions: [
       '1. In a terminal on this machine, run: agentsecrets login',
       '2. Then export the session (tokens go terminal -> file, never through chat):',
-      '   agentsecrets mcp bridge auth.export > ~/.agentsecrets/mcp-token && chmod 600 ~/.agentsecrets/mcp-token',
+      '   agentsecrets mcp auth.export > ~/.agentsecrets/mcp-token && chmod 600 ~/.agentsecrets/mcp-token',
       '3. Set AGENTSECRETS_TOKEN_FILE=$HOME/.agentsecrets/mcp-token in the MCP client env (the PATH is config; the secret is not).',
       '4. Call auth_status to verify, then auth_use_identity to pin a workload identity.',
     ],

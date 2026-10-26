@@ -13,7 +13,7 @@
  *     2. bridge session store (OAuth login via auth_login, auto-refresh)
  *     3. ~/.agentsecrets/token.json access_token (pre-migration CLI session)
  *     4. AGENTSECRETS_TOKEN_FILE env -> 0600 file (the *path* is config,
- *        the secret is not; see `agentsecrets mcp bridge auth.export`)
+ *        the secret is not; see `agentsecrets mcp auth.export`)
  *
  *   workload credential = agent identity (cloud resolver /v1/resolve +
  *   local proxy X-AS-Agent-Token attribution). Either the raw token_urlsafe

@@ -13,7 +13,13 @@ let binDir = '';
 function installFake(): string {
   binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'as-fakebin-'));
   const js = `import fs from 'node:fs';
-const [, , , , verb, argvJson] = process.argv;
+// The CLI accepts both "mcp <verb>" and the legacy "mcp bridge <verb>", so the
+// fake locates the verb by name rather than by argv position.
+const rest = process.argv.slice(2);
+const mcpAt = rest.indexOf('mcp');
+const after = mcpAt >= 0 ? rest.slice(mcpAt + 1) : rest;
+const verb = after[0] === 'bridge' ? after[1] : after[0];
+const argvJson = after[0] === 'bridge' ? after[2] : after[1];
 let raw = argvJson ?? '';
 if (!raw && !process.stdin.isTTY) {
   try { raw = fs.readFileSync(0, 'utf8'); } catch { raw = ''; }

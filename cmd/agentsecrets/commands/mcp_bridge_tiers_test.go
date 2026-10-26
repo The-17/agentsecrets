@@ -16,6 +16,7 @@ func TestBridgeWriteVerbsAreRefusedByDefault(t *testing.T) {
 		"project.create", "project.delete", "project.update", "project.use",
 		"workspace.create", "workspace.switch",
 		"agent.delete", "agent.token_issue",
+		"secrets.rotate", "agent.token_rotate",
 	}
 	for _, verb := range want {
 		if !bridgeWrites[verb] {
@@ -30,7 +31,7 @@ func TestBridgeReadVerbsStayOpen(t *testing.T) {
 	t.Setenv(EnvBridgeAllowWrites, "")
 
 	for _, verb := range []string{
-		"ping", "status", "secrets.list", "secrets.diff",
+		"ping", "status", "secrets.list", "secrets.diff", "secrets.rotation_status",
 		"project.list", "workspace.list", "workspace.members",
 		"agent.list", "logs.list", "logs.summary", "logs.detail",
 		"proxy.call", "proxy.status",
@@ -73,5 +74,11 @@ func TestBridgeSwitchFailsClosed(t *testing.T) {
 func TestBridgeTokenIssueIsTreatedAsWrite(t *testing.T) {
 	if !bridgeWrites["agent.token_issue"] {
 		t.Fatal("agent.token_issue is not gated; a model could mint a durable token")
+	}
+	if !bridgeWrites["agent.token_rotate"] {
+		t.Fatal("agent.token_rotate is not gated; rotation mints a durable successor token")
+	}
+	if !bridgeWrites["secrets.rotate"] {
+		t.Fatal("secrets.rotate is not gated; staging a new secret version is a mutation")
 	}
 }

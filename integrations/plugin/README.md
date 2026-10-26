@@ -172,7 +172,7 @@ The plugin picks a mode in this order:
 Local mode delegates to:
 
 ```bash
-agentsecrets mcp bridge proxy.call
+agentsecrets mcp proxy.call
 ```
 
 with JSON on stdin. The plugin never reads the keychain, the session token, or
@@ -221,7 +221,7 @@ because the resolver contract cannot encode them. Use local mode for those.
 
 ### Environment assertion
 
-Local mode reads `environment.active` from `agentsecrets mcp bridge status`
+Local mode reads `environment.active` from `agentsecrets mcp status`
 before the call and caches it for 60 seconds. A mismatch fails before the
 proxy call. This is a best-effort check: a long-running daemon resolves its
 own environment at start, and 3.3.x does not expose the daemon's environment.

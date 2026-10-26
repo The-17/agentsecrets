@@ -31,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ import (
 
 	"github.com/The-17/agentsecrets/pkg/agents"
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/crypto"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/log"
@@ -48,8 +50,8 @@ import (
 )
 
 var mcpBridgeCmd = &cobra.Command{
-	Use:   "bridge <verb> [json-args]",
-	Short: "Machine-readable JSON helper for the MCP bridge (local mode)",
+	Use:   "<verb> [json-args]",
+	Short: "Machine-readable JSON interface for the MCP bridge (local mode)",
 	Long: `Execute one privileged local operation and print a JSON envelope to stdout.
 
 Verbs: ping, status, auth.export,
@@ -61,13 +63,18 @@ Verbs: ping, status, auth.export,
   logs.list, logs.summary, logs.detail
 
 Args are a single JSON object (argv or stdin). Stdout is always exactly one
-JSON envelope: {"ok":true,"data":...} or {"ok":false,"error":"..."}.`,
+JSON envelope: {"ok":true,"data":...} or {"ok":false,"error":"..."}.
+
+The old form "agentsecrets mcp bridge <verb>" still works: the word "bridge" is
+accepted and ignored, so existing MCP client configs keep running.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runMCPBridge,
 }
 
 func init() {
-	mcpCmd.AddCommand(mcpBridgeCmd)
+	// Intentionally empty: the bridge is now the parent "mcp" command's default
+	// action, so there is no "bridge" subcommand to register. Registering it
+	// would list a "<verb>" entry in help and shadow the verbs.
 }
 
 // bridgeVerbs is the advertised capability set (also returned by ping).
@@ -77,7 +84,8 @@ var bridgeVerbs = []string{
 	"proxy.call", "proxy.status",
 	"project.list", "project.create", "project.use", "project.update", "project.delete",
 	"workspace.list", "workspace.create", "workspace.switch", "workspace.members",
-	"agent.list", "agent.delete", "agent.token_issue",
+	"agent.list", "agent.delete", "agent.token_issue", "agent.token_rotate",
+	"secrets.rotate", "secrets.rotation_status",
 	"logs.list", "logs.summary", "logs.detail",
 }
 
@@ -95,18 +103,20 @@ const EnvBridgeAllowWrites = "AGENTSECRETS_MCP_ALLOW_WRITES"
 // bridge protocol requires it, and it is the human's own session export, but it
 // is listed in the report so its exposure is not hidden.
 var bridgeWrites = map[string]bool{
-	"secrets.set":       true,
-	"secrets.delete":    true,
-	"secrets.pull":      true,
-	"secrets.push":      true,
-	"project.create":    true,
-	"project.use":       true,
-	"project.update":    true,
-	"project.delete":    true,
-	"workspace.create":  true,
-	"workspace.switch":  true,
-	"agent.delete":      true,
-	"agent.token_issue": true,
+	"secrets.set":        true,
+	"secrets.delete":     true,
+	"secrets.pull":       true,
+	"secrets.push":       true,
+	"project.create":     true,
+	"project.use":        true,
+	"project.update":     true,
+	"project.delete":     true,
+	"workspace.create":   true,
+	"workspace.switch":   true,
+	"agent.delete":       true,
+	"agent.token_issue":  true,
+	"agent.token_rotate": true,
+	"secrets.rotate":     true,
 }
 
 func bridgeAllowWrites() bool {
@@ -129,6 +139,13 @@ func bridgeErr(format string, args ...interface{}) {
 func runMCPBridge(cmd *cobra.Command, args []string) error {
 	if err := keychainauth.Init(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: keychain-auth initialization failed: %v\n", err)
+	}
+
+	// "agentsecrets mcp bridge <verb>" was the old spelling. The word is
+	// accepted and dropped so already-configured MCP clients keep working;
+	// the supported form is "agentsecrets mcp <verb>".
+	if len(args) > 1 && args[0] == "bridge" {
+		args = args[1:]
 	}
 
 	verb := args[0]
@@ -231,6 +248,42 @@ func requireConfirm(a map[string]interface{}, op string) error {
 		return fmt.Errorf("%s is destructive: pass {\"confirm\": true} to proceed", op)
 	}
 	return nil
+}
+
+// runBridgeCapture runs a shell command and returns its stdout as the new
+// secret value. Its output is never logged or returned beyond the caller's use.
+func runBridgeCapture(command string) (string, error) {
+	cmd := exec.Command("sh", "-c", command)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("capture command failed: %w", err)
+	}
+	return string(out), nil
+}
+
+// extractJSONPath pulls a dotted path (e.g. "data.key") out of a JSON string.
+// Used to extract a value the provider CLI printed inside a JSON envelope.
+func extractJSONPath(raw, path string) string {
+	var doc interface{}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return strings.TrimSpace(raw)
+	}
+	cur := doc
+	for _, seg := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]interface{})
+		if !ok {
+			return strings.TrimSpace(raw)
+		}
+		cur = m[seg]
+	}
+	if s, ok := cur.(string); ok {
+		return s
+	}
+	if cur == nil {
+		return ""
+	}
+	b, _ := json.Marshal(cur)
+	return string(b)
 }
 
 // --- Caller-declared scope (expect_*) ---------------------------------------
@@ -417,32 +470,35 @@ func bridgeWorkspaceID(a map[string]interface{}, pc *config.ProjectConfig) strin
 type bridgeHandler func(a map[string]interface{}) error
 
 var bridgeDispatch = map[string]bridgeHandler{
-	"ping":              bridgePing,
-	"status":            bridgeStatus,
-	"auth.export":       bridgeAuthExport,
-	"secrets.list":      bridgeSecretsList,
-	"secrets.set":       bridgeSecretsSet,
-	"secrets.delete":    bridgeSecretsDelete,
-	"secrets.pull":      bridgeSecretsPull,
-	"secrets.push":      bridgeSecretsPush,
-	"secrets.diff":      bridgeSecretsDiff,
-	"proxy.call":        bridgeProxyCall,
-	"proxy.status":      bridgeProxyStatus,
-	"project.list":      bridgeProjectList,
-	"project.create":    bridgeProjectCreate,
-	"project.use":       bridgeProjectUse,
-	"project.update":    bridgeProjectUpdate,
-	"project.delete":    bridgeProjectDelete,
-	"workspace.list":    bridgeWorkspaceList,
-	"workspace.create":  bridgeWorkspaceCreate,
-	"workspace.switch":  bridgeWorkspaceSwitch,
-	"workspace.members": bridgeWorkspaceMembers,
-	"agent.list":        bridgeAgentList,
-	"agent.delete":      bridgeAgentDelete,
-	"agent.token_issue": bridgeAgentTokenIssue,
-	"logs.list":         bridgeLogsList,
-	"logs.summary":      bridgeLogsSummary,
-	"logs.detail":       bridgeLogsDetail,
+	"ping":                    bridgePing,
+	"status":                  bridgeStatus,
+	"auth.export":             bridgeAuthExport,
+	"secrets.list":            bridgeSecretsList,
+	"secrets.set":             bridgeSecretsSet,
+	"secrets.delete":          bridgeSecretsDelete,
+	"secrets.pull":            bridgeSecretsPull,
+	"secrets.push":            bridgeSecretsPush,
+	"secrets.diff":            bridgeSecretsDiff,
+	"proxy.call":              bridgeProxyCall,
+	"proxy.status":            bridgeProxyStatus,
+	"project.list":            bridgeProjectList,
+	"project.create":          bridgeProjectCreate,
+	"project.use":             bridgeProjectUse,
+	"project.update":          bridgeProjectUpdate,
+	"project.delete":          bridgeProjectDelete,
+	"workspace.list":          bridgeWorkspaceList,
+	"workspace.create":        bridgeWorkspaceCreate,
+	"workspace.switch":        bridgeWorkspaceSwitch,
+	"workspace.members":       bridgeWorkspaceMembers,
+	"agent.list":              bridgeAgentList,
+	"agent.delete":            bridgeAgentDelete,
+	"agent.token_issue":       bridgeAgentTokenIssue,
+	"agent.token_rotate":      bridgeAgentTokenRotate,
+	"secrets.rotate":          bridgeSecretsRotate,
+	"secrets.rotation_status": bridgeSecretsRotationStatus,
+	"logs.list":               bridgeLogsList,
+	"logs.summary":            bridgeLogsSummary,
+	"logs.detail":             bridgeLogsDetail,
 }
 
 // ping / status -----------------------------------------------------------------
@@ -732,6 +788,93 @@ func bridgeSecretsDiff(a map[string]interface{}) error {
 		"changed":     changed,
 		"unchanged":   diff.Unchanged,
 		"in_sync":     len(diff.Added) == 0 && len(diff.Removed) == 0 && len(diff.Changed) == 0,
+	})
+	return nil
+}
+
+// bridgeSecretsRotate stages a NEW pending version of a secret value, value-blind.
+// It mirrors the value-blind provisioning the bridge already supports (generate /
+// command / stdin) so the plaintext never appears in the tool arguments, and it is
+// gated behind writes (bridgeWrites) plus an explicit confirm:true. Promotion,
+// rollback, and abort are intentionally CLI-only: they require the human's
+// password and final say, matching the CLI `secrets rotate --promote` flow.
+func bridgeSecretsRotate(a map[string]interface{}) error {
+	if err := requireConfirm(a, "secrets.rotate"); err != nil {
+		return err
+	}
+	if err := expectBindingProject(a); err != nil {
+		return err
+	}
+	if err := expectBindingWorkspace(a); err != nil {
+		return err
+	}
+	key, err := requireStr(a, "key")
+	if err != nil {
+		return err
+	}
+	env, err := switchBridgeEnv(argStr(a, "environment"))
+	if err != nil {
+		return err
+	}
+	reason := argStr(a, "reason")
+	if reason == "" {
+		reason = "routine"
+	}
+	if reason != "routine" && reason != "compromise" {
+		return fmt.Errorf("reason must be routine or compromise")
+	}
+
+	svc := app.Secrets()
+	var plaintext string
+	switch {
+	case argBool(a, "generate"):
+		if err := verifyPasswordLocally(); err != nil {
+			return err
+		}
+		// Mint the new value in-process; it is never logged or returned, only
+		// staged as a pending rotation version.
+		pw, err := crypto.GeneratePassword(argInt(a, "length", 32))
+		if err != nil {
+			return err
+		}
+		plaintext = pw
+	case argStr(a, "command") != "":
+		if err := verifyPasswordLocally(); err != nil {
+			return err
+		}
+		// Capture the command's stdout as the new value (provider CLI minting a
+		// key). Its output is never logged or returned.
+		command := argStr(a, "command")
+		out, err := runBridgeCapture(command)
+		if err != nil {
+			return err
+		}
+		plaintext = strings.TrimRight(out, "\r\n")
+		if argStr(a, "extract") != "" {
+			plaintext = extractJSONPath(plaintext, argStr(a, "extract"))
+		}
+	case argStr(a, "value") != "":
+		// Value travels inside this single call (like secrets.set). It is not
+		// logged or returned.
+		plaintext = argStr(a, "value")
+	default:
+		return fmt.Errorf("provide one of: generate (bool), command (string), or value (string)")
+	}
+
+	if plaintext == "" {
+		return fmt.Errorf("empty value: nothing staged")
+	}
+	staged, _, err := svc.StageVersion(key, plaintext, env, reason)
+	if err != nil {
+		return fmt.Errorf("stage failed: %w", err)
+	}
+	bridgeOK(map[string]interface{}{
+		"status":      "staged",
+		"key":         key,
+		"environment": env,
+		"version":     staged.VersionID,
+		"reason":      reason,
+		"next_step":   "Update the value at the provider out-of-band, then a human promotes with `agentsecrets secrets rotate KEY --promote` (requires the human's password).",
 	})
 	return nil
 }
@@ -1110,6 +1253,97 @@ func bridgeAgentTokenIssue(a map[string]interface{}) error {
 		"expires_at": resp.ExpiresAt,
 		"one_time":   true,
 		"warning":    "This token is shown ONCE. Store it immediately in a secret manager or AGENTSECRETS_TOKEN_FILE. Never log it.",
+	})
+	return nil
+}
+
+// bridgeAgentTokenRotate rotates a workload token: a new value with overlap
+// (routine) or immediate revoke of the old (compromise). It is gated behind
+// writes (bridgeWrites), and additionally requires the human to confirm:true
+// AND supply their password, because rotation mints a durable credential and
+// (in compromise mode) poisons the old family. Both are boundaries a model
+// cannot satisfy, matching the CLI `agent token rotate` flow.
+func bridgeAgentTokenRotate(a map[string]interface{}) error {
+	ref, err := requireStr(a, "agent")
+	if err != nil {
+		return err
+	}
+	tokenID, err := requireStr(a, "token_id")
+	if err != nil {
+		return err
+	}
+	if err := requireConfirm(a, "agent.token_rotate"); err != nil {
+		return err
+	}
+	compromise := argBool(a, "compromise")
+	overlapHours := argInt(a, "overlap_hours", 24)
+	if compromise {
+		overlapHours = 0
+	}
+	pc, _ := config.LoadProjectConfig()
+	wsID := bridgeWorkspaceID(a, pc)
+	if wsID == "" {
+		return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch <name>' first")
+	}
+	svc := app.Agents()
+	id, err := resolveBridgeAgentID(svc, wsID, ref)
+	if err != nil {
+		return err
+	}
+	if err := verifyPasswordLocally(); err != nil {
+		return err
+	}
+	reason := "routine"
+	if compromise {
+		reason = "compromise"
+	}
+	resp, err := svc.TokenRotate(wsID, id, tokenID, agents.RotateTokenRequest{
+		OverlapHours: &overlapHours,
+		Reason:       reason,
+	})
+	if err != nil {
+		return fmt.Errorf("token rotation failed: %w", err)
+	}
+	bridgeOK(map[string]interface{}{
+		"status":          "rotated",
+		"agent":           ref,
+		"token_id":        resp.TokenID,
+		"family_id":       resp.Rotation.FamilyID,
+		"reason":          reason,
+		"old_valid_until": resp.Rotation.OverlapUntil,
+		"warning":         "The new token value is shown ONCE in the terminal `agent token rotate` output. It is NOT returned here; store it via the CLI if needed.",
+	})
+	return nil
+}
+
+// bridgeSecretsRotationStatus reports a secret's rotation policy and version
+// history. It is a read of metadata, but it still mutates nothing, so it is
+// not in bridgeWrites and stays open even when writes are disabled.
+func bridgeSecretsRotationStatus(a map[string]interface{}) error {
+	if err := expectBindingProject(a); err != nil {
+		return err
+	}
+	if err := expectBindingWorkspace(a); err != nil {
+		return err
+	}
+	key, err := requireStr(a, "key")
+	if err != nil {
+		return err
+	}
+	env, err := switchBridgeEnv(argStr(a, "environment"))
+	if err != nil {
+		return err
+	}
+	svc := app.Secrets()
+	policy, err := svc.RotationStatus(key, env)
+	if err != nil {
+		return fmt.Errorf("rotation status failed: %w", err)
+	}
+	bridgeOK(map[string]interface{}{
+		"key":         key,
+		"environment": env,
+		"rotation":    policy,
+		"note":        "To rotate, a human runs `agentsecrets secrets rotate KEY [--promote|--rollback|--abort]`. The bridge can stage/arm rotation status, but promotion needs the human's confirmation and password.",
 	})
 	return nil
 }
