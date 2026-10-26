@@ -35,6 +35,10 @@ type Server struct {
 	apiClient        *api.Client
 	workspaceService *workspaces.Service
 	secretsService   *secrets.Service
+
+	// tiers records the permission tier of every registered tool, so the
+	// status tool can report the real state instead of a claim. See tiers.go.
+	tiers map[string]Tier
 }
 
 // NewServer creates an MCP server with the full AgentSecrets tool surface using
@@ -51,6 +55,7 @@ func newServer(version string, deps Deps) *server.MCPServer {
 		apiClient:        deps.API,
 		workspaceService: deps.Workspaces,
 		secretsService:   deps.Secrets,
+		tiers:            make(map[string]Tier),
 	}
 
 	s := server.NewMCPServer(
@@ -59,39 +64,53 @@ func newServer(version string, deps Deps) *server.MCPServer {
 		server.WithToolCapabilities(false),
 	)
 
-	// --- Credential Operations ---
-	s.AddTool(apiCallTool(), srv.handleAPICall)
-	s.AddTool(listKeysTool(), srv.handleListKeys)
-	s.AddTool(checkKeyTool(), srv.handleCheckKey)
-	s.AddTool(getCoverageTool(), srv.handleGetCoverage)
+	// Every tool is registered through s.add, which enforces its tier. A tool
+	// cannot reach the surface without declaring one. See tiers.go.
+	//
+	// --- Credential Operations (read: use a credential, never mutate one) ---
+	srv.add(s, read(apiCallTool(), srv.handleAPICall))
+	srv.add(s, read(listKeysTool(), srv.handleListKeys))
+	srv.add(s, read(checkKeyTool(), srv.handleCheckKey))
+	srv.add(s, read(getCoverageTool(), srv.handleGetCoverage))
 
 	// --- Context Management ---
-	s.AddTool(getStatusTool(), srv.handleGetStatus)
-	s.AddTool(getEnvironmentTool(), srv.handleGetEnvironment)
-	s.AddTool(switchEnvironmentTool(), srv.handleSwitchEnvironment)
-	s.AddTool(pullSecretsTool(), srv.handlePullSecrets)
-	s.AddTool(diffSecretsTool(), srv.handleDiffSecrets)
-	s.AddTool(diffEnvironmentsTool(), srv.handleDiffEnvironments)
+	srv.add(s, read(getStatusTool(), srv.handleGetStatus))
+	srv.add(s, read(getEnvironmentTool(), srv.handleGetEnvironment))
+	srv.add(s, write(switchEnvironmentTool(), srv.handleSwitchEnvironment))
+	srv.add(s, write(pullSecretsTool(), srv.handlePullSecrets))
+	srv.add(s, read(diffSecretsTool(), srv.handleDiffSecrets))
+	srv.add(s, read(diffEnvironmentsTool(), srv.handleDiffEnvironments))
 
 	// --- Audit & Observability ---
-	s.AddTool(getProxyLogsTool(), srv.handleGetProxyLogs)
-	s.AddTool(getBlockedRequestsTool(), srv.handleGetBlockedRequests)
-	s.AddTool(getRedactionEventsTool(), srv.handleGetRedactionEvents)
-	s.AddTool(getAuditSummaryTool(), srv.handleGetAuditSummary)
+	srv.add(s, read(getProxyLogsTool(), srv.handleGetProxyLogs))
+	srv.add(s, read(getBlockedRequestsTool(), srv.handleGetBlockedRequests))
+	srv.add(s, read(getRedactionEventsTool(), srv.handleGetRedactionEvents))
+	srv.add(s, read(getAuditSummaryTool(), srv.handleGetAuditSummary))
 
 	// --- Agent Identity ---
-	s.AddTool(getAgentIdentityTool(), srv.handleGetAgentIdentity)
-	s.AddTool(listAgentTokensTool(), srv.handleListAgentTokens)
+	srv.add(s, read(getAgentIdentityTool(), srv.handleGetAgentIdentity))
+	srv.add(s, read(listAgentTokensTool(), srv.handleListAgentTokens))
 
-	// --- Allowlist ---
-	s.AddTool(checkDomainTool(), srv.handleCheckDomain)
-	s.AddTool(getAllowlistTool(), srv.handleGetAllowlist)
+	// --- Allowlist (read only: editing it widens access, which is exactly
+	// what an injected instruction asks for) ---
+	srv.add(s, read(checkDomainTool(), srv.handleCheckDomain))
+	srv.add(s, read(getAllowlistTool(), srv.handleGetAllowlist))
 
 	// --- Key Rotation ---
-	s.AddTool(rotateKeyTool(), srv.handleRotateKey)
+	srv.add(s, destructive(rotateKeyTool(), srv.handleRotateKey))
 
 	// --- Secret Provisioning ---
-	s.AddTool(secretStoreTool(), srv.handleSecretStore)
+	//
+	// secret_store is deliberately NOT registered. Value-blind creation is a
+	// code-facing capability (CLI prompt, --stdin, --generate, --from-command,
+	// and the Python SDK), where a human wrote the code and holds the token.
+	// On a model-facing surface the safest create path is no create path: a
+	// minted credential is durable, and prompt injection is the threat, not
+	// value leakage. The handler is kept so the capability can return behind an
+	// explicit human decision, but it is not reachable by an agent.
+	//
+	// See tiers.go and the decision artifact "permission tiers enforced at
+	// registration".
 
 	return s
 }

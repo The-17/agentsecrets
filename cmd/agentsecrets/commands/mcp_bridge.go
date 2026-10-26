@@ -81,6 +81,38 @@ var bridgeVerbs = []string{
 	"logs.list", "logs.summary", "logs.detail",
 }
 
+// EnvBridgeAllowWrites is the human-controlled switch for bridge mutations.
+// Same rule as the Go MCP server (pkg/mcp): a model cannot set its own
+// environment, so this cannot be flipped by an injected instruction.
+const EnvBridgeAllowWrites = "AGENTSECRETS_MCP_ALLOW_WRITES"
+
+// bridgeWrites are the verbs that mutate state. They are refused unless a human
+// enabled writes at client configuration time.
+//
+// agent.token_issue is here despite minting rather than deleting: a token is a
+// durable credential, and minting one is exactly what an injected instruction
+// would ask for. auth.export is deliberately absent from every tier check: the
+// bridge protocol requires it, and it is the human's own session export, but it
+// is listed in the report so its exposure is not hidden.
+var bridgeWrites = map[string]bool{
+	"secrets.set":       true,
+	"secrets.delete":    true,
+	"secrets.pull":      true,
+	"secrets.push":      true,
+	"project.create":    true,
+	"project.use":       true,
+	"project.update":    true,
+	"project.delete":    true,
+	"workspace.create":  true,
+	"workspace.switch":  true,
+	"agent.delete":      true,
+	"agent.token_issue": true,
+}
+
+func bridgeAllowWrites() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(EnvBridgeAllowWrites)), "true")
+}
+
 // envelope helpers -----------------------------------------------------------
 
 func bridgeOK(data interface{}) {
@@ -112,6 +144,17 @@ func runMCPBridge(cmd *cobra.Command, args []string) error {
 	handler, known := bridgeDispatch[verb]
 	if !known {
 		return fmt.Errorf("unknown bridge verb %q (verbs: %s)", verb, strings.Join(bridgeVerbs, ", "))
+	}
+
+	// Tier gate. Refused before any work happens, so a refused verb cannot
+	// have a partial side effect. See bridgeWrites for the rationale.
+	if bridgeWrites[verb] && !bridgeAllowWrites() {
+		bridgeErr("refused: %q mutates state and writes are disabled for agent surfaces. "+
+			"This is a deliberate guard against prompt injection, not a missing feature. "+
+			"Tell the user what you wanted to do and give them the command to run themselves. "+
+			"If the user genuinely wants agents to write, they can set %s=true in the MCP client configuration and restart. "+
+			"You cannot enable it yourself.", verb, EnvBridgeAllowWrites)
+		return nil
 	}
 	// Telemetry: mark the bridge integration (per-verb counts come from the
 	// TS caller; command/sync flushing rides the shared root preamble).
@@ -405,11 +448,21 @@ var bridgeDispatch = map[string]bridgeHandler{
 // ping / status -----------------------------------------------------------------
 
 func bridgePing(a map[string]interface{}) error {
+	writes := []string{}
+	for verb := range bridgeWrites {
+		writes = append(writes, verb)
+	}
+	sort.Strings(writes)
 	bridgeOK(map[string]interface{}{
-		"version":   Version,
-		"protocol":  "mcp-bridge-v1",
-		"verbs":     bridgeVerbs,
-		"keychain":  keychainauth.IsFullyConfigured(),
+		"version":        Version,
+		"protocol":       "mcp-bridge-v1",
+		"verbs":          bridgeVerbs,
+		"keychain":       keychainauth.IsFullyConfigured(),
+		"writes_enabled": bridgeAllowWrites(),
+		"enabled_by":     EnvBridgeAllowWrites,
+		"write_verbs":    writes,
+		"note": "Mutating verbs are refused unless a human set " + EnvBridgeAllowWrites +
+			"=true in the MCP client configuration. An agent cannot enable them.",
 	})
 	return nil
 }

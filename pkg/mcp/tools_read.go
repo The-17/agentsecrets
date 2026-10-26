@@ -604,8 +604,9 @@ func (s *Server) handleGetStatus(ctx context.Context, req mcp.CallToolRequest) (
 			"active": activeEnv,
 			"source": envSource,
 		},
-		"secrets":  secretsData,
-		"activity": activityData,
+		"secrets":     secretsData,
+		"activity":    activityData,
+		"permissions": s.TierReport(),
 	})
 }
 
@@ -624,11 +625,11 @@ func (s *Server) handleGetEnvironment(ctx context.Context, req mcp.CallToolReque
 	}
 
 	return jsonResult(map[string]interface{}{
-		"environment":             env,
-		"source":                  source,
-		"project":                 projectData,
-		"standard_environments":   config.StandardEnvironments,
-		"environment_name_rule":   config.EnvironmentNameRule,
+		"environment":           env,
+		"source":                source,
+		"project":               projectData,
+		"standard_environments": config.StandardEnvironments,
+		"environment_name_rule": config.EnvironmentNameRule,
 	})
 }
 
