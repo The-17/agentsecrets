@@ -2,6 +2,11 @@ module github.com/The-17/agentsecrets
 
 go 1.26.0
 
+// go1.26.0's auto-fetched toolchain ships without the covdata binary, so
+// `go test -cover` fails with `go: no such tool "covdata"`. Pin the first
+// patch release that carries it.
+toolchain go1.26.10
+
 require (
 	github.com/bytemare/ecc v0.9.0
 	github.com/bytemare/opaque v0.18.0
