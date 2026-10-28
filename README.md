@@ -61,7 +61,7 @@ On top of that sits agent identity and audit, where every execution is mapped to
 
 ## Ecosystem
 
-AgentSecrets connects to the tools you already use: MCP servers for Claude Desktop and Cursor, OpenClaw, environment-variable injection for any CLI tool, and an HTTP proxy that works with LangChain, CrewAI, and AutoGen. A Python SDK is available now, with a JS/TS version coming soon, and neither has a `get()` method, since there's no code path that should return a raw value. Full integration guides are in the [Integrations](https://agentsecrets.tech/docs/integrations/overview).
+AgentSecrets connects to the tools you already use: MCP servers for Claude Desktop and Cursor, native skills for Claude Code, Codex, and OpenClaw, environment-variable injection for any CLI tool, and an HTTP proxy that works with LangChain, CrewAI, and AutoGen. Any other agent can take the same skill with `agentsecrets skill --dir <path>`: one command, any client. A Python SDK is available now, with a JS/TS version coming soon, and neither has a `get()` method, since there's no code path that should return a raw value. Full integration guides are in the [Integrations](https://agentsecrets.tech/docs/integrations/overview), and the skill is documented in [The agent skill](docs/skill.md).
 
 ## Installation
 

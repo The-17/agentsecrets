@@ -281,6 +281,7 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(proxyCmd)
 	rootCmd.AddCommand(mcpCmd)
+	rootCmd.AddCommand(skillCmd)
 	rootCmd.AddCommand(callCmd)
 	rootCmd.AddCommand(environmentCmd)
 	rootCmd.AddCommand(NewEnvCmd())
