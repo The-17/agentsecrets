@@ -61,6 +61,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	// The system checks are added after any keychain repair, because Repair()
+	// re-runs Diagnose() and would otherwise discard them.
+	appendSystemChecks(report)
+
 	if doctorJSON {
 		return emitDoctorJSON(report)
 	}
