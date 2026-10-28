@@ -33,7 +33,7 @@ var profileCmd = &cobra.Command{
 		if pub, err := keyring.GetPublicKey(email); err == nil && len(pub) > 0 {
 			h := sha256.Sum256(pub)
 			hexed := hex.EncodeToString(h[:])
-			fingerprint = "sha256:" + hexed[:8] + "…" + hexed[len(hexed)-4:]
+			fingerprint = "sha256:" + hexed[:8] + ".." + hexed[len(hexed)-4:]
 		}
 
 		vs, err := app.Auth().VaultStatus()
@@ -49,7 +49,7 @@ var profileCmd = &cobra.Command{
 		case vs.Version == 0 || len(vs.Envelopes) == 0:
 			vaultLine = "no vault yet"
 		default:
-			vaultLine = fmt.Sprintf("v%d · %s", vs.Version, strings.Join(vs.Envelopes, ", "))
+			vaultLine = fmt.Sprintf("v%d | %s", vs.Version, strings.Join(vs.Envelopes, ", "))
 		}
 		recoveryLine := "not confirmed"
 		if vs.Confirmed {
@@ -73,24 +73,23 @@ func printAccountCard(email, host, fingerprint, vaultLine, recoveryLine string) 
 		{"recovery key", recoveryLine},
 	}
 
-	width := 0
+	labelWidth := 0
+	valueWidth := 0
 	for _, r := range rows {
-		if l := len(r.label) + 2 + len(r.value); l > width {
-			width = l
+		if len(r.label) > labelWidth {
+			labelWidth = len(r.label)
+		}
+		if len(r.value) > valueWidth {
+			valueWidth = len(r.value)
 		}
 	}
-	if width < 22 {
-		width = 22
-	}
-	rule := "─" + strings.Repeat("─", width+2) + "─"
+
+	contentWidth := labelWidth + 2 + valueWidth
+	rule := strings.Repeat("─", contentWidth+2)
 
 	fmt.Println("┌" + rule + "┐")
 	for _, r := range rows {
-		pad := width - len(r.label) - len(r.value)
-		if pad < 0 {
-			pad = 0
-		}
-		fmt.Printf("│ %s%s%s%s │\n", r.label, strings.Repeat(" ", 2), strings.Repeat(" ", pad), r.value)
+		fmt.Printf("│ %-*s  %-*s │\n", labelWidth, r.label, valueWidth, r.value)
 	}
 	fmt.Println("└" + rule + "┘")
 }
