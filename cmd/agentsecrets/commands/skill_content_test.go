@@ -233,6 +233,48 @@ func TestVendoredOpenClawSkillMatchesSource(t *testing.T) {
 	}
 }
 
+// TestSkillCommandExportsEveryClient proves the universal export writes the
+// same package the native installers do. This is the path for every agent we
+// do not ship an installer for, so it must produce identical bytes.
+func TestSkillCommandExportsEveryClient(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "skills", "agentsecrets")
+	if err := writeSkillPackage(dir); err != nil {
+		t.Fatalf("writeSkillPackage: %v", err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("SKILL.md not written: %v", err)
+	}
+	if string(body) != InstalledSkill() {
+		t.Error("exported SKILL.md differs from the installed skill")
+	}
+
+	refs := SkillReferences()
+	if len(refs) == 0 {
+		t.Fatal("no references generated")
+	}
+	for name := range refs {
+		if _, err := os.Stat(filepath.Join(dir, "references", name)); err != nil {
+			t.Errorf("references/%s not written: %v", name, err)
+		}
+	}
+
+	if got := sortedReferenceNames(); len(got) != len(refs) {
+		t.Errorf("sortedReferenceNames returned %d names, want %d", len(got), len(refs))
+	}
+}
+
+// TestSkillCommandIsRegistered proves the escape hatch exists on the CLI.
+func TestSkillCommandIsRegistered(t *testing.T) {
+	cmd := findCmd(t, "skill")
+	for _, flag := range []string{"all", "version", "dir"} {
+		if cmd.Flags().Lookup(flag) == nil {
+			t.Errorf("agentsecrets skill is missing --%s", flag)
+		}
+	}
+}
+
 // TestSkillReferencesTeachRealCommands proves the references do not invent
 // commands either. Same rule as the body: every documented verb must exist.
 func TestSkillReferencesTeachRealCommands(t *testing.T) {

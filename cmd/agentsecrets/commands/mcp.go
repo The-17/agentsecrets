@@ -235,6 +235,7 @@ func runMCPInstall(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	ui.Info("Restart your AI tool to activate AgentSecrets.")
+	ui.Info("Another agent? Get the same skill with: agentsecrets skill --dir <its skills directory>")
 	return nil
 }
 
