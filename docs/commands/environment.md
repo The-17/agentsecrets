@@ -61,7 +61,13 @@ If you're provisioning a new environment (such as initialising `staging` using y
 ```bash
 agentsecrets environment copy development staging
 # Copied 12 secrets from development to staging.
+
+# In a script or an agent session there is no terminal to answer the prompt:
+agentsecrets environment copy development staging --yes
 ```
+
+`copy` asks before overwriting. When there is no terminal it refuses instead of
+hanging or silently cancelling, and tells you to pass `--yes`.
 
 ---
 

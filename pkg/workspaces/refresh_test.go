@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/crypto"
 )
 
 // A workspace the user was just invited to must land in the cache and be
@@ -79,8 +80,47 @@ func TestMergeWorkspaceCacheReportsRoleChangeAndRemoval(t *testing.T) {
 	}
 }
 
-// A workspace whose key cannot be unwrapped keeps the key we already hold
-// instead of being silently dropped.
+// A workspace whose key cannot be unwrapped must be named in Locked. Hiding it
+// is what produced a live "workspace key not found" three commands later.
+func TestUnlockWorkspaceKeysNamesWhatItCouldNotOpen(t *testing.T) {
+	priv, pub, err := crypto.GenerateKeypair()
+	if err != nil {
+		t.Fatalf("keypair: %v", err)
+	}
+	wsKey, err := crypto.GenerateWorkspaceKey()
+	if err != nil {
+		t.Fatalf("workspace key: %v", err)
+	}
+	wrapped, err := crypto.EncryptForUser(pub, wsKey)
+	if err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	emptyBox, err := crypto.EncryptForUser(pub, nil)
+	if err != nil {
+		t.Fatalf("wrap empty: %v", err)
+	}
+
+	listed := []Workspace{
+		{ID: "ws-good", Name: "Unlocked Team", EncryptedWorkspaceKey: crypto.B64Encode(wrapped)},
+		{ID: "ws-empty", Name: "No Key Team", EncryptedWorkspaceKey: ""},
+		{ID: "ws-garbage", Name: "Broken Team", EncryptedWorkspaceKey: "bm90LWEta2V5"},
+		{ID: "ws-hollow", Name: "Hollow Team", EncryptedWorkspaceKey: crypto.B64Encode(emptyBox)},
+	}
+
+	decrypted, locked := unlockWorkspaceKeys(listed, priv, pub)
+
+	if _, ok := decrypted["ws-good"]; !ok {
+		t.Fatal("a workspace whose key was wrapped for this user was not unlocked")
+	}
+	if len(locked) != 3 {
+		t.Fatalf("locked = %v, want the three unusable workspaces named", locked)
+	}
+	if !reflect.DeepEqual(locked, []string{"No Key Team", "Broken Team", "Hollow Team"}) {
+		t.Fatalf("locked = %v, want [No Key Team Broken Team Hollow Team]", locked)
+	}
+}
+
 func TestMergeWorkspaceCacheKeepsExistingKeyWhenUnwrapFails(t *testing.T) {
 	current := map[string]config.WorkspaceCacheEntry{
 		"ws-team": {Name: "The Seventeen", Role: "member", Type: "shared"},

@@ -774,8 +774,13 @@ func StoreWorkspaceCache(workspaces map[string]WorkspaceCacheEntry) error {
 
 	for id, ws := range workspaces {
 		if ws.Key != "" {
-			// Save workspace key in secure keychain
-			_ = keyring.SetWorkspaceKey(id, ws.Key)
+			// Save workspace key in secure keychain. A failure here used to be
+			// discarded, which left the workspace listed and selectable while
+			// every command that needed its key failed later with "workspace
+			// key not found". Report it against the workspace name instead.
+			if err := keyring.SetWorkspaceKey(id, ws.Key); err != nil {
+				return fmt.Errorf("failed to store the key for workspace %q: %w", ws.Name, err)
+			}
 		}
 		// Save metadata with Key field stripped
 		strippedWorkspaces[id] = WorkspaceCacheEntry{

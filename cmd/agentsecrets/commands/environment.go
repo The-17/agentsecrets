@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/crypto"
@@ -78,6 +79,7 @@ func init() {
 	envSwitchCmd.ValidArgsFunction = autocompleteEnvironments
 	envCopyCmd.ValidArgsFunction = autocompleteEnvironmentsMulti
 	envMergeCmd.ValidArgsFunction = autocompleteEnvironmentsMulti
+	envCopyCmd.Flags().BoolP("yes", "y", false, "skip the overwrite confirmation (required when there is no terminal)")
 
 	environmentCmd.AddCommand(envSwitchCmd)
 	environmentCmd.AddCommand(envCreateCmd)
@@ -323,7 +325,13 @@ func runEnvCopy(cmd *cobra.Command, args []string) error {
 
 	// Confirm if destination has existing secrets
 	ui.Info(fmt.Sprintf("This will copy %d secrets from %s to %s.", len(fromSecrets), from, to))
-	if !confirmProceed(false, "Continue? (y/n): ") {
+	yes, _ := cmd.Flags().GetBool("yes")
+	if !yes && !term.IsTerminal(int(os.Stdin.Fd())) {
+		// Reading a confirmation from a pipe would block or silently cancel.
+		// Say what to pass instead.
+		return fmt.Errorf("refusing to overwrite %s without confirmation in a non-interactive shell; re-run with --yes", to)
+	}
+	if !confirmProceed(yes, "Continue? (y/n): ") {
 		ui.Info("Copy cancelled.")
 		return nil
 	}

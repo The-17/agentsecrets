@@ -25,6 +25,11 @@ type RefreshResult struct {
 	Added   []string
 	Removed []string
 	Changed []string
+	// Locked names workspaces that are visible but whose workspace key could
+	// not be unwrapped. They are listed, and nothing in them will resolve
+	// until an admin re-invites the user, so saying nothing here turns into a
+	// confusing "workspace key not found" three commands later.
+	Locked []string
 }
 
 // HasChanges reports whether anything about the caller's memberships moved.
@@ -82,20 +87,10 @@ func (s *Service) Refresh() (RefreshResult, error) {
 	}
 
 	// Decrypt every workspace key the server handed back. A workspace whose key
-	// cannot be unwrapped keeps whatever key we already hold, rather than being
-	// dropped from the cache.
-	decrypted := make(map[string]string, len(listed))
-	for _, ws := range listed {
-		raw, err := base64.StdEncoding.DecodeString(ws.EncryptedWorkspaceKey)
-		if err != nil {
-			continue
-		}
-		key, err := crypto.DecryptFromUser(priv, pub, raw)
-		if err != nil {
-			continue
-		}
-		decrypted[ws.ID] = crypto.B64Encode(key)
-	}
+	// cannot be unwrapped is reported, not hidden: it stays in the cache so its
+	// name is visible, but the user is told it is unusable instead of meeting a
+	// "workspace key not found" error on the next command.
+	decrypted, locked := unlockWorkspaceKeys(listed, priv, pub)
 
 	cfg, _ := config.LoadGlobalConfig()
 	if cfg == nil {
@@ -113,6 +108,7 @@ func (s *Service) Refresh() (RefreshResult, error) {
 	}
 
 	merged, result := mergeWorkspaceCache(cfg.Workspaces, listed, keyFor)
+	result.Locked = locked
 
 	if err := config.StoreWorkspaceCache(merged); err != nil {
 		return result, fmt.Errorf("refresh workspaces: failed to save cache: %w", err)
@@ -122,6 +118,37 @@ func (s *Service) Refresh() (RefreshResult, error) {
 	}
 
 	return result, nil
+}
+
+// unlockWorkspaceKeys unwraps each membership's workspace key and names the
+// workspaces it could not unlock.
+//
+// Silence here is expensive: a workspace whose key is missing still appears in
+// the list and can be selected, and the failure only surfaces later as
+// "workspace key not found" from an unrelated command. Callers report Locked
+// immediately so the user knows to ask for a re-invite.
+func unlockWorkspaceKeys(listed []Workspace, priv, pub []byte) (map[string]string, []string) {
+	decrypted := make(map[string]string, len(listed))
+	var locked []string
+
+	for _, ws := range listed {
+		raw, err := base64.StdEncoding.DecodeString(ws.EncryptedWorkspaceKey)
+		if err != nil || len(raw) == 0 {
+			locked = append(locked, ws.Name)
+			continue
+		}
+		key, err := crypto.DecryptFromUser(priv, pub, raw)
+		if err != nil || len(key) == 0 {
+			// A valid envelope that opens to nothing is as unusable as one that
+			// does not open at all: there is no key to store, and reporting
+			// success here is what left a workspace selectable but broken.
+			locked = append(locked, ws.Name)
+			continue
+		}
+		decrypted[ws.ID] = crypto.B64Encode(key)
+	}
+
+	return decrypted, locked
 }
 
 // mergeWorkspaceCache folds the server's membership list into the local cache

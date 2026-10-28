@@ -2,11 +2,13 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/projects"
@@ -27,10 +29,18 @@ var projectListCmd = &cobra.Command{
 }
 
 var projectCreateCmd = &cobra.Command{
-	Use:   "create [name]",
+	Use:   "create [name] [description]",
 	Short: "Create a new project",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runProjectCreate,
+	Long: `Create a new project in the selected workspace.
+
+  agentsecrets project create backend "Payments backend"
+  agentsecrets project create backend --description "Payments backend"
+
+Without a name the CLI asks for one interactively. The description is optional
+and is only asked for in that same interactive flow, so scripts and agents are
+never left waiting on a prompt.`,
+	Args: cobra.MaximumNArgs(2),
+	RunE: runProjectCreate,
 }
 
 var projectUseCmd = &cobra.Command{
@@ -75,6 +85,7 @@ func init() {
 	projectUseCmd.ValidArgsFunction = autocompleteProjects
 	projectUpdateCmd.ValidArgsFunction = autocompleteProjects
 	projectDeleteCmd.ValidArgsFunction = autocompleteProjects
+	projectCreateCmd.Flags().StringP("description", "d", "", "project description; without it, the description is only asked for in the interactive flow")
 
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectCreateCmd)
@@ -150,8 +161,24 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		name = args[0]
 	}
+	if len(args) > 1 {
+		desc = args[1]
+	}
+	if flagDesc, _ := cmd.Flags().GetString("description"); flagDesc != "" {
+		desc = flagDesc
+	}
+
+	// The name can come from the command line or from a prompt, never from
+	// silence. A scripted call with no name must fail loudly instead of
+	// hanging on a prompt that then cancels itself and reports success
+	// without creating anything.
+	nameWasPrompted := false
+	interactive := term.IsTerminal(int(os.Stdin.Fd()))
 
 	if name == "" {
+		if !interactive {
+			return fmt.Errorf("project name is required: agentsecrets project create <name> [description]")
+		}
 		err := huh.NewInput().
 			Title("Project Name").
 			Description("What should we call this project?").
@@ -166,15 +193,19 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return nil
 		}
+		nameWasPrompted = true
 	}
 
-	err := huh.NewInput().
-		Title("Description").
-		Description("Optional project description").
-		Value(&desc).
-		Run()
-	if err != nil {
-		return nil
+	// The description is optional. Ask for it only inside the interactive flow
+	// that already asked for the name; a caller that passed the name as an
+	// argument is scripting and gets no surprise prompt. Cancel there is fine:
+	// an empty description is a valid answer.
+	if nameWasPrompted && desc == "" {
+		_ = huh.NewInput().
+			Title("Description").
+			Description("Optional project description").
+			Value(&desc).
+			Run()
 	}
 
 	var created *projects.Project
@@ -184,8 +215,7 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 		created, e = app.Projects().Create(name, desc)
 		return e
 	}); err != nil {
-		ui.Error("Failed to create project: " + err.Error())
-		return nil
+		return err
 	}
 
 	cfg, _ := config.LoadGlobalConfig()

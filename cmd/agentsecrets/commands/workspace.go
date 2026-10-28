@@ -133,7 +133,7 @@ func runWorkspaceRefresh(_ *cobra.Command, _ []string) error {
 
 	fmt.Println()
 	reportWorkspaceChanges(result)
-	if !result.HasChanges() {
+	if !result.HasChanges() && len(result.Locked) == 0 {
 		ui.Success("Workspaces are already up to date.")
 	}
 
@@ -156,6 +156,9 @@ func reportWorkspaceChanges(result workspaces.RefreshResult) {
 	}
 	for _, name := range result.Removed {
 		ui.Info("Removed: " + name)
+	}
+	for _, name := range result.Locked {
+		ui.Warning(name + ": visible, but its workspace key could not be unlocked, so nothing in it will resolve. Ask an admin to re-invite you with 'agentsecrets workspace invite <your email>'.")
 	}
 }
 
@@ -183,14 +186,21 @@ func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return nil
 	}
-	if !result.HasChanges() {
+	if !result.HasChanges() && len(result.Locked) == 0 {
 		return nil
 	}
 
 	fmt.Println()
-	ui.Info("The workspace list changed on the server:")
+	if result.HasChanges() {
+		ui.Info("The workspace list changed on the server:")
+	}
 	reportWorkspaceChanges(result)
 
+	// Reprint only when the list itself changed; a warning about a locked
+	// workspace is already above and does not need the list repeated.
+	if !result.HasChanges() {
+		return nil
+	}
 	if fresh, err := requireConfig(); err == nil && fresh != nil {
 		printWorkspaces(fresh)
 	}
