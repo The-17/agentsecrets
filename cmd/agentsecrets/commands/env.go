@@ -19,6 +19,7 @@ import (
 	"github.com/The-17/agentsecrets/internal/envguard"
 	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
@@ -149,7 +150,9 @@ parseArgs:
 		var loadErr error
 		project, loadErr = config.LoadProjectConfig()
 		if loadErr != nil || project == nil || project.ProjectID == "" {
-			return nil, fmt.Errorf("no active project. Run: agentsecrets project use <name> (or pass AGENTSECRETS_TOKEN / --cloud for cloud resolution)")
+			return nil, errors.New(errors.ErrUsage,
+				"no active project",
+				fmt.Errorf("run 'agentsecrets project use <name>', or pass AGENTSECRETS_TOKEN / --cloud for cloud resolution"))
 		}
 
 		// Ensure keychain-auth session is established before reading secrets.
