@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -13,6 +14,11 @@ import (
 	"github.com/The-17/agentsecrets/pkg/ui"
 	"github.com/The-17/agentsecrets/pkg/workspaces"
 )
+
+// workspaceCacheTTL bounds how often a listing revalidates against the server.
+// The cache is what keeps the command instant, so the check runs only once the
+// cache has had time to go stale.
+const workspaceCacheTTL = 60 * time.Second
 
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
@@ -31,6 +37,9 @@ var workspaceSwitchCmd = &cobra.Command{
 }
 
 func init() {
+	workspaceCmd.PersistentFlags().Bool("offline", false, "use the cached list without contacting the server")
+	workspaceCmd.PersistentFlags().Bool("refresh", false, "revalidate the cached list with the server before returning")
+
 	workspaceCmd.AddCommand(
 		&cobra.Command{
 			Use:     "list",
@@ -38,6 +47,7 @@ func init() {
 			Short:   "List all workspaces",
 			RunE:    runWorkspaceList,
 		},
+		workspaceRefreshCmd,
 		workspaceSwitchCmd,
 		&cobra.Command{
 			Use:   "create [name]",
@@ -100,13 +110,95 @@ func requireConfig() (*config.GlobalConfig, error) {
 
 // Handlers
 
-func runWorkspaceList(_ *cobra.Command, _ []string) error {
+var workspaceRefreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Reconcile the local workspace cache with the server",
+	Long: `Fetch your memberships again and update the local cache.
+
+Use this after being invited to a workspace. The cache is written at login and
+otherwise only revalidated in the background, so an invitation can take a moment
+to appear; this command applies it immediately.`,
+	RunE: runWorkspaceRefresh,
+}
+
+func runWorkspaceRefresh(_ *cobra.Command, _ []string) error {
+	var result workspaces.RefreshResult
+	if err := ui.Spinner("Refreshing workspaces...", func() error {
+		var e error
+		result, e = app.Workspaces().Refresh()
+		return e
+	}); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	reportWorkspaceChanges(result)
+	if !result.HasChanges() {
+		ui.Success("Workspaces are already up to date.")
+	}
+
+	cfg, err := requireConfig()
+	if err != nil || cfg == nil {
+		return err
+	}
+	printWorkspaces(cfg)
+	return nil
+}
+
+// reportWorkspaceChanges prints one line per workspace that appeared, changed,
+// or went away. Silence when nothing moved is deliberate: the caller says so.
+func reportWorkspaceChanges(result workspaces.RefreshResult) {
+	for _, name := range result.Added {
+		ui.Success("Added: " + name)
+	}
+	for _, name := range result.Changed {
+		ui.Info("Changed: " + name)
+	}
+	for _, name := range result.Removed {
+		ui.Info("Removed: " + name)
+	}
+}
+
+func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 	cfg, err := requireConfig()
 	if err != nil || cfg == nil {
 		return err
 	}
 
-	// Sort workspace IDs for consistent display order.
+	// The cached list renders first, so the command stays instant.
+	printWorkspaces(cfg)
+
+	offline, _ := cmd.Flags().GetBool("offline")
+	force, _ := cmd.Flags().GetBool("refresh")
+	if offline {
+		return nil
+	}
+	if !force && time.Since(time.Unix(config.GetWorkspacesSyncedAt(), 0)) < workspaceCacheTTL {
+		return nil
+	}
+
+	// Revalidate in place: one small request, and only after the cache has gone
+	// stale. A failure here must not turn a working listing into an error.
+	result, err := app.Workspaces().Refresh()
+	if err != nil {
+		return nil
+	}
+	if !result.HasChanges() {
+		return nil
+	}
+
+	fmt.Println()
+	ui.Info("The workspace list changed on the server:")
+	reportWorkspaceChanges(result)
+
+	if fresh, err := requireConfig(); err == nil && fresh != nil {
+		printWorkspaces(fresh)
+	}
+	return nil
+}
+
+// printWorkspaces renders the cached workspace list.
+func printWorkspaces(cfg *config.GlobalConfig) {
 	ids := make([]string, 0, len(cfg.Workspaces))
 	for id := range cfg.Workspaces {
 		ids = append(ids, id)
@@ -134,7 +226,6 @@ func runWorkspaceList(_ *cobra.Command, _ []string) error {
 	}
 
 	fmt.Println()
-	return nil
 }
 
 func runWorkspaceSwitch(_ *cobra.Command, args []string) error {

@@ -86,6 +86,30 @@ type GlobalConfig struct {
 	LastUpdateCheck     int64                          `json:"last_update_check,omitempty"`
 	LatestVersion       string                         `json:"latest_version,omitempty"`
 	LastUpdateAlert     int64                          `json:"last_update_alert,omitempty"`
+	// WorkspacesSyncedAt is the Unix time the workspace cache was last
+	// reconciled with the server. Login writes the cache once; without this
+	// timestamp an invitation stayed invisible until the next login.
+	WorkspacesSyncedAt int64 `json:"workspaces_synced_at,omitempty"`
+}
+
+// GetWorkspacesSyncedAt returns when the workspace cache was last reconciled
+// with the server, or 0 if it never has been.
+func GetWorkspacesSyncedAt() int64 {
+	c, err := LoadGlobalConfig()
+	if err != nil || c == nil {
+		return 0
+	}
+	return c.WorkspacesSyncedAt
+}
+
+// MarkWorkspacesSynced records that the workspace cache now matches the server.
+func MarkWorkspacesSynced() error {
+	c, _ := LoadGlobalConfig()
+	if c == nil {
+		c = &GlobalConfig{}
+	}
+	c.WorkspacesSyncedAt = time.Now().Unix()
+	return SaveGlobalConfig(c)
 }
 
 // WorkspaceCacheEntry is a cached workspace with its decrypted key

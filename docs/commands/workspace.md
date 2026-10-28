@@ -6,6 +6,7 @@
 
 ```
 agentsecrets workspace list
+agentsecrets workspace refresh
 agentsecrets workspace create <name>
 agentsecrets workspace switch [name]
 agentsecrets workspace members
@@ -38,6 +39,40 @@ agentsecrets workspace list
 ```
 
 Lists all workspaces you have access to. The active workspace is marked with `→`.
+
+The list is rendered from a local cache so it returns instantly and works offline.
+The cache is reconciled with the server at most once every 60 seconds: if your
+memberships changed (a new invitation, a role change, a workspace you were
+removed from), the command prints what moved and the updated list.
+
+| Flag | Effect |
+|---|---|
+| `--offline` | Use the cache only. No network call at all. |
+| `--refresh` | Reconcile with the server even if the cache is fresh. |
+
+An invitation only becomes visible once the membership is **active**. Invitations
+sent from the CLI carry an encrypted copy of the workspace key, so they are
+active immediately. An invitation sent without that key stays `invited` and
+cannot be accepted from the CLI yet; re-send it with `workspace invite` from an
+admin account.
+
+---
+
+## workspace refresh
+
+```bash
+agentsecrets workspace refresh
+```
+
+Fetches your memberships again, decrypts the workspace key for any workspace you
+have just gained access to, and updates the local cache. Use it right after being
+invited instead of logging out and back in.
+
+The private key needed to unwrap a newly shared workspace key is already in your
+OS keyring, so this needs no password and no re-authentication. A workspace whose
+key cannot be unwrapped keeps the key you already hold rather than disappearing
+from the cache.
+
 
 ```
 →  My Projects        (ws_abc123)  personal
