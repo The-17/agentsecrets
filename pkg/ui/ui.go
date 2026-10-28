@@ -239,6 +239,14 @@ var ErrorRegistry = map[errors.ErrorCode]ErrorDetails{
 			"Already upgraded? Run the command again; the plan is confirmed against the resolver, not a local cache.",
 		},
 	},
+	errors.ErrUsage: {
+		Title:       "Invalid Usage",
+		Description: "The command is missing something it needs, or cannot ask for confirmation in this shell.",
+		Suggestions: []string{
+			"Run the command with --help to see its arguments and flags.",
+			"In a script or CI, pass the value on the command line or the confirmation flag the command offers.",
+		},
+	},
 	errors.ErrUnknown: {
 		Title:       "Unexpected Error",
 		Description: "The command failed with an unhandled runtime error.",

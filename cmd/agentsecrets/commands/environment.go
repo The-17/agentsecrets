@@ -13,6 +13,7 @@ import (
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/crypto"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/secrets"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -329,7 +330,9 @@ func runEnvCopy(cmd *cobra.Command, args []string) error {
 	if !yes && !term.IsTerminal(int(os.Stdin.Fd())) {
 		// Reading a confirmation from a pipe would block or silently cancel.
 		// Say what to pass instead.
-		return fmt.Errorf("refusing to overwrite %s without confirmation in a non-interactive shell; re-run with --yes", to)
+		return errors.New(errors.ErrUsage,
+			fmt.Sprintf("refusing to overwrite %s without confirmation in a non-interactive shell", to),
+			fmt.Errorf("re-run with --yes"))
 	}
 	if !confirmProceed(yes, "Continue? (y/n): ") {
 		ui.Info("Copy cancelled.")

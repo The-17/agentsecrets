@@ -11,6 +11,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/projects"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -74,6 +75,9 @@ var projectInviteCmd = &cobra.Command{
 
 var projectTransferTo string
 
+// projectDeleteYes skips the confirmation, and is required without a terminal.
+var projectDeleteYes bool
+
 var projectTransferCmd = &cobra.Command{
 	Use:   "transfer [name]",
 	Short: "Transfer a project and all its secrets to another workspace",
@@ -85,6 +89,8 @@ func init() {
 	projectUseCmd.ValidArgsFunction = autocompleteProjects
 	projectUpdateCmd.ValidArgsFunction = autocompleteProjects
 	projectDeleteCmd.ValidArgsFunction = autocompleteProjects
+	projectDeleteCmd.Flags().BoolVarP(&projectDeleteYes, "yes", "y", false,
+		"skip the confirmation (required when there is no terminal)")
 	projectCreateCmd.Flags().StringP("description", "d", "", "project description; without it, the description is only asked for in the interactive flow")
 
 	projectCmd.AddCommand(projectListCmd)
@@ -177,7 +183,8 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 
 	if name == "" {
 		if !interactive {
-			return fmt.Errorf("project name is required: agentsecrets project create <name> [description]")
+			return errors.New(errors.ErrUsage, "a project name is required",
+				fmt.Errorf("agentsecrets project create <name> [description]"))
 		}
 		err := huh.NewInput().
 			Title("Project Name").
@@ -276,8 +283,21 @@ func runProjectUse(cmd *cobra.Command, args []string) error {
 		used, e = app.Projects().Use(name)
 		return e
 	}); err != nil {
-		ui.Error("Failed to use project: " + err.Error())
-		return nil
+		// A project is resolved inside the selected workspace, so a 404 usually
+		// means "not in this workspace", not "does not exist". Say which one was
+		// searched instead of leaving the user to guess.
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+			wsName := config.GetSelectedWorkspaceID()
+			if cfg, cfgErr := config.LoadGlobalConfig(); cfgErr == nil {
+				if ws, ok := cfg.Workspaces[wsName]; ok && ws.Name != "" {
+					wsName = ws.Name
+				}
+			}
+			return errors.New(errors.ErrUsage,
+				fmt.Sprintf("no project named %q in workspace %q", name, wsName),
+				fmt.Errorf("projects are resolved inside the selected workspace. Run 'agentsecrets workspace switch' to pick another workspace, then try again"))
+		}
+		return err
 	}
 
 	cfg, _ := config.LoadGlobalConfig()
@@ -360,13 +380,19 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 		name = args[0]
 	}
 
+	interactive := term.IsTerminal(int(os.Stdin.Fd()))
+
 	if name == "" {
+		if !interactive {
+			return errors.New(errors.ErrUsage, "a project name is required",
+				fmt.Errorf("agentsecrets project delete <name> --yes"))
+		}
 		if err := huh.NewInput().
 			Title("Project Name").
 			Description("Which project do you want to delete?").
 			Value(&name).
 			Run(); err != nil {
-			return nil
+			return errors.New(errors.ErrUsage, "no project name given", err)
 		}
 	}
 
@@ -381,10 +407,20 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	if projectID == "" {
-		return fmt.Errorf("project %q not found", name)
+		return errors.New(errors.ErrUsage, fmt.Sprintf("no project named %q in this workspace", name),
+			fmt.Errorf("run 'agentsecrets project list' to see what is available"))
 	}
 
-	if !confirmHuh(fmt.Sprintf("Are you sure you want to delete project '%s'? This cannot be undone.", name), "") {
+	// Deleting is irreversible. Without a terminal there is nobody to answer the
+	// confirmation, so require the flag rather than cancelling quietly and
+	// exiting 0 with the project still there.
+	if !projectDeleteYes && !interactive {
+		return errors.New(errors.ErrUsage,
+			fmt.Sprintf("refusing to delete project %q without confirmation in a non-interactive shell", name),
+			fmt.Errorf("re-run with --yes"))
+	}
+	if !confirmProceed(projectDeleteYes, fmt.Sprintf("Are you sure you want to delete project '%s'? This cannot be undone.", name)) {
+		ui.Info("Delete cancelled.")
 		return nil
 	}
 
@@ -395,8 +431,7 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 	if err := ui.Spinner(fmt.Sprintf("Deleting project '%s'...", name), func() error {
 		return app.Projects().Delete(name)
 	}); err != nil {
-		ui.Error("Failed to delete project: " + err.Error())
-		return nil
+		return fmt.Errorf("delete project %q: %w", name, err)
 	}
 
 	cfg, _ := config.LoadGlobalConfig()
