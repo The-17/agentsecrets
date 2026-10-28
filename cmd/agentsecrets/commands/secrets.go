@@ -419,6 +419,7 @@ func init() {
 	secretsPullCmd.Flags().BoolVarP(&pullForce, "force", "f", false, "Overwrite local changes without prompting")
 	secretsPushCmd.Flags().BoolVarP(&pushForce, "force", "f", false, "Push without prompting for missing keys")
 	secretsListCmd.Flags().BoolVar(&listRemote, "remote", false, "Fetch latest keys from the cloud instead of local cache")
+	secretsListCmd.Flags().String("env", "", "Show only this environment: development, staging, production, or a custom name; defaults to all of them")
 	secretsSetCmd.Flags().BoolVar(&allEnvs, "all-envs", false, "Set in all three environments simultaneously")
 	secretsSetCmd.Flags().Bool("stdin", false, "Read the value (one key) or KEY=VALUE lines (no keys) from stdin")
 	secretsSetCmd.Flags().Bool("generate", false, "Generate a random value (never shown)")
@@ -804,9 +805,31 @@ func promptVisibleValues(keys []string) (map[string]string, error) {
 	return kv, nil
 }
 
+// filterEnvs narrows the environment list to one name when --env is given, and
+// refuses a name this project does not have instead of printing an empty table.
+func filterEnvs(envs []string, only string) ([]string, error) {
+	if only == "" {
+		return envs, nil
+	}
+	for _, e := range envs {
+		if e == only {
+			return []string{e}, nil
+		}
+	}
+	return nil, errors.New(errors.ErrUsage,
+		fmt.Sprintf("this project has no %q environment", only),
+		fmt.Errorf("it has: %s", strings.Join(envs, ", ")))
+}
+
 func runSecretsList(cmd *cobra.Command, args []string) error {
 	if listRemote {
 		return runSecretsListRemote(cmd, args)
+	}
+
+	envRaw, _ := cmd.Flags().GetString("env")
+	only, err := envFlagValue(envRaw)
+	if err != nil {
+		return fmt.Errorf("--env: %w", err)
 	}
 
 	project, err := config.LoadProjectConfig()
@@ -815,9 +838,15 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 	}
 
 	activeEnv := config.ResolveEnvironment()
+	if only != "" {
+		activeEnv = only
+	}
 	root, _ := config.GetProjectRoot()
 	envs, err := app.Secrets().Environments(project.ProjectID, root)
 	if err != nil {
+		return err
+	}
+	if envs, err = filterEnvs(envs, only); err != nil {
 		return err
 	}
 
@@ -854,7 +883,16 @@ func runSecretsList(cmd *cobra.Command, args []string) error {
 }
 
 func runSecretsListRemote(cmd *cobra.Command, args []string) error {
+	envRaw, _ := cmd.Flags().GetString("env")
+	only, err := envFlagValue(envRaw)
+	if err != nil {
+		return fmt.Errorf("--env: %w", err)
+	}
+
 	activeEnv := config.ResolveEnvironment()
+	if only != "" {
+		activeEnv = only
+	}
 
 	project, err := config.LoadProjectConfig()
 	if err != nil || project == nil || project.ProjectID == "" {
@@ -863,6 +901,9 @@ func runSecretsListRemote(cmd *cobra.Command, args []string) error {
 	root, _ := config.GetProjectRoot()
 	envs, err := app.Secrets().Environments(project.ProjectID, root)
 	if err != nil {
+		return err
+	}
+	if envs, err = filterEnvs(envs, only); err != nil {
 		return err
 	}
 
