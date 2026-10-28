@@ -77,17 +77,29 @@ func init() {
 func verifyPasswordLocally() error {
 	cfg, err := config.LoadGlobalConfig()
 	if err != nil || cfg.Email == "" {
-		return fmt.Errorf("Not logged in.")
+		return errors.New(errors.ErrUnauthorized, "not signed in",
+			fmt.Errorf("run 'agentsecrets login' first"))
 	}
 
 	if cfg.PasswordHash == "" {
-		return fmt.Errorf("Please run 'agentsecrets login' once to enable secure local password verification for allowlist modifications.")
+		return errors.New(errors.ErrUnauthorized,
+			"this machine has no stored password for local verification",
+			fmt.Errorf("run 'agentsecrets login' once in a terminal to enable it"))
+	}
+
+	// The password is typed by the person, never piped in, so a shell without a
+	// terminal cannot answer. Say that instead of failing inside the terminal
+	// read with "inappropriate ioctl for device".
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New(errors.ErrUsage,
+			"this step asks for your password, and there is no terminal here to type it in",
+			fmt.Errorf("run it in an interactive shell, or make the same change in the dashboard"))
 	}
 
 	fmt.Print("Enter your AgentSecrets password: ")
 	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 	if err != nil {
-		return fmt.Errorf("failed to read password: %w", err)
+		return fmt.Errorf("read password: %w", err)
 	}
 	fmt.Println() // newline after hidden input
 	password := string(passwordBytes)
@@ -97,9 +109,8 @@ func verifyPasswordLocally() error {
 	inputHash := hex.EncodeToString(hasher.Sum(nil))
 
 	if inputHash != cfg.PasswordHash {
-		// Output manually to bypass cobra's default error formatting slightly if needed,
-		// or just return the error.
-		return fmt.Errorf("Incorrect password")
+		return errors.New(errors.ErrUnauthorized, "incorrect password",
+			fmt.Errorf("the password must match the one you signed in with on this machine"))
 	}
 
 	return nil
