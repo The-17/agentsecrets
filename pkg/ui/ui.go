@@ -147,10 +147,11 @@ var ErrorRegistry = map[errors.ErrorCode]ErrorDetails{
 		},
 	},
 	errors.ErrUnauthorized: {
-		Title:       "Session Expired / Unauthorized",
-		Description: "Your local session token is invalid, revoked, or has expired.",
+		Title:       "Not Signed In",
+		Description: "This machine has no usable session for the configured account.",
 		Suggestions: []string{
-			"Run 'agentsecrets login' to re-authenticate this machine.",
+			"Run 'agentsecrets login' to sign in again.",
+			"If you just changed credential stores (for example installing the system-wide daemon), the saved session cannot be read and a fresh login is needed.",
 			"Check if your account has been deactivated in the workspace settings.",
 		},
 		QuickAction: "agentsecrets login",

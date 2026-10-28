@@ -14,12 +14,30 @@ import (
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
+// missingSessionError explains a session that is not usable on this machine.
+//
+// When the account is still configured but no token can be found, the token was
+// not invalidated: it is absent from the credential store. That is what a
+// replaced keychain looks like (installing the system-wide daemon moves the store
+// to a different user), and telling the user their session is "invalid, revoked,
+// or expired" sends them looking for a cause that does not exist.
+func missingSessionError(email string) error {
+	if email == "" {
+		return errors.New(errors.ErrUnauthorized, "you must be logged in to perform this action", nil)
+	}
+	return errors.New(
+		errors.ErrUnauthorized,
+		fmt.Sprintf("this machine has no usable session for %s", email),
+		fmt.Errorf("the account is still configured, but its saved session is not in the credential store. That happens when the store is replaced, for example after installing the system-wide keychain-auth daemon. Run 'agentsecrets login' to sign in again"),
+	)
+}
+
 // EnsureAuth is a Cobra PersistentPreRunE middleware that checks session validity.
 // It automatically refreshes the access token if it is expired or close to expiring,
 // assuming a valid refresh token exists.
 func (s *Service) EnsureAuth(cmd *cobra.Command, args []string) error {
 	if !config.IsAuthenticated() {
-		return errors.New(errors.ErrUnauthorized, "you must be logged in to perform this action", nil)
+		return missingSessionError(config.GetEmail())
 	}
 
 	if config.IsTokenExpired() {
