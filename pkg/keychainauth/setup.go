@@ -662,10 +662,49 @@ func EnsureDaemonRunning(keychainAuthPath string) error {
 	}
 }
 
+// userDaemonRunning reports whether any keychain-auth process is alive. pgrep
+// matches on the process name, which is what pkill uses, so the two agree.
+func userDaemonRunning() bool {
+	return exec.Command("pgrep", "-x", "keychain-auth").Run() == nil
+}
+
+// stopUserDaemon terminates every keychain-auth process and waits until none are
+// left, escalating to SIGKILL if a graceful stop does not land in time.
+//
+// Waiting is the whole point. A fixed sleep races the shutdown: the outgoing
+// daemon keeps the socket bound while it drains, so a replacement started too
+// early fails to bind. The socket then still answers — it is the old process —
+// so the readiness probe reports success and the caller reconnects to the very
+// daemon whose in-memory policy the restart was meant to replace. That is how a
+// freshly authorized binary ends up being told, immediately after being
+// authorized, that it is "unregistered_binary_pending_approval".
+func stopUserDaemon(timeout time.Duration) error {
+	// No matching process is a success: there was nothing to stop.
+	_ = exec.Command("pkill", "-x", "keychain-auth").Run()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !userDaemonRunning() {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	_ = exec.Command("pkill", "-9", "-x", "keychain-auth").Run()
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !userDaemonRunning() {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return fmt.Errorf("the keychain-auth daemon would not stop; it still holds the socket after SIGKILL")
+}
+
 // RestartDaemon restarts the running keychain-auth daemon so it reloads its trust
 // store (a freshly authorized binary's hash) or its on-disk binary after an
 // upgrade.
-//
 // Restart must reproduce how the daemon is actually running:
 //   - A daemon supervised by systemd is restarted through systemctl and never
 //     killed directly — killing it out from under systemd fights the unit's
@@ -692,13 +731,13 @@ func RestartDaemon() error {
 	} else {
 		// No systemd supervision (macOS, or a user-mode daemon): kill any existing
 		// daemon and remove a stale socket before relaunching.
-		_ = exec.Command("pkill", "-x", "keychain-auth").Run()
 		sockPath := SocketPath()
 		_ = os.Remove(sockPath)
+		if err := stopUserDaemon(5 * time.Second); err != nil {
+			return err
+		}
+		_ = os.Remove(sockPath)
 	}
-
-	// Wait a moment for the process to die.
-	time.Sleep(200 * time.Millisecond)
 
 	// Find keychain-auth and restart via the platform-appropriate method.
 	kcPath, err := EnsureInstalled()
@@ -811,6 +850,20 @@ func startDaemonLinux(keychainAuthPath string) error {
 	return startDirect(keychainAuthPath)
 }
 
+// daemonEnv is the environment handed to a user-mode keychain-auth daemon. It
+// adds nothing on purpose.
+//
+// The daemon resolves its trust store policy and its keychain.key from the XDG
+// paths in its environment. Pinning those to ~/.agentsecrets pointed the daemon
+// at a store nothing else wrote, so it loaded an empty policy and denied the
+// binary it had just been told to authorize, and it generated a fresh
+// keychain.key, so values encrypted earlier failed to decrypt and the user was
+// silently logged out. The daemon must resolve the same paths as this process,
+// which is the one that authorized the binary and stored the values.
+func daemonEnv() []string {
+	return os.Environ()
+}
+
 // startDirect starts keychain-auth as a background process. This is the fallback
 // when the system service manager is not configured.
 func startDirect(keychainAuthPath string) error {
@@ -836,11 +889,17 @@ func startDirect(keychainAuthPath string) error {
 			logDir = filepath.Join(home, "Library", "Application Support", "keychain-auth")
 		} else {
 			logDir = filepath.Join(home, ".config", "keychain-auth")
-			// Set user XDG paths so user-mode fallback daemon on Linux writes audit logs to ~/.agentsecrets/
-			cmd.Env = append(os.Environ(),
-				"XDG_DATA_HOME="+filepath.Join(home, ".agentsecrets"),
-				"XDG_CONFIG_HOME="+filepath.Join(home, ".agentsecrets"),
-			)
+			// Deliberately inherit the caller's environment, XDG paths included.
+			//
+			// Overriding them here used to point the daemon at ~/.agentsecrets,
+			// which moved two things away from where everything else expects
+			// them: the trust store (so a freshly started daemon loaded an empty
+			// policy and denied the binary it had just been told to authorize)
+			// and keychain.key (so every value already encrypted with the real
+			// key failed to decrypt and the user was silently logged out). The
+			// daemon has to resolve the same paths as the process that wrote
+			// those files, and that process is this one.
+			cmd.Env = daemonEnv()
 		}
 	} else {
 		logDir = os.TempDir()
