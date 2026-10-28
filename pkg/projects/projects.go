@@ -370,10 +370,16 @@ func (s *Service) Invite(email, role string) error {
 		data["secrets"] = apiSecrets
 
 	} else {
-		// Existing shared workspace: Just encrypt current workspace key for invitee
-		wsKeyRaw, err := base64.StdEncoding.DecodeString(ws.Key)
+		// Existing shared workspace: encrypt the current workspace key for the
+		// invitee. The key lives in the OS keyring; config.json holds metadata
+		// only, so decoding ws.Key always yielded an empty key and the invitee
+		// received an envelope that sealed nothing.
+		wsKeyRaw, err := config.GetWorkspaceKey(workspaceID)
 		if err != nil {
-			return fmt.Errorf("failed to decode current workspace key: %w", err)
+			return fmt.Errorf("failed to read the workspace key: %w", err)
+		}
+		if len(wsKeyRaw) == 0 {
+			return fmt.Errorf("the key for workspace %q is empty; refusing to invite with an empty key", ws.Name)
 		}
 
 		encForInvitee, err := crypto.EncryptForUser(inviteePubKey, wsKeyRaw)

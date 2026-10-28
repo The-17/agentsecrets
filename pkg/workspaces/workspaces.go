@@ -122,7 +122,19 @@ func (s *Service) InviteBatch(workspaceID string, emails []string, role string) 
 		return nil, fmt.Errorf("invite batch: workspace %s not found", workspaceID)
 	}
 
-	wsKey, err := crypto.B64Decode(ws.Key, "invite batch: decode ws key")
+	// The workspace key lives in the OS keyring. config.json carries metadata
+	// only, because StoreWorkspaceCache strips the key out, so reading ws.Key
+	// here always produced an empty string. B64Decode accepts "", the CLI then
+	// sealed an EMPTY key for the invitee, and the server marked the membership
+	// active because the envelope was non-empty. The result was a workspace the
+	// invitee could see, select and never decrypt.
+	wsKey, err := config.GetWorkspaceKey(workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("invite batch: cannot read the key for workspace %q: %w", ws.Name, err)
+	}
+	if len(wsKey) == 0 {
+		return nil, fmt.Errorf("invite batch: the key for workspace %q is empty; refusing to invite with an empty key", ws.Name)
+	}
 	if err != nil {
 		return nil, err
 	}
