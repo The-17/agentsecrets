@@ -628,7 +628,31 @@ func requiresSudoForRegistration(keychainAuthPath string) bool {
 	if runtime.GOOS != "linux" {
 		return false
 	}
-	// Query keychain-auth status command
+	// A systemd unit decides first, because it decides which store the daemon
+	// will load. The unit runs the daemon as its own system user, which reads
+	// /etc/keychain-auth/config.json; an unprivileged `authorize` would write
+	// the caller's own store and the daemon would keep denying the binary it
+	// was just told to trust. RestartDaemon already treats an installed unit as
+	// authoritative, so registration must agree with it.
+	statusSaysSudo := queryStatusRequiresSudo(keychainAuthPath)
+	return privilegedRegistrationRequired(statusSaysSudo, systemdUnitExists())
+}
+
+// privilegedRegistrationRequired decides whether `authorize` must run elevated.
+//
+// The daemon's trust store path is not the caller's: a host with an installed
+// unit serves /etc/keychain-auth/config.json from a dedicated system user, so
+// registration is privileged regardless of what `status --json` reports. That
+// status describes the client's view (a config_path under the caller's HOME and
+// requires_sudo:false), and trusting it alone produced "authorized ... but the
+// daemon still denies it" on every host set up with `keychain-auth install`.
+func privilegedRegistrationRequired(statusSaysSudo, systemUnitInstalled bool) bool {
+	return systemUnitInstalled || statusSaysSudo
+}
+
+// queryStatusRequiresSudo asks the daemon binary whether its store is writable
+// without elevation. Only meaningful on hosts without a systemd unit.
+func queryStatusRequiresSudo(keychainAuthPath string) bool {
 	cmd := exec.Command(keychainAuthPath, "status", "--json")
 	output, err := cmd.Output()
 	if err == nil {
