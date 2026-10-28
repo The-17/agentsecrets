@@ -34,6 +34,9 @@ type CLIError struct {
 	Message string
 	Err     error
 	Context map[string]string
+	// Suggestions are shown in addition to the registry's suggestions for this
+	// code. Use them for hints that only apply to this one failure.
+	Suggestions []string
 }
 
 func (e *CLIError) Error() string {
@@ -54,6 +57,15 @@ func New(code ErrorCode, message string, err error) *CLIError {
 		Err:     err,
 		Context: make(map[string]string),
 	}
+}
+
+// WithSuggestions is New with hints that are specific to this failure. The
+// renderer shows them next to the registry's suggestions for the code, and the
+// process still exits non-zero.
+func WithSuggestions(code ErrorCode, message string, err error, suggestions ...string) *CLIError {
+	e := New(code, message, err)
+	e.Suggestions = suggestions
+	return e
 }
 
 // keychainDenial is satisfied by keychainauth.DaemonDeniedError. It is declared

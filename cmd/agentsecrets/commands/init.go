@@ -8,9 +8,11 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -137,6 +139,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 			Value(&choice).
 			Run()
 		if err != nil {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return errors.New(errors.ErrUsage,
+					"init needs a terminal to ask whether to sign up or log in",
+					fmt.Errorf("run 'agentsecrets init' in an interactive shell, or run 'agentsecrets login'"))
+			}
+			ui.Info("Setup cancelled.")
 			return nil
 		}
 
@@ -175,7 +183,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	_ = ui.Spinner("Initialising project wrapper...", func() error {
+	if err := ui.Spinner("Initialising project wrapper...", func() error {
 		if err := config.InitProjectConfig(modeToUse); err != nil {
 			return fmt.Errorf("failed to initialize project config: %w", err)
 		}
@@ -200,7 +208,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		// Update .gitignore with environment-specific .env files
 		updateGitignore(".")
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 
 	ui.Success("Project initialised successfully!")
 	ui.Info("Run 'agentsecrets project create <name>' or 'agentsecrets project use <name>' to link this folder.")
@@ -286,7 +296,12 @@ func runSignup() error {
 	)
 
 	if err := form.Run(); err != nil {
-		return nil // User cancelled
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return errors.New(errors.ErrUsage,
+				"signing up asks for your name, email and password, and there is no terminal here to type them in",
+				fmt.Errorf("run 'agentsecrets init' in an interactive shell"))
+		}
+		return nil // cancelled by the user
 	}
 
 	fmt.Println()
@@ -303,13 +318,10 @@ func runSignup() error {
 		})
 		return err
 	}); err != nil {
-		ui.ErrorWithSuggestions(
-			fmt.Errorf("Signup failed: %w", err),
+		return errors.WithSuggestions(errors.FromError(err).Code, "signup failed", err,
 			"If you already have an account, run 'agentsecrets login' instead.",
 			"Check your email syntax and ensure you are not already registered.",
-			"Verify your network connection to the AgentSecrets service.",
-		)
-		return nil
+			"Verify your network connection to the AgentSecrets service.")
 	}
 
 	ui.Success("Account created and logged in!")

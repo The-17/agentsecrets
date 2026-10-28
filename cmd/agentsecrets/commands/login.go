@@ -2,13 +2,16 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/ui"
 	"github.com/The-17/agentsecrets/pkg/vault"
 )
@@ -82,7 +85,12 @@ func performLogin() error {
 	)
 
 	if err := form.Run(); err != nil {
-		return nil
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return errors.New(errors.ErrUsage,
+				"this step asks for your credentials and there is no terminal here to type them in",
+				fmt.Errorf("run it in an interactive shell"))
+		}
+		return nil // cancelled by the user
 	}
 
 	fmt.Println()
@@ -93,13 +101,12 @@ func performLogin() error {
 		result, err = app.Auth().PerformLogin(email, password, nil, nil)
 		return err
 	}); err != nil {
-		ui.ErrorWithSuggestions(
-			fmt.Errorf("Login failed: %w", err),
+		// Keep the specific hints but fail the process. Logging in is what every
+		// later command depends on, so exiting 0 here hides a dead session.
+		return errors.WithSuggestions(errors.FromError(err).Code, "login failed", err,
 			"Double check your email spelling and password.",
 			"If you don't have an account, run 'agentsecrets init' to sign up.",
-			"Verify that the AgentSecrets API endpoint is accessible from your network.",
-		)
-		return nil
+			"Verify that the AgentSecrets API endpoint is accessible from your network.")
 	}
 
 	fmt.Println()
@@ -170,7 +177,12 @@ func performRecovery() error {
 	)
 
 	if err := form.Run(); err != nil {
-		return nil
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return errors.New(errors.ErrUsage,
+				"this step asks for your credentials and there is no terminal here to type them in",
+				fmt.Errorf("run it in an interactive shell"))
+		}
+		return nil // cancelled by the user
 	}
 
 	fmt.Println()
@@ -185,13 +197,10 @@ func performRecovery() error {
 		)
 		return err
 	}); err != nil {
-		ui.ErrorWithSuggestions(
-			fmt.Errorf("Recovery failed: %w", err),
+		return errors.WithSuggestions(errors.FromError(err).Code, "recovery failed", err,
 			"Recovery keys are case-insensitive; check for missing or extra characters.",
 			"Use the recovery key for the account that owns this email.",
-			"Accounts created before v4 have no vault; sign in with your password once to migrate.",
-		)
-		return nil
+			"Accounts created before v4 have no vault; sign in with your password once to migrate.")
 	}
 
 	fmt.Println()

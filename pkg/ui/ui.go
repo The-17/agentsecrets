@@ -292,8 +292,10 @@ func ErrorWithSuggestions(err error, suggestions ...string) {
 		details = ErrorRegistry[errors.ErrUnknown]
 	}
 
-	// Add dynamic suggestions if none are in the registry for unknown error
-	allSuggestions := append([]string{}, suggestions...)
+	// Add dynamic suggestions: this error's own, then the caller's, then the
+	// registry's for the code.
+	allSuggestions := append([]string{}, cliErr.Suggestions...)
+	allSuggestions = append(allSuggestions, suggestions...)
 	allSuggestions = append(allSuggestions, details.Suggestions...)
 
 	if len(allSuggestions) > 0 {
