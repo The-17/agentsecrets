@@ -6,7 +6,7 @@
 
 AI assistants are useful with your APIs and dangerous with your API keys. Today people paste keys into chat, into MCP config files, into environment blocks — and from there keys leak into logs, transcripts, screenshots, and model context windows, where prompt injection can lift them.
 
-This bridge flips that around. Your assistant gets 27 tools, and every one of them works on **key names, never key values**. When the assistant needs to call your Stripe API, it says "use `STRIPE_KEY`" — the value is injected outside the assistant's reach, and only the API's response comes back. There is deliberately no tool that returns a secret, and no tool that returns a token.
+This bridge flips that around. Your assistant gets 30 tools, and every one of them works on **key names, never key values**. When the assistant needs to call your Stripe API, it says "use `STRIPE_KEY`" — the value is injected outside the assistant's reach, and only the API's response comes back. There is deliberately no tool that returns a secret, and no tool that returns a token.
 
 ## Why it matters
 
@@ -47,16 +47,28 @@ A workload token (an agent identity, `agt_...`) carries its exact scope — work
 
 **5. Make a call.** *"Check my Stripe balance using STRIPE_KEY."* The assistant calls `proxy_call` with the key name; the value is injected outside its reach; you get the balance. Then `logs_summary` shows you the audit trail.
 
-## The 27 tools
+## The 30 tools
 
 - **Credentialed calls** — `proxy_call` (call any HTTPS API by key name), `proxy_status` (what can serve calls right now)
-- **Secrets** — `secrets_list/set/delete/pull/push/diff` (names and sync state; values never returned — `pull` writes your local `.env`, `set` encrypts before transit)
+- **Secrets** — `secrets_list/set/delete/pull/push/diff` (names and sync state; values never returned — `pull` writes your local `.env`, `set` encrypts before transit), `secrets_rotation_status` (cadence and version history, metadata only), `secrets_rotate` (stage a new version value-blind: generate, capture a command, or inline)
 - **Projects & workspaces** — `project_list/create/use/update/delete`, `workspace_list/create/switch/members` (selecting here pins what later calls act on)
-- **Agent identities** — `agent_list/delete/token_issue` (token metadata only; issued values go straight to secure storage, never displayed)
+- **Agent identities** — `agent_list/delete/token_issue/token_rotate` (token metadata only; issued values go straight to secure storage, never displayed)
 - **Audit** — `logs_list/summary/detail` (who called what, where, and whether it was allowed — the paper trail)
 - **Auth** — `auth_status/login/logout/use_identity` (the guided setup above)
 
-Destructive tools need `confirm: true` **and** your say-so in chat. There are no terminal prompts over MCP, so the human confirmation is the safety rail — never let an agent confirm for you.
+## Writes are off unless you turn them on
+
+Mutating tools are refused by default. To allow them, set this in your MCP client configuration and restart the server:
+
+```json
+"env": { "AGENTSECRETS_MCP_ALLOW_WRITES": "true" }
+```
+
+This is the boundary: it lives in the server's process environment, which you control and a model cannot set. Anything other than the exact string `true` fails closed. `auth_status` reports the current state, so you can always see which side you are on.
+
+Read tools stay available either way. There is no tool that edits the allowlist, and none that promotes, rolls back, or aborts a rotation — those need your password and belong in the terminal.
+
+Destructive tools additionally need `confirm: true` **and** your say-so in chat. There are no terminal prompts over MCP, so the human confirmation is the safety rail — never let an agent confirm for you.
 
 ## Running without the CLI (headless, CI, remote agents)
 
@@ -69,6 +81,7 @@ Everything the bridge reads from the environment. Nothing secret belongs in MCP 
 | Variable | Purpose |
 |---|---|
 | `AGENTSECRETS_MCP_MODE` | `auto` (default) \| `local` \| `cloud` |
+| `AGENTSECRETS_MCP_ALLOW_WRITES` | `true` enables mutating tools. Anything else leaves them refused. Set by a human, never by a model |
 | `AGENTSECRETS_USE_CLOUD` | `true` forces cloud mode |
 | `AGENTSECRETS_BINARY` | Explicit CLI path for local mode |
 | `AGENTSECRETS_TOKEN` / `AGENTSECRETS_TOKEN_FILE` | Your login (management) or workload token |

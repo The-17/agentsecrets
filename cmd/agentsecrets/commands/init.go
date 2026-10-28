@@ -326,8 +326,22 @@ func writeWorkflowFile() error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	content := strings.ReplaceAll(strings.TrimSpace(workflowContentTemplate), "__BT__", "`")
-	return os.WriteFile(filepath.Join(dir, "agentsecrets.md"), []byte(content), 0644)
+	content := strings.TrimSpace(workflowContentTemplate)
+	if err := os.WriteFile(filepath.Join(dir, "agentsecrets.md"), []byte(content), 0644); err != nil {
+		return err
+	}
+	// Ship the references beside the workflow so the project copy has the same
+	// depth as an installed skill. Same generated source, so they cannot drift.
+	refDir := filepath.Join(dir, "agentsecrets")
+	if err := os.MkdirAll(refDir, 0755); err != nil {
+		return err
+	}
+	for name, body := range SkillReferences() {
+		if err := os.WriteFile(filepath.Join(refDir, name), []byte(body), 0644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // updateGitignore adds environment-specific .env files to .gitignore if not already present.

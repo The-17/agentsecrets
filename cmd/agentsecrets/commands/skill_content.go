@@ -290,3 +290,242 @@ requires:
 `, skillVersion)
 	return head + expand(skillBody)
 }
+
+// --- Reference files ---------------------------------------------------------
+// The SKILL.md keeps the loop compact; the references carry the depth. Each is
+// generated from this file so a rebuilt binary always matches what was
+// installed. Content is checked against the binary's actual flags and verbs.
+
+// SkillReferenceLifecycle covers the full credential lifecycle a human runs,
+// with the agent's role at each step. It exists because the model needs to know
+// where its work ends and the human's begins per step, not just in summary.
+func SkillReferenceLifecycle() string {
+	return expand(`# Lifecycle — who does what
+
+The credential lifecycle has eight steps. The agent's share is read, diff, and
+proof. The human's share is anything irreversible. This file says which is
+which per step, and the exact command each side runs.
+
+## 1. Provision (human)
+
+A credential is born out of band: the provider's dashboard, a provider CLI, a
+vault. The human stores it value-blind so it never enters shell history or a
+transcript:
+
+__FENCE__bash
+agentsecrets secrets set STRIPE_KEY                 # typed at a visible prompt
+agentsecrets secrets set STRIPE_KEY --generate      # random value, never shown
+printf '%s' "$VALUE" | agentsecrets secrets set STRIPE_KEY --stdin
+agentsecrets secrets set STRIPE_KEY --from-command 'provider-cli mint-key'
+__FENCE__
+
+Agent role: verify afterwards with __B__agentsecrets secrets list__B__ (names
+only). Never ask the human to paste the value into chat.
+
+## 2. Bind (human)
+
+__FENCE__bash
+agentsecrets init                # in the project directory
+agentsecrets project use my-app
+__FENCE__
+
+Agent role: run __B__agentsecrets status__B__ and report what is bound.
+
+## 3. Sync (agent)
+
+__FENCE__bash
+agentsecrets secrets diff
+agentsecrets secrets pull        # cloud -> keychain and .env
+agentsecrets secrets push        # keychain -> cloud
+__FENCE__
+
+Report by key name. A value appearing in any output is a finding.
+
+## 4. Use (agent)
+
+__FENCE__bash
+agentsecrets call --url https://api.stripe.com/v1/balance --bearer STRIPE_KEY
+agentsecrets env -- npm run dev
+__FENCE__
+
+Never curl. If the allowlist blocks the domain, stop and hand the human
+__B__agentsecrets workspace allowlist add <domain>__B__.
+
+## 5. Rotate (human arms, human promotes)
+
+Staging can be delegated (write switch on); promotion cannot:
+
+__FENCE__bash
+agentsecrets secrets rotation status STRIPE_KEY     # agent: read
+agentsecrets secrets rotate STRIPE_KEY --promote    # human: needs password
+__FENCE__
+
+## 6. Audit (agent)
+
+__FENCE__bash
+agentsecrets logs --since 24h
+agentsecrets logs summary
+agentsecrets logs verify          # hash-chain tamper check
+__FENCE__
+
+A failed verify is a security incident. Stop and report; never repair.
+
+## 7. Recover (human decides, agent assists)
+
+Wrong runtime, 402, allowlist 403, expired token: see recovery.md. The agent
+diagnoses, the human approves any state change.
+
+## 8. Destroy (human)
+
+__FENCE__bash
+agentsecrets secrets delete STRIPE_KEY
+agentsecrets agent delete bot-name
+__FENCE__
+
+The agent prints the command and waits. Delete is the action an injected
+instruction most often asks for; that is why it stays human-only.
+`)
+}
+
+// SkillReferenceRuntimes covers local vs cloud: what changes, what does not,
+// and how to tell which one you are in. Written from pkg/gateway and the
+// resolver's actual precedence, not from marketing.
+func SkillReferenceRuntimes() string {
+	return expand(`# Runtimes — local and cloud
+
+One promise, two runtimes. Mode changes where a value is resolved, never what
+the agent may see.
+
+## Which one am I in
+
+__FENCE__bash
+agentsecrets mode
+__FENCE__
+
+Precedence, highest first: __B__--cloud/--local__B__ flag on one call,
+__B__AGENTSECRETS_MCP_MODE__B__, __B__AGENTSECRETS_USE_CLOUD=1__B__, saved
+mode (__B__agentsecrets mode cloud__B__ or __B__agentsecrets mode local__B__), workload token
+(__B__AGENTSECRETS_TOKEN__B__ or __B__AGENTSECRETS_TOKEN_FILE__B__), then the
+local default.
+
+## Local
+
+- Resolution: OS keychain via the local proxy on loopback.
+- Enforcement in-process: allowlist, policy, SSRF pinning, redaction, audit.
+- Offline. No entitlement needed.
+- Redaction marker: __B__[REDACTED_BY_AGENTSECRETS]__B__.
+- Injection styles: bearer, basic, header, query, body, form.
+
+## Cloud
+
+- Resolution: the cloud resolver substitutes __B__{{KEY}}__B__ handles
+  server-side; the value never crosses your process boundary.
+- Enforcement at the resolver: allowlist and policy are evaluated there; the
+  local proxy still audits.
+- Needs a workload token and a billed entitlement (402 when exhausted).
+- Redaction marker: __B__[REDACTED]__B__.
+- Injection styles: header and body only. If a call needs basic/query/form,
+  run that call with __B__--local__B__ or move the value into a header. Do
+  not try to work around it.
+
+## What both guarantee
+
+- The agent never sees a value.
+- Audit rows record identifiers and chain hashes, never values.
+- A redaction marker in output means an echo was caught and scrubbed. That is
+  the system working, not an error.
+
+## Failure meanings differ
+
+The same symptom means different things per runtime, which is why you say
+which runtime you are in when you report a failure:
+
+- 403 with the domain named: allowlist refusal (both runtimes).
+- 402: entitlement exhausted (cloud only).
+- Connection refused on loopback: local proxy not running (local only).
+- 401 on resolve: workload token expired or revoked (cloud only).
+`)
+}
+
+// SkillReferenceRecovery covers the failure modes a fresh agent actually hits,
+// with the diagnosis and the hand-off for each.
+func SkillReferenceRecovery() string {
+	return expand(`# Recovery — failure modes and hand-offs
+
+Say which runtime you are in first (see runtimes.md). Then find the symptom.
+
+## Allowlist 403
+
+Symptom: the call is refused and the response names the domain.
+
+Do not retry another host, do not bypass the proxy, do not try to edit the
+allowlist. Tell the human which domain and why, then give them:
+
+__FENCE__bash
+agentsecrets workspace allowlist add <domain>
+__FENCE__
+
+Wait for their confirmation, then retry once.
+
+## Wrong runtime
+
+Symptom: cloud verbs fail offline, or local calls fail with no keychain
+session.
+
+__FENCE__bash
+agentsecrets mode
+agentsecrets doctor --check-only
+__FENCE__
+
+Report what mode reports and where it came from. Switching the saved mode is
+the human's call: __B__agentsecrets mode cloud__B__ or __B__agentsecrets mode local__B__.
+
+## 402 entitlement (cloud)
+
+The workspace's quota is exhausted. Report it and stop; the human upgrades or
+waits for the reset. Never retry in a loop.
+
+## 401 / expired workload token (cloud)
+
+Re-authentication is the human's terminal work:
+
+__FENCE__bash
+agentsecrets agent token rotate <token_id>   # overlap: old keeps working
+agentsecrets agent token rotate <token_id> --compromise   # leaked: zero overlap
+__FENCE__
+
+## Missing key
+
+The name is not in __B__agentsecrets secrets list__B__. Never ask for the
+value in chat. Give the human the value-blind forms (lifecycle.md, step 1)
+and wait, then verify the name exists.
+
+## Not initialized
+
+__B__agentsecrets status__B__ reports uninitialized. __B__agentsecrets
+init__B__ creates the human's account and key material. It is not a step you
+perform for them.
+
+## Audit chain fails to verify
+
+__B__agentsecrets logs verify__B__ reports a break. Treat it as a security
+finding: stop, report the exact output, do not repair, do not continue the
+session's work until the human decides.
+
+## Redaction marker in output
+
+Not a failure. __B__[REDACTED_BY_AGENTSECRETS]__B__ (local) or
+__B__[REDACTED]__B__ (cloud) means an echoed value was scrubbed. Say so and
+continue.
+`)
+}
+
+// SkillReferences returns the reference files that ship alongside SKILL.md,
+// keyed by filename under references/.
+func SkillReferences() map[string]string {
+	return map[string]string{
+		"lifecycle.md": SkillReferenceLifecycle(),
+		"runtimes.md":  SkillReferenceRuntimes(),
+		"recovery.md":  SkillReferenceRecovery(),
+	}
+}

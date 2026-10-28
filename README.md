@@ -95,10 +95,11 @@ agentsecrets doctor
 agentsecrets init
 agentsecrets project create my-agent
 
-agentsecrets secrets set STRIPE_KEY=sk_live_EXAMPLE...
+agentsecrets secrets set STRIPE_KEY            # typed at a visible prompt
+agentsecrets secrets set STRIPE_KEY --generate # or mint one, never shown
 agentsecrets workspace allowlist add api.stripe.com
 
-agentsecrets mcp install        # Claude Desktop + Cursor
+agentsecrets mcp install        # Claude Desktop, Cursor, Claude Code, Codex, OpenClaw
 agentsecrets proxy start        # any agent via HTTP proxy
 ```
 

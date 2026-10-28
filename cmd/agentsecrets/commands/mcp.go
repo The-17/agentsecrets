@@ -29,10 +29,11 @@ var mcpCmd = &cobra.Command{
 
 	  ping, status, auth.export,
 	  secrets.list, secrets.set, secrets.delete, secrets.pull, secrets.push, secrets.diff,
+	  secrets.rotate, secrets.rotation_status,
 	  proxy.call, proxy.status,
 	  project.list, project.create, project.use, project.update, project.delete,
 	  workspace.list, workspace.create, workspace.switch, workspace.members,
-	  agent.list, agent.delete, agent.token_issue,
+	  agent.list, agent.delete, agent.token_issue, agent.token_rotate,
 	  logs.list, logs.summary, logs.detail
 
 	Args are a single JSON object (argv or stdin). Stdout is always exactly one
@@ -197,13 +198,33 @@ func runMCPInstall(cmd *cobra.Command, args []string) error {
 		if err := installOpenClawSkill(oclawPath); err != nil {
 			ui.Warning(fmt.Sprintf("OpenClaw: %v", err))
 		} else {
-			ui.Success("Configured OpenClaw (skill installed)")
+			ui.Success("Installed OpenClaw skill")
+			installed++
+		}
+	}
+
+	// Try Claude Code and Codex skills directories. Both use the standard
+	// SKILL.md layout, so both install from the one shared source.
+	for _, c := range []struct {
+		name string
+		path string
+	}{
+		{"Claude Code", claudeCodeSkillsPath()},
+		{"Codex", codexSkillsPath()},
+	} {
+		if c.path == "" {
+			continue
+		}
+		if err := installSkillFiles(c.path); err != nil {
+			ui.Warning(fmt.Sprintf("%s: %v", c.name, err))
+		} else {
+			ui.Success(fmt.Sprintf("Installed %s skill", c.name))
 			installed++
 		}
 	}
 
 	if installed == 0 {
-		ui.Warning("No supported AI tools detected (Claude Desktop, Cursor, OpenClaw).")
+		ui.Warning("No supported AI tools detected (Claude Desktop, Cursor, OpenClaw, Claude Code, Codex).")
 		ui.Info("Add this to your MCP client config:")
 		pretty, _ := json.MarshalIndent(map[string]interface{}{
 			"mcpServers": map[string]interface{}{"agentsecrets": entry},
@@ -294,6 +315,34 @@ func openclawSkillsPath() string {
 	return filepath.Join(oclawDir, "skills")
 }
 
+// claudeCodeSkillsPath is where Claude Code discovers skills. Returned only
+// when the client's directory exists, so install output never claims a client
+// that is not present.
+func claudeCodeSkillsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".claude", "skills")
+	if _, err := os.Stat(filepath.Dir(dir)); os.IsNotExist(err) {
+		return ""
+	}
+	return dir
+}
+
+// codexSkillsPath is where Codex CLI discovers skills.
+func codexSkillsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".codex", "skills")
+	if _, err := os.Stat(filepath.Dir(dir)); os.IsNotExist(err) {
+		return ""
+	}
+	return dir
+}
+
 // installOpenClawSkill writes the AgentSecrets skill files into the OpenClaw skills directory.
 func installOpenClawSkill(skillsDir string) error {
 	skillDir := filepath.Join(skillsDir, "agentsecrets")
@@ -306,6 +355,18 @@ func installOpenClawSkill(skillsDir string) error {
 	// ship the same procedure. See skill_content.go.
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(InstalledSkill()), 0644); err != nil {
 		return fmt.Errorf("failed to write SKILL.md: %w", err)
+	}
+
+	// The references are part of the skill, not an extra: OpenClaw gets them
+	// too so every client sees the same depth.
+	refDir := filepath.Join(skillDir, "references")
+	if err := os.MkdirAll(refDir, 0755); err != nil {
+		return fmt.Errorf("could not create references directory: %w", err)
+	}
+	for name, content := range SkillReferences() {
+		if err := os.WriteFile(filepath.Join(refDir, name), []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write references/%s: %w", name, err)
+		}
 	}
 
 	// Write check-health.sh
@@ -335,5 +396,27 @@ func installOpenClawSkill(skillsDir string) error {
 		return fmt.Errorf("failed to write secure-call.sh: %w", err)
 	}
 
+	return nil
+}
+
+// installSkillFiles writes the standard skill into any client's skills
+// directory: SKILL.md from the one shared source (skill_content.go) plus the
+// references/ files. OpenClaw additionally gets helper scripts via
+// installOpenClawSkill. Clients whose skill format differs from this layout
+// are added here, not by forking the content.
+func installSkillFiles(skillsDir string) error {
+	skillDir := filepath.Join(skillsDir, "agentsecrets")
+	refDir := filepath.Join(skillDir, "references")
+	if err := os.MkdirAll(refDir, 0755); err != nil {
+		return fmt.Errorf("could not create skill directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(InstalledSkill()), 0644); err != nil {
+		return fmt.Errorf("failed to write SKILL.md: %w", err)
+	}
+	for name, content := range SkillReferences() {
+		if err := os.WriteFile(filepath.Join(refDir, name), []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write references/%s: %w", name, err)
+		}
+	}
 	return nil
 }

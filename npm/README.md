@@ -72,10 +72,10 @@ agentsecrets init
 # Create a project
 agentsecrets project create my-app
 
-# Store credentials — values go to OS keychain, never to disk
-agentsecrets secrets set STRIPE_KEY=sk_live_51H...
-agentsecrets secrets set OPENAI_KEY=sk-proj-...
-agentsecrets secrets set DATABASE_URL=postgresql://...
+# Store credentials — typed at a prompt or generated, never pasted into a command
+agentsecrets secrets set STRIPE_KEY            # prompts for the value
+agentsecrets secrets set OPENAI_KEY --generate # mints a random value, never shown
+agentsecrets secrets set DATABASE_URL          # prompts; value stays out of shell history
 
 # Or push your existing .env all at once
 agentsecrets secrets push

@@ -42,6 +42,13 @@ SENDGRID_KEY
 Store or update a secret. The value is encrypted client-side before being sent to the server.
 
 ```bash
+# Prompt form: the value never enters shell history or process listings
+agentsecrets secrets set STRIPE_KEY
+agentsecrets secrets set STRIPE_KEY --generate          # mint a random value, never shown
+printf '%s' "$VALUE" | agentsecrets secrets set STRIPE_KEY --stdin
+agentsecrets secrets set STRIPE_KEY --from-command 'provider-cli mint-key'
+
+# Batch form: values are command-line arguments, so they land in shell history
 agentsecrets secrets set STRIPE_KEY=sk_live_51H... DATABASE_URL=postgresql://user:pass@host:5432/db
 ```
 

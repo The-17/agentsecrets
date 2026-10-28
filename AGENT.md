@@ -223,7 +223,8 @@ agentsecrets project delete NAME
 
 ### Secrets
 ```bash
-agentsecrets secrets set KEY=value
+agentsecrets secrets set KEY_NAME            # typed at a visible prompt
+agentsecrets secrets set KEY_NAME --generate # or mint one, never shown
 agentsecrets secrets list [--project NAME]
 agentsecrets secrets push
 agentsecrets secrets pull

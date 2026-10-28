@@ -14,7 +14,7 @@
 
 2. **Stripe test key stored:**
    ```bash
-   agentsecrets secrets set STRIPE_KEY=sk_test_your_stripe_test_key_here
+   agentsecrets secrets set STRIPE_KEY            # prompts, so the value never enters the command
    ```
 
 3. **Verify secrets are stored:**

@@ -319,5 +319,5 @@ Secret values are never logged. Only key names and the command that was run.
 ## Prerequisites
 
 - Active project: `agentsecrets project use <name>`
-- Secrets provisioned: `agentsecrets secrets pull` or `agentsecrets secrets set KEY=value`
+- Secrets provisioned: `agentsecrets secrets pull` or `agentsecrets secrets set KEY_NAME`
 - Verify with: `agentsecrets secrets list`

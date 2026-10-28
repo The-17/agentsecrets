@@ -32,7 +32,8 @@ Then initialise and configure:
 
 ```bash
 agentsecrets init
-agentsecrets secrets set STRIPE_KEY=sk_live_...
+agentsecrets secrets set STRIPE_KEY            # typed at a visible prompt
+agentsecrets secrets set STRIPE_KEY --generate # or mint one, never shown
 agentsecrets workspace allowlist add api.stripe.com
 ```
 

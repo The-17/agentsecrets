@@ -56,7 +56,8 @@ agentsecrets logout
 # After a credential-related security incident
 agentsecrets logout
 # Then rotate the affected secrets:
-agentsecrets secrets set COMPROMISED_KEY=new_value
+agentsecrets secrets rotate COMPROMISED_KEY --generate
+agentsecrets secrets rotate COMPROMISED_KEY --promote
 ```
 
 ---

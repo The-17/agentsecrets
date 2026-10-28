@@ -81,9 +81,9 @@ agentsecrets environment switch staging
 Values are encrypted client-side before leaving your machine:
 
 ```bash
-agentsecrets secrets set STRIPE_KEY=sk_live_51H...
-agentsecrets secrets set DATABASE_URL=postgresql://user:pass@host/db
-agentsecrets secrets set OPENAI_KEY=sk-proj-...
+agentsecrets secrets set STRIPE_KEY            # prompts; value stays out of shell history
+agentsecrets secrets set DATABASE_URL          # same, for connection strings
+agentsecrets secrets set OPENAI_KEY --generate # or mint a random value, never shown
 ```
 
 Or import an existing `.env` file all at once:
