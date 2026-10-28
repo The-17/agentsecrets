@@ -2,12 +2,14 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/proxy"
@@ -55,12 +57,7 @@ func init() {
 			Args:  cobra.MaximumNArgs(1),
 			RunE:  runWorkspaceCreate,
 		},
-		&cobra.Command{
-			Use:   "invite [email...] ",
-			Short: "Invite one or more users to the current workspace",
-			Args:  cobra.MinimumNArgs(0),
-			RunE:  runWorkspaceInvite,
-		},
+		workspaceInviteCmd,
 		&cobra.Command{
 			Use:   "members",
 			Short: "List members of the current workspace",
@@ -109,6 +106,26 @@ func requireConfig() (*config.GlobalConfig, error) {
 }
 
 // Handlers
+
+var workspaceInviteCmd = &cobra.Command{
+	Use:   "invite [email...]",
+	Short: "Invite one or more users to the current workspace",
+	Long: `Invite one or more users to the current workspace.
+
+The invitee receives an encrypted copy of the workspace key, so they can decrypt
+the workspace immediately after accepting. Invite from the CLI for that reason: an
+invitation created without a wrapped key leaves them with a workspace they can see
+and cannot read.
+
+  agentsecrets workspace invite alice@acme.com
+  agentsecrets workspace invite alice@acme.com --role admin`,
+	Args: cobra.MinimumNArgs(0),
+	RunE: runWorkspaceInvite,
+}
+
+func init() {
+	workspaceInviteCmd.Flags().String("role", "", "role for the invitees: member or admin (default member when there is no terminal)")
+}
 
 var workspaceRefreshCmd = &cobra.Command{
 	Use:   "refresh",
@@ -318,7 +335,7 @@ func runWorkspaceCreate(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runWorkspaceInvite(_ *cobra.Command, args []string) error {
+func runWorkspaceInvite(cmd *cobra.Command, args []string) error {
 	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
@@ -341,6 +358,9 @@ func runWorkspaceInvite(_ *cobra.Command, args []string) error {
 		emails = args
 	} else {
 		// Interactive: collect a single email
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("an email is required: agentsecrets workspace invite <email>")
+		}
 		var email string
 		if err := huh.NewInput().
 			Title("Invite Member").
@@ -353,15 +373,26 @@ func runWorkspaceInvite(_ *cobra.Command, args []string) error {
 	}
 
 	// Select role for all invitees
-	if err := huh.NewSelect[string]().
-		Title("Select Role").
-		Options(
-			huh.NewOption("Member", "member"),
-			huh.NewOption("Admin", "admin"),
-		).
-		Value(&role).
-		Run(); err != nil {
-		return nil
+	role, _ = cmd.Flags().GetString("role")
+	if role == "" {
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			// No terminal to answer the picker. Least privilege is the safe
+			// default, and it is stated rather than assumed silently.
+			role = "member"
+			ui.Info("No terminal for the role picker; inviting as member. Pass --role admin to change it.")
+		} else if err := huh.NewSelect[string]().
+			Title("Select Role").
+			Options(
+				huh.NewOption("Member", "member"),
+				huh.NewOption("Admin", "admin"),
+			).
+			Value(&role).
+			Run(); err != nil {
+			return nil
+		}
+	}
+	if role != "member" && role != "admin" {
+		return fmt.Errorf("unknown role %q: use member or admin", role)
 	}
 
 	// Password confirmation — same pattern as allowlist
