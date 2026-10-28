@@ -1,4 +1,4 @@
-package main
+package sidecar
 
 import (
 	"bytes"
@@ -17,11 +17,11 @@ import (
 func keyMaterial(t *testing.T) string {
 	t.Helper()
 	conf := opaque.DefaultConfiguration()
-	skm, err := generateKeyMaterial(conf)
+	skm, err := GenerateKeyMaterial(conf)
 	if err != nil {
 		t.Fatalf("generate key material: %v", err)
 	}
-	encoded, err := formatKeyMaterial(skm)
+	encoded, err := FormatKeyMaterial(skm)
 	if err != nil {
 		t.Fatalf("format key material: %v", err)
 	}
@@ -37,14 +37,14 @@ func newTestSidecar(t *testing.T, material string) *httptest.Server {
 	t.Helper()
 	t.Setenv("OPAQUE_SIDECAR_TOKEN", "test-token")
 	t.Setenv("OPAQUE_SERVER_KEY_MATERIAL", material)
-	s, err := newSidecar(false)
+	s, err := New(false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return newTestServer(t, s)
 }
 
-func newTestServer(t *testing.T, s *sidecar) *httptest.Server {
+func newTestServer(t *testing.T, s *Sidecar) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -239,7 +239,7 @@ func TestKeyMaterialPersistsAcrossRestart(t *testing.T) {
 func TestMissingKeyMaterialRefusesToStart(t *testing.T) {
 	t.Setenv("OPAQUE_SIDECAR_TOKEN", "test-token")
 	t.Setenv("OPAQUE_SERVER_KEY_MATERIAL", "")
-	if _, err := newSidecar(false); err == nil {
+	if _, err := New(false); err == nil {
 		t.Fatal("sidecar started without key material; enrolled records would be stranded")
 	}
 }
@@ -247,7 +247,7 @@ func TestMissingKeyMaterialRefusesToStart(t *testing.T) {
 func TestMissingTokenRefusesToStart(t *testing.T) {
 	t.Setenv("OPAQUE_SIDECAR_TOKEN", "")
 	t.Setenv("OPAQUE_SERVER_KEY_MATERIAL", keyMaterial(t))
-	if _, err := newSidecar(false); err == nil {
+	if _, err := New(false); err == nil {
 		t.Fatal("sidecar started without OPAQUE_SIDECAR_TOKEN")
 	}
 }
