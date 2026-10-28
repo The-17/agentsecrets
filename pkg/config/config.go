@@ -819,7 +819,11 @@ func GetWorkspaceKey(workspaceID string) ([]byte, error) {
 		}
 		ws, ok := config.Workspaces[workspaceID]
 		if !ok || ws.Key == "" {
-			return nil, fmt.Errorf("workspace key not found for %s", workspaceID)
+			name := ws.Name
+			if name == "" {
+				name = workspaceID
+			}
+			return nil, fmt.Errorf("no key for workspace %q on this machine, so its secrets cannot be decrypted. An invitation created without an encrypted workspace key looks exactly like this: ask an admin to run 'agentsecrets workspace invite <your email>' from that workspace, then run 'agentsecrets workspace refresh'", name)
 		}
 		keyB64 = ws.Key
 
