@@ -82,6 +82,8 @@ release:
   # The full release note lives in the docs site; this body is a summary plus a
   # pointer, followed by GoReleaser's generated commit list.
   header: |
+    **Full release notes:** https://docs.agentsecrets.tech/changelog/v3-x
+
     ## Fixed in v{{ .Version }}
 
     Two bugs blocked any API that needs a lowercase JSON field or a Content-Type.
@@ -90,7 +92,5 @@ release:
     - **JSON bodies get a Content-Type.** A plain `--body` went upstream untyped. It now defaults to `application/json`, and `--set-header Name=Value` sets any plain header explicitly.
 
     The legacy header-name form still parses, so existing scripts keep working. After upgrading, restart a running proxy with `agentsecrets proxy restart`.
-
-    **Full release notes:** https://docs.agentsecrets.tech/changelog/v3-x
 
     ---
