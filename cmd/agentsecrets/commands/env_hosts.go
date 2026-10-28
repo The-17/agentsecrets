@@ -3,6 +3,7 @@ package commands
 import (
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/The-17/agentsecrets/pkg/keyring"
@@ -113,6 +114,74 @@ func normalizeHost(h string) string {
 	h = strings.ToLower(strings.TrimSpace(h))
 	h = strings.Trim(h, "[]")
 	return h
+}
+
+// hostIsSecretValue reports whether a derived host is the stored value itself.
+//
+// A secret whose entire value is an endpoint ("smtp-relay.brevo.com" stored as
+// EMAIL_HOST) is a stored value by policy, so the host derived from it is that
+// value verbatim. Printing it, or writing it to the audit log, would put a
+// credential in a terminal or a database. A host parsed out of a larger value
+// (postgres://user:pass@db.internal/app) is not the value and stays useful.
+func hostIsSecretValue(host string, secrets map[string]string) bool {
+	h := normalizeHost(host)
+	if h == "" {
+		return false
+	}
+	for _, v := range secrets {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if normalizeHost(v) == h || normalizeHost(stripPort(v)) == h {
+			return true
+		}
+	}
+	return false
+}
+
+// splitSecretHosts separates hosts that can be shown from hosts that are
+// themselves stored values, so callers can count the hidden ones without
+// naming them.
+func splitSecretHosts(hosts []string, secrets map[string]string) (shown, hidden []string) {
+	for _, h := range hosts {
+		if hostIsSecretValue(h, secrets) {
+			hidden = append(hidden, h)
+		} else {
+			shown = append(shown, h)
+		}
+	}
+	return shown, hidden
+}
+
+// auditableHosts drops hosts that are stored values, so the audit trail records
+// where credentials point without recording a credential.
+func auditableHosts(hosts []string, secrets map[string]string) []string {
+	shown, _ := splitSecretHosts(hosts, secrets)
+	return shown
+}
+
+// secretKeysNamingHosts returns the sorted secret keys whose value is exactly one
+// of hosts. It lets the CLI point at a secret by name when the host cannot be
+// shown, since the name is not the value.
+func secretKeysNamingHosts(hosts []string, secrets map[string]string) []string {
+	var keys []string
+	for _, h := range hosts {
+		if !hostIsSecretValue(h, secrets) {
+			continue
+		}
+		for k, v := range secrets {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				continue
+			}
+			if normalizeHost(v) == normalizeHost(h) || normalizeHost(stripPort(v)) == normalizeHost(h) {
+				keys = append(keys, k)
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // looksLikeHost filters out values that are clearly not hostnames (bare words,

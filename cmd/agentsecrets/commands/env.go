@@ -207,8 +207,16 @@ parseArgs:
 	hosts := hostsFromSecrets(secrets)
 	if project != nil {
 		if missing := unallowlistedHosts(project.WorkspaceID, hosts); len(missing) > 0 {
-			ui.Warning(fmt.Sprintf("%d host(s) in your credentials aren't allowlisted: %s", len(missing), strings.Join(missing, " ")))
-			ui.Info("Route them through AgentSecrets: agentsecrets allowlist add " + strings.Join(missing, " "))
+			shown, hidden := splitSecretHosts(missing, secrets)
+			if len(shown) > 0 {
+				ui.Warning(fmt.Sprintf("%d host(s) in your credentials aren't allowlisted: %s", len(shown), strings.Join(shown, " ")))
+				ui.Info("Route them through AgentSecrets: agentsecrets workspace allowlist add " + strings.Join(shown, " "))
+			}
+			if len(hidden) > 0 {
+				keys := secretKeysNamingHosts(hidden, secrets)
+				ui.Info(fmt.Sprintf("%d more host(s) aren't allowlisted and are not shown, because the hostname is itself the stored value: %s", len(hidden), strings.Join(keys, ", ")))
+				ui.Info("Add them without exposing the value: agentsecrets workspace allowlist add --secret " + strings.Join(keys, " "))
+			}
 		}
 	}
 
@@ -359,7 +367,7 @@ parseArgs:
 				exitCode = -1
 			}
 		}
-		auditLog(project, scrubArgv(args, secrets), secretKeys, hosts, commandPath, pid, exitCode, time.Since(started))
+		auditLog(project, scrubArgv(args, secrets), secretKeys, auditableHosts(hosts, secrets), commandPath, pid, exitCode, time.Since(started))
 	}
 
 	if runErr != nil {

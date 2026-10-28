@@ -11,6 +11,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -24,11 +25,21 @@ var workspaceAllowlistCmd = &cobra.Command{
 }
 
 var allowlistAddCmd = &cobra.Command{
-	Use:   "add <domain> [domain...]",
+	Use:   "add <domain> [domain...] | --secret KEY [--secret KEY...]",
 	Short: "Add one or more domains to the allowlist",
-	Args:  cobra.MinimumNArgs(1),
-	RunE:  runAllowlistAdd,
+	Long: `Add domains to the workspace allowlist.
+
+A domain can be given directly, or named by the secret whose value is that
+domain. Use --secret when the value itself is sensitive: it is derived and
+added without ever being printed.`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runAllowlistAdd,
 }
+
+// allowlistSecretKeys names secrets whose values are domains to allowlist. The
+// value never needs to reach the terminal: the user knows the key, and the CLI
+// already holds the value in memory.
+var allowlistSecretKeys []string
 
 var allowlistRemoveCmd = &cobra.Command{
 	Use:   "remove <domain>",
@@ -51,6 +62,8 @@ var allowlistLogCmd = &cobra.Command{
 
 func init() {
 	allowlistRemoveCmd.ValidArgsFunction = autocompleteAllowlistDomains
+	allowlistAddCmd.Flags().StringArrayVar(&allowlistSecretKeys, "secret", nil,
+		"Add the host named by this secret key instead of pasting the value (repeatable)")
 
 	workspaceAllowlistCmd.AddCommand(
 		allowlistAddCmd,
@@ -107,6 +120,22 @@ func syncAllowlistToKeyring(workspaceID string) error {
 func runAllowlistAdd(_ *cobra.Command, args []string) error {
 	domains := args
 
+	if len(allowlistSecretKeys) > 0 && len(args) > 0 {
+		return fmt.Errorf("give either host arguments or --secret, not both: a host named by a secret is added from the secret itself")
+	}
+	if len(allowlistSecretKeys) == 0 && len(args) == 0 {
+		return fmt.Errorf("nothing to add. Give a host, or --secret KEY to add the host named by a secret")
+	}
+
+	fromSecrets := len(allowlistSecretKeys) > 0
+	if fromSecrets {
+		derived, err := hostsFromSecretKeys(allowlistSecretKeys)
+		if err != nil {
+			return err
+		}
+		domains = derived
+	}
+
 	workspaceID, err := requireWorkspace()
 	if err != nil {
 		return err
@@ -116,8 +145,14 @@ func runAllowlistAdd(_ *cobra.Command, args []string) error {
 		return err
 	}
 
+	subject := strings.Join(domains, ", ")
+	if fromSecrets {
+		// The derived host can be the secret itself. Name the secret, not the host.
+		subject = fmt.Sprintf("the host named by %s", strings.Join(allowlistSecretKeys, ", "))
+	}
+
 	var opErr error
-	if err := ui.Spinner(fmt.Sprintf("Adding %s to allowlist...", strings.Join(domains, ", ")), func() error {
+	if err := ui.Spinner(fmt.Sprintf("Adding %s to allowlist...", subject), func() error {
 		if err := app.Workspaces().AddAllowlist(workspaceID, domains...); err != nil {
 			if strings.Contains(err.Error(), "403") {
 				return fmt.Errorf("Only workspace admins can modify the allowlist.")
@@ -135,14 +170,62 @@ func runAllowlistAdd(_ *cobra.Command, args []string) error {
 
 	cfg, _ := config.LoadGlobalConfig()
 	wsName := cfg.Workspaces[workspaceID].Name
-	ui.Success(fmt.Sprintf("%s added to %s allowlist", strings.Join(domains, ", "), wsName))
+	if fromSecrets {
+		ui.Success(fmt.Sprintf("%d host(s) named by %s added to %s allowlist", len(domains), strings.Join(allowlistSecretKeys, ", "), wsName))
+	} else {
+		ui.Success(fmt.Sprintf("%s added to %s allowlist", strings.Join(domains, ", "), wsName))
+	}
 
 	projectID := currentProjectID()
+	if fromSecrets {
+		_ = proxy.LogManagementEvent("ADD", "allowlist", fmt.Sprintf("Added host(s) named by %s", strings.Join(allowlistSecretKeys, ", ")), cfg.Email, workspaceID, projectID, config.ResolveEnvironment())
+		return nil
+	}
 	for _, d := range domains {
 		_ = proxy.LogManagementEvent("ADD", "allowlist", fmt.Sprintf("Added domain %s", d), cfg.Email, workspaceID, projectID, config.ResolveEnvironment())
 	}
 
 	return nil
+}
+
+// hostsFromSecretKeys derives the hosts named by the given secrets in the active
+// project and environment. It exists so an allowlist entry whose value is
+// sensitive can be added by key name instead of by pasting the value.
+func hostsFromSecretKeys(keys []string) ([]string, error) {
+	project, err := config.LoadProjectConfig()
+	if err != nil || project == nil || project.ProjectID == "" {
+		return nil, fmt.Errorf("no active project. Run: agentsecrets project use <name>")
+	}
+	if err := ensureKeychainAuthForEnv(); err != nil {
+		return nil, err
+	}
+	all, err := keyring.GetAllProjectSecrets(project.ProjectID, config.ResolveEnvironment())
+	if err != nil {
+		return nil, fmt.Errorf("failed to load secrets from keychain: %w", err)
+	}
+
+	chosen := map[string]string{}
+	var missing []string
+	for _, k := range keys {
+		if v, ok := all[k]; ok {
+			chosen[k] = v
+		} else {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, errors.New(errors.ErrSecretNotFound,
+			fmt.Sprintf("no secret named %s in this project", strings.Join(missing, ", ")),
+			fmt.Errorf("check the key name and the active environment (%s), or run 'agentsecrets secrets list'", config.ResolveEnvironment()))
+	}
+
+	hosts := hostsFromSecrets(chosen)
+	if len(hosts) == 0 {
+		return nil, errors.New(errors.ErrSecretNotFound,
+			fmt.Sprintf("no host found in the value of %s", strings.Join(keys, ", ")),
+			fmt.Errorf("the value has to be a URL, a host, or a host:port for the allowlist entry to be derived from it"))
+	}
+	return hosts, nil
 }
 
 func runAllowlistRemove(_ *cobra.Command, args []string) error {
