@@ -35,6 +35,8 @@ var endpointMap = map[string]map[string]string{
 		"recover_challenge": "auth/recover/challenge/",
 		"recover_verify":    "auth/recover/verify/",
 		"recover_password":  "auth/recover/password/",
+		"update_email":      "auth/update-email/",
+		"confirm_email":     "auth/update-email/confirm/",
 	},
 	"secrets": {
 		"list":            "secrets/{project_id}/",
