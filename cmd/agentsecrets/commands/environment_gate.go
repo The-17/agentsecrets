@@ -6,6 +6,7 @@ import (
 
 	"github.com/The-17/agentsecrets/pkg/api"
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -95,9 +96,10 @@ func requireProForCustomEnvironment(environment string) error {
 	case "pro":
 		return nil
 	case "free":
-		return fmt.Errorf(
-			"%q is a custom environment, and custom environments are a Pro feature. This workspace is on Free.\nUpgrade it at %s, then run the command again.",
-			environment, billingURL,
+		return errors.New(
+			errors.ErrUpgradeRequired,
+			fmt.Sprintf("%q is a custom environment, and custom environments are a Pro feature", environment),
+			fmt.Errorf("this workspace is on Free. Upgrade it at %s, then run the command again", billingURL),
 		)
 	default:
 		ui.Warning(fmt.Sprintf("Could not confirm the workspace plan for %q.", environment))

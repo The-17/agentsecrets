@@ -229,6 +229,15 @@ var ErrorRegistry = map[errors.ErrorCode]ErrorDetails{
 			"Export all logs in JSON format via 'agentsecrets logs export --since 24h --format jsonl' to find the correct Log ID.",
 		},
 	},
+	errors.ErrUpgradeRequired: {
+		Title:       "Upgrade Required",
+		Description: "This capability is limited to Pro workspaces.",
+		Suggestions: []string{
+			"Upgrade the workspace at https://agentsecrets.tech/dashboard/settings/billing.",
+			"Standard environments (development, staging, production) stay available on Free.",
+			"Already upgraded? Run the command again; the plan is confirmed against the resolver, not a local cache.",
+		},
+	},
 	errors.ErrUnknown: {
 		Title:       "Unexpected Error",
 		Description: "The command failed with an unhandled runtime error.",
