@@ -17,6 +17,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -449,6 +450,33 @@ func runLogListWithFilter(cmd *cobra.Command, filter log.Filter) error {
 		return nil
 	}
 
+	useCSV, _ := cmd.Flags().GetBool("csv")
+	if useCSV {
+		logs, err := queryLogs(filter)
+		if err != nil {
+			return err
+		}
+		return exportCSV(os.Stdout, logs)
+	}
+
+	// Non-interactive callers (agents, scripts, CI) have no TTY to answer the
+	// pagination prompt. Print one line per entry and exit instead of spinning
+	// on EOF. --limit controls how many entries come back (default 50); --json
+	// and --csv give full structured records.
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		logs, err := queryLogs(filter)
+		if err != nil {
+			return err
+		}
+		if len(logs) == 0 {
+			fmt.Println(ui.DimStyle.Render("No log entries match your criteria."))
+			return nil
+		}
+		printLogsPlain(logs)
+		fmt.Fprintf(os.Stderr, "Showing %d entries. Use --json or --csv for full records, --limit N for more.\n", len(logs))
+		return nil
+	}
+
 	offset := 0
 	for {
 		filter.Limit = logPageSize
@@ -543,6 +571,35 @@ func runLogListWithFilter(cmd *cobra.Command, filter log.Filter) error {
 				}
 			}
 		}
+	}
+}
+
+// printLogsPlain prints one line per audit entry in a stable, tab-separated
+// format for non-interactive callers. The entry ID comes first so an agent can
+// follow up with `agentsecrets logs show <id>`. Secret values are never printed.
+func printLogsPlain(logs []proxy.AuditEvent) {
+	for _, l := range logs {
+		agent := l.AgentID
+		if agent == "" {
+			agent = "(anon)"
+		}
+		cred := "(none)"
+		if len(l.SecretKeys) > 0 {
+			cred = l.SecretKeys[0]
+			if len(l.SecretKeys) > 1 {
+				cred = fmt.Sprintf("%s +%d", cred, len(l.SecretKeys)-1)
+			}
+		}
+		status := l.Status
+		if l.StatusCode != 0 {
+			status = fmt.Sprintf("%d", l.StatusCode)
+		}
+		env := l.Environment
+		if env == "" {
+			env = "-"
+		}
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%dms\n",
+			l.ID, l.Timestamp.Format(time.RFC3339), env, agent, cred, l.Method, l.Domain, status, l.DurationMs)
 	}
 }
 
