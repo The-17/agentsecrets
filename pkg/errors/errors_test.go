@@ -27,6 +27,15 @@ func TestFromError(t *testing.T) {
 		t.Error("FromError should return original CLIError unmodified")
 	}
 
+	// A CLIError wrapped with %w must keep its code. Commands add context with
+	// fmt.Errorf("migrate export: %w", err); if FromError only type-asserts the
+	// top level, every wrapped error degrades to ERR-999 and a clean 401 is
+	// reported as "an unexpected error occurred".
+	wrappedAuth := fmt.Errorf("migrate export: %w", New(ErrUnauthorized, "Unauthorized", nil))
+	if got := FromError(wrappedAuth); got.Code != ErrUnauthorized {
+		t.Errorf("FromError(wrapped CLIError) = %s, want %s", got.Code, ErrUnauthorized)
+	}
+
 	// Test network timeout
 	netTimeErr := FromError(&mockNetError{err: "timeout", timeout: true})
 	if netTimeErr.Code != ErrConnectionTimeout {

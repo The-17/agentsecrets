@@ -82,8 +82,12 @@ func FromError(err error) *CLIError {
 		return nil
 	}
 
-	// Already wrapped
-	if cliErr, ok := err.(*CLIError); ok {
+	// Already wrapped. Use errors.As so a CLIError wrapped with %w by a command
+	// (e.g. fmt.Errorf("migrate export: %w", err)) keeps its code. A bare type
+	// assertion only matched the unwrapped value, so every wrapped error fell
+	// through to ERR-999 and a clean AUTH-401 was reported as "unexpected".
+	var cliErr *CLIError
+	if stderrors.As(err, &cliErr) {
 		return cliErr
 	}
 
