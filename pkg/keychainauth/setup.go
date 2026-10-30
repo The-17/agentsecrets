@@ -740,9 +740,9 @@ func RestartDaemon() error {
 		// On Windows, kill the process by name.
 		_ = exec.Command("taskkill", "/F", "/IM", "keychain-auth.exe").Run()
 	} else if runtime.GOOS == "linux" && (linuxSystemdManaged() || systemdUnitExists()) {
-		// systemd supervises the daemon (it is running under a unit, or a unit is
-		// installed and waiting to start). systemctl restart handles stop+start and
-		// honours the unit's User= and RuntimeDirectory=.
+		// systemd supervises the daemon. systemdUnitExists() now requires
+		// isSystemdBooted(), so this branch is never taken when systemctl is
+		// inoperative (WSL without systemd, Docker, LXC, …).
 		if _, err := runSudo(60*time.Second, "systemctl", "restart", "keychain-auth"); err != nil {
 			return fmt.Errorf("restart keychain-auth via systemd: %w", err)
 		}
@@ -812,65 +812,68 @@ func isSocketDialable(sockPath string) bool {
 	return false
 }
 
-// startDaemonLinux starts or restarts keychain-auth via systemd on Linux.
+// startDaemonLinux starts or restarts keychain-auth on Linux.
+//
+// Path A — systemd is the running init (isSystemdBooted) AND a unit file is
+// installed: use systemctl so the unit's User=, RuntimeDirectory=, and
+// capability grants are honoured.
+//
+// Path B — systemd unit installed but systemd is NOT the running init (WSL
+// without systemd=true, Docker, LXC, Alpine, Devuan, …): start the daemon
+// directly under the keychain-auth system user with sudo, reproducing what
+// the unit would do. Calling systemctl here would fail with "System has not
+// been booted with systemd as init system (PID 1). Can't operate." and strand
+// the user with a visible error they cannot action.
+//
+// Path C — no unit file: start directly in user mode.
 func startDaemonLinux(keychainAuthPath string) error {
 	sysSocket := "/run/keychain-auth/agent.sock"
 
-	// Try systemd system service first (dedicated system user sandbox daemon)
-	hasSystemdUnit := false
-	if _, err := os.Stat("/etc/systemd/system/keychain-auth.service"); err == nil {
-		hasSystemdUnit = true
-	} else if _, err := os.Stat("/lib/systemd/system/keychain-auth.service"); err == nil {
-		hasSystemdUnit = true
-	} else if _, err := os.Stat("/run/keychain-auth"); err == nil {
-		hasSystemdUnit = true
-	}
-
-	if hasSystemdUnit {
-		// If system daemon socket is already active & dialable, attempt restart
+	if isSystemdBooted() && systemdUnitExists() {
+		// Path A: systemd is live and manages the unit.
 		if isSocketDialable(sysSocket) {
+			// Already running; reload trust store via restart.
 			_ = exec.Command("systemctl", "restart", "keychain-auth").Run()
 			_, _ = runSudo(60*time.Second, "systemctl", "restart", "keychain-auth")
 			if isSocketDialable(sysSocket) {
 				return nil
 			}
 		}
-
 		cmd := exec.Command("systemctl", "restart", "keychain-auth")
 		if err := cmd.Run(); err == nil {
 			if err := waitForSocketPath(sysSocket); err == nil {
 				return nil
 			}
 		}
-		// Fallback with sudo
 		if _, err := runSudo(60*time.Second, "systemctl", "restart", "keychain-auth"); err == nil {
 			if err := waitForSocketPath(sysSocket); err == nil {
 				return nil
 			}
 		}
-
 		if isSocketDialable(sysSocket) {
 			return nil
 		}
-	}
-
-	// Fallback to systemd user service (user-space legacy daemon)
-	cmd := exec.Command("systemctl", "--user", "restart", "keychain-auth")
-	if err := cmd.Run(); err == nil {
-		if err := waitForSocketPath(UserSocketPath()); err == nil {
+		// systemctl failed even with sudo; fall through to direct start.
+	} else if systemdUnitFilePath() != "" {
+		// Path B: unit file exists but systemd is not the init (WSL, Docker, …).
+		// Start the daemon directly under its system user, reproducing what the
+		// unit would do. The daemon must already be authorized; this is only called
+		// after a successful Authorize step.
+		_ = os.MkdirAll("/run/keychain-auth", 0o755)
+		if _, err := runSudo(30*time.Second, keychainAuthPath, "start",
+			"-s", sysSocket); err == nil {
+			if err := waitForSocketPath(sysSocket); err == nil {
+				return nil
+			}
+		}
+		// If the system socket is already up (daemon was already running), done.
+		if isSocketDialable(sysSocket) {
 			return nil
 		}
+		// Fall through to user-mode start.
 	}
 
-	// Try enabling and starting user service
-	cmd = exec.Command("systemctl", "--user", "enable", "--now", "keychain-auth")
-	if err := cmd.Run(); err == nil {
-		if err := waitForSocketPath(UserSocketPath()); err == nil {
-			return nil
-		}
-	}
-
-	// Last resort: start directly
+	// Path C: no unit, or all system paths failed — start directly in user mode.
 	return startDirect(keychainAuthPath)
 }
 

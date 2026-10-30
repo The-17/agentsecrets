@@ -93,7 +93,7 @@ func manualRepairHint() string {
 	restart := fmt.Sprintf("  %s start", kcPath)
 	if runtime.GOOS != "windows" && requiresSudoForRegistration(kcPath) {
 		elevate = "sudo "
-		if _, err := os.Stat("/etc/systemd/system/keychain-auth.service"); err == nil {
+		if _, err := os.Stat("/etc/systemd/system/keychain-auth.service"); err == nil && isSystemdBooted() {
 			restart = "  sudo systemctl restart keychain-auth"
 		} else {
 			restart = fmt.Sprintf("  sudo %s start", kcPath)

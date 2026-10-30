@@ -277,19 +277,50 @@ func linuxSystemdManaged() bool {
 	return strings.Contains(string(data), ".service")
 }
 
-// systemdUnitExists reports whether a keychain-auth systemd unit is installed.
-func systemdUnitExists() bool {
+// systemdRuntimeDir is the canonical sd_booted(3) sentinel path. Overridable
+// in tests to avoid touching real system paths.
+var systemdRuntimeDir = "/run/systemd/system"
+
+// systemdUnitSearchPaths lists the locations where a keychain-auth systemd
+// unit file may be installed. Overridable in tests.
+var systemdUnitSearchPaths = []string{
+	"/etc/systemd/system/keychain-auth.service",
+	"/usr/lib/systemd/system/keychain-auth.service",
+	"/lib/systemd/system/keychain-auth.service",
+}
+
+// isSystemdBooted reports whether systemd is the active init system on this
+// host. The canonical check (used by sd_booted(3)) is that /run/systemd/system
+// exists as a directory. A unit file on disk is not sufficient: WSL without
+// systemd=true, Docker containers, LXC, and other lightweight Linux
+// environments may have a .service file installed but systemctl inoperative.
+func isSystemdBooted() bool {
 	if runtime.GOOS != "linux" {
 		return false
 	}
-	for _, p := range []string{
-		"/etc/systemd/system/keychain-auth.service",
-		"/usr/lib/systemd/system/keychain-auth.service",
-		"/lib/systemd/system/keychain-auth.service",
-	} {
+	st, err := os.Stat(systemdRuntimeDir)
+	return err == nil && st.IsDir()
+}
+
+// systemdUnitExists reports whether a keychain-auth systemd unit is installed
+// AND systemd is the active init. A unit file alone is not enough: on WSL
+// without systemd, Docker containers, or any Linux where PID 1 is not
+// systemd, invoking systemctl would fail. Callers that need only the file
+// path (e.g. upgrade) call systemdUnitFilePath directly.
+func systemdUnitExists() bool {
+	if !isSystemdBooted() {
+		return false
+	}
+	return systemdUnitFilePath() != ""
+}
+
+// systemdUnitFilePath returns the first installed keychain-auth systemd unit
+// path, or "" when none is found. Does not check whether systemd is booted.
+func systemdUnitFilePath() string {
+	for _, p := range systemdUnitSearchPaths {
 		if _, err := os.Stat(p); err == nil {
-			return true
+			return p
 		}
 	}
-	return false
+	return ""
 }
