@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -152,7 +153,9 @@ func runServerSet(cmd *cobra.Command, args []string) error {
 			}
 			ui.Info("Verify that your self-hosted AgentSecrets server is running and accessible.")
 			ui.Info("To save anyway without verification, run with '--force'.")
-			return fmt.Errorf("server connectivity check failed")
+			return errors.WithSuggestions(errors.ErrConnection,
+				"the server could not be verified as reachable", err,
+				"run again with --force to save without verification")
 		}
 		ui.Success(fmt.Sprintf("Server reachable (ping: %dms)", latency.Milliseconds()))
 	}

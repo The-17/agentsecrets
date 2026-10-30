@@ -13,8 +13,10 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -48,9 +50,16 @@ func getDocsBaseURL() string {
 }
 
 func runDocs(cmd *cobra.Command, args []string) error {
+	interactive := term.IsTerminal(int(os.Stdin.Fd()))
 	var query string
 	if len(args) > 0 {
 		query = strings.Join(args, " ")
+	} else if !interactive {
+		// A form cannot open without a TTY. Fail as a usage error instead of
+		// crashing with "could not open a new TTY", which reads as a bug.
+		return errors.WithSuggestions(errors.ErrUsage,
+			"docs needs a search query when no terminal is attached", nil,
+			"agentsecrets docs <query>")
 	} else {
 		// Prompt the user for a search query
 		form := huh.NewForm(
@@ -99,29 +108,45 @@ func runDocs(cmd *cobra.Command, args []string) error {
 	}
 
 	// Prepare options for selection
-	options := make([]huh.Option[string], len(searchResp.Results))
-	for i, r := range searchResp.Results {
-		snippet := r.Snippet
-		if len(snippet) > 80 {
-			snippet = snippet[:77] + "..."
-		}
-		// Render title with the group category
-		label := fmt.Sprintf("%s (%s)\n  %s", ui.BrandStyle.Render(r.Title), ui.DimStyle.Render(r.Group), ui.LabelStyle.Render(snippet))
-		options[i] = huh.NewOption(label, r.ID)
-	}
-
 	var selectedID string
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Select an article to read").
-				Options(options...).
-				Value(&selectedID),
-		),
-	)
+	if !interactive {
+		// Non-interactive callers cannot drive a select form. Print the ranked
+		// matches and open the top hit, so the command still works in CI and
+		// from an agent shell.
+		fmt.Printf("%d match(es) for %q:\n", len(searchResp.Results), query)
+		for i, r := range searchResp.Results {
+			marker := " "
+			if i == 0 {
+				marker = "*"
+			}
+			fmt.Printf(" %s %s — %s\n", marker, r.Title, r.URL)
+		}
+		fmt.Println()
+		selectedID = searchResp.Results[0].ID
+	} else {
+		options := make([]huh.Option[string], len(searchResp.Results))
+		for i, r := range searchResp.Results {
+			snippet := r.Snippet
+			if len(snippet) > 80 {
+				snippet = snippet[:77] + "..."
+			}
+			// Render title with the group category
+			label := fmt.Sprintf("%s (%s)\n  %s", ui.BrandStyle.Render(r.Title), ui.DimStyle.Render(r.Group), ui.LabelStyle.Render(snippet))
+			options[i] = huh.NewOption(label, r.ID)
+		}
 
-	if err := form.Run(); err != nil {
-		return err
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Select an article to read").
+					Options(options...).
+					Value(&selectedID),
+			),
+		)
+
+		if err := form.Run(); err != nil {
+			return err
+		}
 	}
 
 	if selectedID == "" {

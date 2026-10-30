@@ -151,7 +151,10 @@ func runMCPBridge(cmd *cobra.Command, args []string) error {
 	verb := args[0]
 	rawArgs, err := bridgeInput(args[1:])
 	if err != nil {
-		return fmt.Errorf("invalid JSON args: %w", err)
+		// The bridge contract is one JSON envelope on stdout. A human error
+		// block here breaks every MCP client that parses our output.
+		bridgeErr("invalid JSON args: %v", err)
+		return nil
 	}
 
 	// Scope enforcement is per-verb (see expect helpers below): verbs that
@@ -160,7 +163,8 @@ func runMCPBridge(cmd *cobra.Command, args []string) error {
 	// honor explicit scope directly need no check.
 	handler, known := bridgeDispatch[verb]
 	if !known {
-		return fmt.Errorf("unknown bridge verb %q (verbs: %s)", verb, strings.Join(bridgeVerbs, ", "))
+		bridgeErr("unknown bridge verb %q (verbs: %s)", verb, strings.Join(bridgeVerbs, ", "))
+		return nil
 	}
 
 	// Tier gate. Refused before any work happens, so a refused verb cannot

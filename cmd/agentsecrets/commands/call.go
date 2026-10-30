@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -152,17 +153,19 @@ func runCall(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(injections) == 0 {
-		return fmt.Errorf(
-			"'agentsecrets call' is a credential proxy — it makes authenticated API calls by injecting secrets from your keychain.\n\n" +
-				"You must specify at least one injection flag so AgentSecrets knows which credential to attach:\n\n" +
-				"  --bearer SECRET_KEY           → Authorization: Bearer <value>\n" +
-				"  --header Name=SECRET_KEY      → Custom header injection\n" +
-				"  --query param=SECRET_KEY      → Query parameter injection\n" +
-				"  --basic SECRET_KEY            → Basic auth (secret stored as user:pass)\n" +
-				"  --body-field path=SECRET_KEY  → JSON body field injection\n" +
-				"  --form-field key=SECRET_KEY   → Form field injection\n\n" +
-				"Example: agentsecrets call --url https://api.stripe.com/v1/balance --bearer STRIPE_KEY\n\n" +
+		return errors.WithSuggestions(errors.ErrUsage,
+			"'agentsecrets call' is a credential proxy — it makes authenticated API calls by injecting secrets from your keychain.\n\n"+
+				"You must specify at least one injection flag so AgentSecrets knows which credential to attach:\n\n"+
+				"  --bearer SECRET_KEY           → Authorization: Bearer <value>\n"+
+				"  --header Name=SECRET_KEY      → Custom header injection\n"+
+				"  --query param=SECRET_KEY      → Query parameter injection\n"+
+				"  --basic SECRET_KEY            → Basic auth (secret stored as user:pass)\n"+
+				"  --body-field path=SECRET_KEY  → JSON body field injection\n"+
+				"  --form-field key=SECRET_KEY   → Form field injection\n\n"+
+				"Example: agentsecrets call --url https://api.stripe.com/v1/balance --bearer STRIPE_KEY\n\n"+
 				"If this request doesn't need authentication, use curl instead — 'agentsecrets call' is only for requests that need credentials injected from the keychain.",
+			nil,
+			"add one injection flag, e.g. --bearer SECRET_KEY",
 		)
 	}
 
@@ -238,7 +241,7 @@ func resolveCallMode(cmd *cobra.Command) (gateway.Selection, error) {
 	cloudFlag, _ := cmd.Flags().GetBool("cloud")
 	localFlag, _ := cmd.Flags().GetBool("local")
 	if cloudFlag && localFlag {
-		return gateway.Selection{}, fmt.Errorf("--cloud and --local are mutually exclusive")
+		return gateway.Selection{}, errors.New(errors.ErrUsage, "--cloud and --local are mutually exclusive", nil)
 	}
 	if cloudFlag {
 		flagMode = string(gateway.ModeCloud)

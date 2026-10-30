@@ -167,6 +167,23 @@ func envFlagValue(raw string) (string, error) {
 	return config.ParseEnvironment(raw)
 }
 
+// classifyRotationError keeps a missing secret or a rejected request from
+// surfacing as ERR-999. A 404 means there is no secret or staged version to act
+// on; the user needs that fact, not "email engineering".
+func classifyRotationError(op string, err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "status 404") || strings.Contains(msg, "does not exist"):
+		return errors.New(errors.ErrSecretNotFound,
+			fmt.Sprintf("no secret or staged version to %s", op), err)
+	case strings.Contains(msg, "status 401") || strings.Contains(msg, "status 403"):
+		return errors.New(errors.ErrForbidden,
+			fmt.Sprintf("%s was refused by the server", op), err)
+	default:
+		return fmt.Errorf("%s failed: %w", op, err)
+	}
+}
+
 func runSecretsRotate(cmd *cobra.Command, args []string) error {
 	key := args[0]
 	envRaw, _ := cmd.Flags().GetString("env")
@@ -192,10 +209,10 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 	}
 	staging := inlineValue != "" || generate
 	if ops > 1 || (ops == 1 && staging) {
-		return fmt.Errorf("use one action per invocation: stage (default), --promote, --rollback, or --abort")
+		return errors.New(errors.ErrUsage, "use one action per invocation: stage (default), --promote, --rollback, or --abort", nil)
 	}
 	if reason != "routine" && reason != "compromise" {
-		return fmt.Errorf("--reason must be routine or compromise")
+		return errors.New(errors.ErrUsage, "--reason must be routine or compromise", nil)
 	}
 	if doPromote && reason == "compromise" {
 		fmt.Println(ui.WarningStyle.Render("Compromise rotation: zero overlap, previous value shredded."))
@@ -210,7 +227,7 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 		}
 		res, err := svc.RollbackVersion(key, env)
 		if err != nil {
-			return fmt.Errorf("rollback failed: %w", err)
+			return classifyRotationError("rollback", err)
 		}
 		if err := svc.Pull([]string{res.Key}); err != nil {
 			ui.Error(fmt.Sprintf("Rolled back cloud-side, but local resync failed: %v", err))
@@ -221,7 +238,7 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 
 	if doAbort {
 		if err := svc.AbortPending(key, env); err != nil {
-			return fmt.Errorf("abort failed: %w", err)
+			return classifyRotationError("abort", err)
 		}
 		ui.Success(fmt.Sprintf("Aborted pending rotation for %s.", key))
 		return nil
@@ -239,7 +256,7 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 		}
 		res, err := svc.PromoteVersion(key, env, expectedCurrent, reason)
 		if err != nil {
-			return fmt.Errorf("promote failed: %w", err)
+			return classifyRotationError("promote", err)
 		}
 		if err := svc.Pull([]string{res.Key}); err != nil {
 			ui.Error(fmt.Sprintf("Promoted cloud-side, but local resync failed: %v", err))
