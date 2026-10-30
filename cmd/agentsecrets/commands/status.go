@@ -10,6 +10,7 @@ import (
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/gateway"
+	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -138,25 +139,20 @@ var statusCmd = &cobra.Command{
 			}
 			ui.StatusRow("Current Project:", projectDisplay)
 
-			// Sync info
-			secretsDisplay := "Unable to calculate"
-			if !isAuthenticated {
-				secretsDisplay = "Login to view"
-			} else {
-				diff, diffErr := app.Secrets().DiffCached("", "")
-				if diffErr != nil {
-					secretsDisplay = fmt.Sprintf("Could not check (%s)", diffErr.Error())
-				} else {
-					syncedCount := len(diff.Unchanged)
-					unsyncedCount := len(diff.Added) + len(diff.Changed) + len(diff.Removed)
-					total := syncedCount + unsyncedCount
-					if total == 0 {
-						secretsDisplay = "No secrets found"
-					} else {
-						secretsDisplay = fmt.Sprintf("%d synced (%d unsynced)", syncedCount, unsyncedCount)
+			// Sync info. status is informational, so the keychain is consulted
+			// only when the daemon is already running. Without it the row says
+			// so; it must not bootstrap the daemon (that prompts for sudo).
+			secretsDisplay := secretsSyncDisplay(
+				isAuthenticated,
+				keychainauth.IsAvailable(),
+				func() (int, int, error) {
+					diff, diffErr := app.Secrets().DiffCached("", "")
+					if diffErr != nil {
+						return 0, 0, diffErr
 					}
-				}
-			}
+					return len(diff.Unchanged), len(diff.Added) + len(diff.Changed) + len(diff.Removed), nil
+				},
+			)
 			ui.StatusRow("Secrets:", secretsDisplay)
 
 			// Proxy status
@@ -182,6 +178,26 @@ var statusCmd = &cobra.Command{
 		fmt.Println()
 		return nil
 	},
+}
+
+// secretsSyncDisplay renders the "Secrets:" row for status. It takes the daemon
+// state as a parameter so the row can degrade honestly when keychain-auth is not
+// running, instead of forcing a sudo-backed bootstrap just to print a count.
+func secretsSyncDisplay(authenticated, daemonAvailable bool, diff func() (synced, unsynced int, err error)) string {
+	if !authenticated {
+		return "Login to view"
+	}
+	if !daemonAvailable {
+		return "Unavailable (keychain-auth daemon not running)"
+	}
+	synced, unsynced, err := diff()
+	if err != nil {
+		return fmt.Sprintf("Could not check (%s)", err)
+	}
+	if synced+unsynced == 0 {
+		return "No secrets found"
+	}
+	return fmt.Sprintf("%d synced (%d unsynced)", synced, unsynced)
 }
 
 // statusVersionDisplay renders the CLI version alongside its cached update

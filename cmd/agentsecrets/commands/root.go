@@ -273,7 +273,9 @@ func init() {
 	secretsCmd.PersistentPreRunE = keychainAuthMiddleware
 	callCmd.PersistentPreRunE = callMiddleware
 
-	statusCmd.PersistentPreRunE = daemonOnlyMiddleware
+	// status is read-only (config + token state) and deliberately has no
+	// PersistentPreRunE: bootstrapping the daemon there prompts for sudo in a
+	// non-TTY shell and kills the command before it prints anything.
 	loginCmd.PersistentPreRunE = daemonOnlyMiddleware
 	initCmd.PersistentPreRunE = daemonOnlyMiddleware
 
