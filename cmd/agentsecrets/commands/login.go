@@ -18,22 +18,21 @@ import (
 
 var loginServerFlag string
 var loginRecoveryFlag bool
+var loginGoogleFlag bool
+var loginGithubFlag bool
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to your AgentSecrets account",
 	Long: `Login to your existing AgentSecrets account.
 
-	This will:
-	1. Prompt for your email and password
-	2. Authenticate with the server
-	3. Decrypt your private key using your password
-	4. Download and decrypt your workspace keys
-	5. Cache credentials locally for future commands
+	Run it with no flags to choose a sign-in method: email and password, Google,
+	GitHub, or your recovery key. Or pass --google, --github, or --recovery to
+	go straight to that method.
 
-	Use --recovery when you have lost the password. The recovery key unlocks
-	your vault locally, proves possession to the server, and sets a new
-	password. The recovery key itself is never sent to the server.`,
+	An email and password login also unlocks your vault on this device. A social
+	login proves your identity but does not unlock secrets; run this command
+	with your password afterwards to unlock them here.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if loginServerFlag != "" {
 			if err := config.SetGlobalServerURL(loginServerFlag); err != nil {
@@ -43,6 +42,20 @@ var loginCmd = &cobra.Command{
 		if loginRecoveryFlag {
 			return performRecovery()
 		}
+		if loginGoogleFlag && loginGithubFlag {
+			return fmt.Errorf("choose one provider: --google or --github")
+		}
+		if loginGoogleFlag {
+			return performOAuth("google")
+		}
+		if loginGithubFlag {
+			return performOAuth("github")
+		}
+		// No explicit method: ask when there is a terminal, else keep the
+		// historical email+password path for scripts.
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			return chooseLoginMethod()
+		}
 		return performLogin()
 	},
 }
@@ -50,6 +63,67 @@ var loginCmd = &cobra.Command{
 func init() {
 	loginCmd.Flags().StringVar(&loginServerFlag, "server", "", "Target AgentSecrets server URL")
 	loginCmd.Flags().BoolVar(&loginRecoveryFlag, "recovery", false, "Sign in with your recovery key and set a new password")
+	loginCmd.Flags().BoolVar(&loginGoogleFlag, "google", false, "Sign in with Google")
+	loginCmd.Flags().BoolVar(&loginGithubFlag, "github", false, "Sign in with GitHub")
+}
+
+// chooseLoginMethod shows the sign-in picker and dispatches to the chosen flow.
+func chooseLoginMethod() error {
+	var choice string
+	err := huh.NewSelect[string]().
+		Title("How would you like to sign in?").
+		Options(
+			huh.NewOption("Email and password", "password"),
+			huh.NewOption("Continue with Google", "google"),
+			huh.NewOption("Continue with GitHub", "github"),
+			huh.NewOption("Recovery key", "recovery"),
+		).
+		Value(&choice).
+		Run()
+	if err != nil {
+		// Cancelled or no usable terminal.
+		return nil
+	}
+
+	fmt.Println()
+	switch choice {
+	case "google":
+		return performOAuth("google")
+	case "github":
+		return performOAuth("github")
+	case "recovery":
+		return performRecovery()
+	default:
+		return performLogin()
+	}
+}
+
+// performOAuth runs the browser loopback sign-in for a provider.
+func performOAuth(provider string) error {
+	var result *auth.LoginResult
+	label := "Google"
+	if provider == "github" {
+		label = "GitHub"
+	}
+	if err := ui.Spinner("Opening "+label+" sign-in...", func() error {
+		var err error
+		result, err = app.Auth().OAuthLogin(provider)
+		return err
+	}); err != nil {
+		return errors.WithSuggestions(errors.FromError(err).Code, label+" sign-in failed", err,
+			"Make sure the provider is enabled on the server (OAUTH_"+strings.ToUpper(provider)+"_ENABLED).",
+			"Check that your browser opened and you completed the consent screen.",
+			"Retry with 'agentsecrets login --"+provider+"'.")
+	}
+
+	fmt.Println()
+	ui.Success("Signed in with " + label + "!")
+	if result != nil {
+		for _, warning := range result.Warnings {
+			ui.Warning(warning)
+		}
+	}
+	return nil
 }
 
 // performLogin collects credentials and logs in. Shared by login command and init flow.

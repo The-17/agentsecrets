@@ -253,6 +253,7 @@ func resolveCommandName(args []string) string {
 func init() {
 	// Register all subcommands
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(signupCmd)
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(passwordCmd)

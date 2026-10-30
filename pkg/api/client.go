@@ -37,6 +37,9 @@ var endpointMap = map[string]map[string]string{
 		"recover_password":  "auth/recover/password/",
 		"update_email":      "auth/update-email/",
 		"confirm_email":     "auth/update-email/confirm/",
+		"oauth_authorize":   "auth/oauth/{provider}/authorize/",
+		"oauth_exchange":    "auth/oauth/{provider}/exchange/",
+		"capabilities":      "auth/capabilities/",
 	},
 	"secrets": {
 		"list":            "secrets/{project_id}/",
@@ -123,6 +126,9 @@ var publicEndpoints = map[string]bool{
 	"auth.login":     true,
 	"auth.refresh":   true,
 	"telemetry.sync": true,
+	"auth.oauth_authorize": true,
+	"auth.oauth_exchange":  true,
+	"auth.capabilities":    true,
 	// migration.export authenticates with the single-use migration token in the
 	// body, not the caller's access token, so a 401 must not trigger a refresh.
 	"migration.export": true,
