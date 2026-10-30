@@ -186,8 +186,15 @@ type Engine struct {
 	ResolveAllowlist AllowlistResolver
 	Approvals        *ApprovalStore
 	Transient        bool
-	TokenCache       *TokenCache
-	APIClient        *api.Client
+	// ApprovalHold is how long a RequestPermission policy holds the HTTP
+	// connection open waiting for a human approval. Only the daemon proxy
+	// serve surface sets it: something there can actually signal the approval.
+	// Every other caller (tests, CI, headless `call`) must fail fast with the
+	// `proxy approve` command, or a pending policy hangs the caller for the
+	// whole hold. Zero means fail fast.
+	ApprovalHold time.Duration
+	TokenCache   *TokenCache
+	APIClient    *api.Client
 
 	// Live State
 	LastSync   time.Time
@@ -290,14 +297,23 @@ func NewEngine(projectID string) (*Engine, error) {
 	}
 	eng.ResolvePolicy = func(key string) (*capabilities.SecretPolicy, error) {
 		policyBytes, err := keyring.GetSecretPolicy(projectID, resolveEnvForAudit(), key)
-		if err == nil && len(policyBytes) > 0 {
+		if err != nil {
+			// The local mirror is unreadable, so we cannot confirm whether a
+			// deny policy exists for this key. Propagate the error: the engine
+			// fails closed on it. Swallowing it here would silently disable
+			// enforcement whenever the keychain hiccups.
+			return nil, fmt.Errorf("policy lookup failed for %s: %w", key, err)
+		}
+		if len(policyBytes) > 0 {
 			var policy capabilities.SecretPolicy
-			if err := json.Unmarshal(policyBytes, &policy); err == nil {
-				return &policy, nil
+			if err := json.Unmarshal(policyBytes, &policy); err != nil {
+				return nil, fmt.Errorf("stored policy for %s is malformed: %w", key, err)
 			}
+			return &policy, nil
 		}
 
-		// Keychain is empty (or failed/malformed) — fallback to cloud API
+		// Keychain positively says "no policy stored" — fall back to the cloud
+		// API for a fresher copy before concluding unrestricted.
 		if eng.APIClient != nil {
 			policy, err := api.CallJSON[capabilities.SecretPolicy](eng.APIClient, "secrets.get_policy", "GET", nil, map[string]string{
 				"project_id":  projectID,
@@ -681,7 +697,15 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 	hasPolicy := false
 	if e.ResolvePolicy != nil {
 		for _, inj := range req.Injections {
-			policy, _ := e.ResolvePolicy(inj.SecretKey)
+			policy, err := e.ResolvePolicy(inj.SecretKey)
+			if err != nil {
+				// The policy cannot be read, so it cannot be confirmed safe to
+				// use. Fail closed: a 403 with a forensic record beats silently
+				// treating an unreadable policy as "no policy".
+				return logBlocked("policy_unavailable",
+					fmt.Sprintf("the policy for '%s' could not be read, so it cannot be confirmed safe for %s to %s: %v",
+						inj.SecretKey, method, targetDomain, err))
+			}
 			if policy != nil && (len(policy.Domains) > 0 || len(policy.Methods) > 0 || len(policy.Rules) > 0) {
 				hasPolicy = true
 			}
@@ -721,14 +745,16 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 						}
 					}
 
-					// Daemon proxy: hold the HTTP connection open on a channel.
-					// The proxy terminal's approval goroutine (or /approve endpoint)
-					// will signal the channel as soon as the developer responds.
-					// No busy-waiting — the goroutine sleeps until unblocked.
+					// Daemon proxy with an approval hold: hold the HTTP
+					// connection open on a channel — the proxy terminal's
+					// approval goroutine (or /approve endpoint) signals it as
+					// soon as the developer responds. Any other caller fails
+					// fast: a held connection nobody can approve hangs the
+					// client for the whole hold.
 					telemetry.RecordInteractivePromptSkipped()
-					if e.Approvals != nil {
-						// WaitForApproval blocks until approval/denial/timeout (5 min).
-						if approved := e.Approvals.WaitForApproval(approvalKey, 5*time.Minute); !approved {
+					if e.Approvals != nil && e.ApprovalHold > 0 {
+						// WaitForApproval blocks until approval/denial/timeout.
+						if approved := e.Approvals.WaitForApproval(approvalKey, e.ApprovalHold); !approved {
 							msg := fmt.Sprintf(
 								"Secret '%s' requires approval for %s to %s — "+
 									"approve in the proxy terminal or run: agentsecrets proxy approve %s %s %s",

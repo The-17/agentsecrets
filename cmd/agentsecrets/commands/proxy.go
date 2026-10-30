@@ -149,6 +149,11 @@ func runProxyStart(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// The daemon is the one surface where a human can approve a
+	// RequestPermission policy, so pending requests may hold their connection
+	// until the developer responds. Library and headless callers fail fast.
+	engine.ApprovalHold = 5 * time.Minute
+
 	// Inject the shared API client for cloud log syncing
 	if engine.Audit != nil {
 		engine.Audit.APIClient = app.API()
