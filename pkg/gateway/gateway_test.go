@@ -10,13 +10,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 )
 
 // isolateEnv clears every variable this package reads, so a developer's shell
-// cannot decide a test outcome.
+// cannot decide a test outcome. It also redirects the global config to a fresh
+// temp dir, because Select reads the persisted default mode (agentsecrets mode
+// cloud|local) BEFORE the workload-token branch. Without this, any machine that
+// has run `agentsecrets mode` (including the CI/VM images used for the v4
+// runbook) leaves a stored mode in place, the token branch is never reached, and
+// the precedence tests fail with a misleading "config" source.
 func isolateEnv(t *testing.T) {
 	t.Helper()
+	oldHome := config.HomeDirHook
+	tmp := t.TempDir()
+	config.HomeDirHook = func() (string, error) { return tmp, nil }
+	t.Cleanup(func() { config.HomeDirHook = oldHome })
 	for _, k := range []string{envUseCloud, envMode, envToken, envTokenFile, envResolver, envServerURL} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
