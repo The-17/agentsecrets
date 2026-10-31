@@ -24,6 +24,7 @@ const (
 	ErrBinaryUnapproved   ErrorCode = "SEC-403"
 	ErrLogNotFound        ErrorCode = "LOG-404"
 	ErrAgentNotFound      ErrorCode = "AGE-404"
+	ErrDocNotFound        ErrorCode = "DOC-404"
 	ErrUpgradeRequired    ErrorCode = "BIL-402"
 	ErrUsage              ErrorCode = "CLI-400"
 	ErrUnknown            ErrorCode = "ERR-999"

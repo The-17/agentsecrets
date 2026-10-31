@@ -230,6 +230,14 @@ var ErrorRegistry = map[errors.ErrorCode]ErrorDetails{
 			"Export all logs in JSON format via 'agentsecrets logs export --since 24h --format jsonl' to find the correct Log ID.",
 		},
 	},
+	errors.ErrDocNotFound: {
+		Title:       "Documentation Article Not Found",
+		Description: "The requested documentation article ID does not exist.",
+		Suggestions: []string{
+			`Search for the topic first: agentsecrets docs "<query>" --json`,
+			"List every article ID: agentsecrets docs --list --json",
+		},
+	},
 	errors.ErrUpgradeRequired: {
 		Title:       "Upgrade Required",
 		Description: "This capability is limited to Pro workspaces.",
