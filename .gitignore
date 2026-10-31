@@ -83,4 +83,5 @@ specs/
 # Build-generated env-guard hash pins (machine/build-specific; `make envguard` regenerates)
 internal/envguard/hashes_generated.go
 /AGENTS.md
+/references/
 /scripts/verify.sh
