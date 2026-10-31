@@ -18,6 +18,9 @@ type ExecRequest struct {
 	ProtocolVersion int      `json:"protocolVersion"`
 	Provider        string   `json:"provider"`
 	IDs             []string `json:"ids"`
+	// Keys is an alias for IDs accepted by some OpenClaw contract versions
+	// (e.g. {"keys":["PLAIN_KEY"]}). Merged into IDs below.
+	Keys []string `json:"keys"`
 }
 
 type ExecSecretError struct {
@@ -65,9 +68,15 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return &ExitError{Code: 1, Silent: true}
 	}
 
-	if req.ProtocolVersion != 1 {
+	// Accept the OpenClaw exec contract when the version field is absent (0
+	// means "default") and when it uses the `keys` alias for `ids`, both of
+	// which appear in the v4 runbook's example stdin.
+	if req.ProtocolVersion != 0 && req.ProtocolVersion != 1 {
 		fmt.Fprintf(os.Stderr, "unsupported protocol version: %d\n", req.ProtocolVersion)
 		return &ExitError{Code: 1, Silent: true}
+	}
+	if len(req.Keys) > 0 {
+		req.IDs = append(req.IDs, req.Keys...)
 	}
 
 	resp := ExecResponse{

@@ -152,7 +152,10 @@ func runCall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(injections) == 0 {
+	// A call with no credential to inject is still legitimate when it carries a
+	// literal header or body — the runbook exercises exactly that. Only refuse
+	// when there is genuinely nothing to send (no injection, no header, no body).
+	if len(injections) == 0 && len(headers) == 0 && callBody == "" {
 		return errors.WithSuggestions(errors.ErrUsage,
 			"'agentsecrets call' is a credential proxy — it makes authenticated API calls by injecting secrets from your keychain.\n\n"+
 				"You must specify at least one injection flag so AgentSecrets knows which credential to attach:\n\n"+

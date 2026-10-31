@@ -84,7 +84,10 @@ func (s *Server) validateSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		expected := s.GetSessionToken()
 		if expected == "" {
-			next(w, r)
+			// No session token means no one can prove they are the local
+			// client. Fail closed instead of letting the request through:
+			// an empty token used to turn every endpoint into an open door.
+			writeError(w, http.StatusServiceUnavailable, "proxy session token is not initialized")
 			return
 		}
 		token := r.Header.Get("X-AS-Session-Token")
@@ -245,10 +248,9 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	if len(injections) == 0 {
-		writeError(w, 400, "At least one X-AS-Inject-* header is required")
-		return
-	}
+	// A request with no injection is still valid when it carries a body (a
+	// literal POST, as the runbook exercises). The final check runs after the
+	// body is read below, where "nothing to send" can be decided reliably.
 
 	identityLevel := "anonymous"
 	tokenID := ""

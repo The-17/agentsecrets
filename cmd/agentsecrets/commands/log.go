@@ -423,6 +423,15 @@ func queryLogs(filter log.Filter) ([]proxy.AuditEvent, error) {
 		}
 	}
 
+	// Enforcement-outcome filters (blocked/redacted/failed) describe decisions
+	// the local proxy recorded in its forensic store. The remote server view
+	// does not carry the local enforcement outcome, and QueryRemote drops these
+	// flags entirely — so when one is set we query the local forensic DB, the
+	// authoritative source for those decisions.
+	if filter.Blocked || filter.Redacted || filter.Failed {
+		return logService.QueryLocal(filter)
+	}
+
 	ws := cfg.Workspaces[wsID]
 	if strings.EqualFold(ws.Type, "shared") {
 		return logService.QueryRemote(wsID, filter)
@@ -844,9 +853,45 @@ var logReplayCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
-		fe, err := logService.GetForensicLog(id)
-		if err != nil {
-			return errors.New(errors.ErrLogNotFound, fmt.Sprintf("forensic log entry %q not found locally", id), err)
+		cfg, _ := config.LoadGlobalConfig()
+		wsID := config.GetSelectedWorkspaceID()
+
+		// Resolve the entry with the same precedence as `logs show`: remote
+		// (shared workspace) → local forensic → local legacy. Replay renders
+		// from the forensic record when one exists locally; a server-side-only
+		// log still resolves instead of failing with "not found locally".
+		var ev *proxy.AuditEvent
+		if cfg != nil && wsID != "" && strings.EqualFold(cfg.Workspaces[wsID].Type, "shared") {
+			if r, rerr := logService.GetRemoteLog(id); rerr == nil {
+				ev = r
+			}
+		}
+		fe, ferr := logService.GetForensicLog(id)
+		if ferr != nil {
+			if ev == nil {
+				if l, lerr := logService.GetLog(id); lerr == nil {
+					ev = l
+				}
+			}
+			if ev == nil {
+				return errors.New(errors.ErrLogNotFound, fmt.Sprintf("log entry %q not found locally or remotely", id), ferr)
+			}
+		}
+		if fe == nil {
+			// No local forensic record (a server-side-only log). Render a
+			// degraded replay summary from the audit event we did resolve.
+			fmt.Println("─────────────────────────────────────────────────────────")
+			fmt.Printf("REPLAY STATE FOR EVENT %s (degraded — no local forensic record)\n", id)
+			fmt.Println("─────────────────────────────────────────────────────────")
+			decision := "PERMITTED"
+			if ev.Status == "BLOCKED" || ev.Status == "FAILED" {
+				decision = "BLOCKED"
+			}
+			ui.StatusRow("Final Decision", decision)
+			ui.StatusRow("Status", fmt.Sprintf("%s (%d)", ev.Status, ev.StatusCode))
+			ui.StatusRow("Credential State", "Not available (no local forensic record)")
+			fmt.Println("─────────────────────────────────────────────────────────")
+			return nil
 		}
 
 		fmt.Println("─────────────────────────────────────────────────────────")

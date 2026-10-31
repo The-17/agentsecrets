@@ -536,8 +536,10 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 	if req.TargetURL == "" {
 		return nil, fmt.Errorf("target URL is required")
 	}
-	if len(req.Injections) == 0 {
-		return nil, fmt.Errorf("at least one injection is required — specify how to authenticate (e.g. bearer, header, query)")
+	// A request with no injection is still valid when it carries a literal
+	// header or body. Refuse only when there is genuinely nothing to send.
+	if len(req.Injections) == 0 && len(req.Headers) == 0 && len(req.Body) == 0 {
+		return nil, fmt.Errorf("at least one of: an injection flag (--bearer/--header/--query/--basic/--body-field/--form-field), --set-header, or --body is required")
 	}
 
 	method := strings.ToUpper(req.Method)
