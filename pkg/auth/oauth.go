@@ -190,10 +190,10 @@ func (s *Service) OAuthLogin(provider string) (*LoginResult, error) {
 		return nil, fmt.Errorf("oauth: failed to save tokens: %w", err)
 	}
 
-	result := &LoginResult{}
+	result := &LoginResult{HasKeys: login.Data.User.PublicKey != ""}
 	if login.Data.User.PublicKey == "" {
 		result.Warnings = append(result.Warnings,
-			"Signed in with "+provider+". This device has no vault key yet, so secrets stay locked until you run 'agentsecrets login' with your password.")
+			"Signed in with "+provider+". This device has no vault key yet, so secrets stay locked until you set a vault password.")
 	}
 	return result, nil
 }

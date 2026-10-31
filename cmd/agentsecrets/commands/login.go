@@ -30,9 +30,10 @@ var loginCmd = &cobra.Command{
 	GitHub, or your recovery key. Or pass --google, --github, or --recovery to
 	go straight to that method.
 
-	An email and password login also unlocks your vault on this device. A social
-	login proves your identity but does not unlock secrets; run this command
-	with your password afterwards to unlock them here.`,
+	An email and password login unlocks your vault on this device. A social
+	login proves your identity; the command then asks for your vault password,
+	and explains why, so it can unlock secrets here in the same step. You do
+	not need to run login again.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if loginServerFlag != "" {
 			if err := config.SetGlobalServerURL(loginServerFlag); err != nil {
@@ -118,12 +119,91 @@ func performOAuth(provider string) error {
 
 	fmt.Println()
 	ui.Success("Signed in with " + label + "!")
-	if result != nil {
+	if result == nil {
+		return nil
+	}
+
+	// No terminal (script/CI): we cannot ask for the password safely. Keep the
+	// honest warning and let the human finish the unlock in an interactive shell.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		for _, warning := range result.Warnings {
 			ui.Warning(warning)
 		}
+		return nil
 	}
+
+	// A social sign-in proves identity, not vault-key possession. Ask for the
+	// master password here, with the reason, instead of telling the user to run
+	// `login` again (which would just show the method picker).
+	password, ok := promptSocialVaultPassword(!result.HasKeys)
+	if !ok {
+		for _, warning := range result.Warnings {
+			ui.Warning(warning)
+		}
+		return nil
+	}
+
+	var loginResult *auth.LoginResult
+	if err := ui.Spinner("Unlocking your vault...", func() error {
+		var err error
+		loginResult, err = app.Auth().CompleteSocialOnboarding(config.GetEmail(), password, result.HasKeys)
+		return err
+	}); err != nil {
+		return errors.WithSuggestions(errors.FromError(err).Code, "vault unlock failed", err,
+			"Check that the password matches this account.",
+			"If you do not remember it, sign in with your recovery key: 'agentsecrets login --recovery'.")
+	}
+
+	fmt.Println()
+	ui.Success("Vault unlocked on this device.")
+	showVaultResult(loginResult, password)
 	return nil
+}
+
+// promptSocialVaultPassword asks for the master vault password after a social
+// sign-in and explains why it is needed. A new social account chooses a
+// password (it creates the vault); a returning account enters the existing one.
+func promptSocialVaultPassword(newAccount bool) (string, bool) {
+	var password, confirm string
+
+	title := "Enter your vault password"
+	description := "Your social sign-in proved who you are. Your secrets are encrypted with a key only your password can derive, so enter it once to unlock them on this device. It never leaves this device."
+	if newAccount {
+		title = "Choose a vault password"
+		description = "Your social sign-in proved who you are. Your secrets are encrypted with a key only your password can derive, so choose one now to create and protect your vault. It never leaves this device."
+	}
+
+	fields := []huh.Field{
+		huh.NewInput().
+			Title(title).
+			Description(description).
+			EchoMode(huh.EchoModePassword).
+			Value(&password).
+			Validate(func(s string) error {
+				if len(s) < 8 {
+					return fmt.Errorf("password must be at least 8 characters")
+				}
+				return nil
+			}),
+	}
+	if newAccount {
+		fields = append(fields, huh.NewInput().
+			Title("Confirm password").
+			EchoMode(huh.EchoModePassword).
+			Value(&confirm).
+			Validate(func(s string) error {
+				if s != password {
+					return fmt.Errorf("passwords do not match")
+				}
+				return nil
+			}))
+	}
+
+	form := huh.NewForm(huh.NewGroup(fields...))
+	if err := form.Run(); err != nil {
+		return "", false
+	}
+	return password, true
 }
 
 // performLogin collects credentials and logs in. Shared by login command and init flow.

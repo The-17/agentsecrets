@@ -20,7 +20,8 @@ var signupCmd = &cobra.Command{
 
 	Choose email and password, Google, or GitHub. The email path generates your
 	encryption keypair and shows the recovery key once. A social sign-up creates
-	the account and signs you in; you can add a password and vault later.`,
+	the account, signs you in, and asks you to choose a vault password so your
+	secrets are protected on this device right away.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if signupServerFlag != "" {
 			if err := config.SetGlobalServerURL(signupServerFlag); err != nil {

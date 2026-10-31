@@ -39,6 +39,8 @@ var endpointMap = map[string]map[string]string{
 		"confirm_email":     "auth/update-email/confirm/",
 		"oauth_authorize":   "auth/oauth/{provider}/authorize/",
 		"oauth_exchange":    "auth/oauth/{provider}/exchange/",
+		"keys_initialize":   "auth/keys/initialize/",
+		"keymaterial":       "auth/keymaterial/",
 		"capabilities":      "auth/capabilities/",
 	},
 	"secrets": {

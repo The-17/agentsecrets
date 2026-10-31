@@ -19,6 +19,10 @@ type LoginResult struct {
 	VaultVersion int
 	VaultCreated bool
 	Warnings     []string
+	// HasKeys reports whether the account already has an encryption keypair.
+	// A social sign-up creates an account with no keys, so the CLI must run
+	// first-time key setup instead of asking for an existing password.
+	HasKeys bool
 }
 
 type vaultEnvelope struct {
