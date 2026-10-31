@@ -68,17 +68,20 @@ var proxyLogsCmd = &cobra.Command{
 }
 
 var proxyApproveCmd = &cobra.Command{
-	Use:   "approve <SECRET_KEY> <METHOD> <DOMAIN>",
-	Short: "Grant a session-based approval for a policy-restricted secret",
+	Use:   "approve <APPROVAL_ID>",
+	Short: "Approve one waiting request by its approval ID",
 	Long: `When a secret's policy is set to 'request_permission' for a specific domain/method
-combination, the proxy blocks the request until the developer explicitly approves it.
+combination, the proxy holds the request open until a human approves it.
 
-This command sends the approval to the running proxy. The approval lasts for the
-current proxy session (until the proxy is restarted).
+The proxy terminal prints an Approval ID for each waiting request. Approving is
+tied to that ID and releases exactly that one request. There is no session-wide
+grant, and an ID cannot be approved before the request is waiting: an unknown or
+already-resolved ID is rejected. This is deliberate, so an agent cannot approve
+its own call.
 
 Example:
-  agentsecrets proxy approve STRIPE_KEY POST api.stripe.com`,
-	Args: cobra.ExactArgs(3),
+  agentsecrets proxy approve 9f2c1a7d5e3b4c6f8a0d2e4b6c8a1f3d`,
+	Args: cobra.ExactArgs(1),
 	RunE: runProxyApprove,
 }
 
@@ -453,9 +456,10 @@ func runProxyLogs(cmd *cobra.Command, args []string) error {
 }
 
 func runProxyApprove(cmd *cobra.Command, args []string) error {
-	secretKey := strings.ToUpper(args[0])
-	method := strings.ToUpper(args[1])
-	domain := strings.ToLower(args[2])
+	requestID := strings.TrimSpace(args[0])
+	if requestID == "" {
+		return fmt.Errorf("an approval ID is required — read it from the proxy terminal")
+	}
 
 	// Read PID file to determine running proxy port
 	_, _, port, err := proxy.ReadPIDFile()
@@ -464,9 +468,7 @@ func runProxyApprove(cmd *cobra.Command, args []string) error {
 	}
 
 	payload := map[string]string{
-		"secret_key": secretKey,
-		"method":     method,
-		"domain":     domain,
+		"request_id": requestID,
 	}
 	body, _ := json.Marshal(payload)
 
@@ -477,10 +479,11 @@ func runProxyApprove(cmd *cobra.Command, args []string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	sessionToken, _ := proxy.ReadSessionToken()
-	if sessionToken != "" {
-		req.Header.Set("X-AS-Session-Token", sessionToken)
+	sessionToken, err := proxy.ReadSessionToken()
+	if err != nil || sessionToken == "" {
+		return fmt.Errorf("no proxy session token available — approvals require the running proxy's session")
 	}
+	req.Header.Set("X-AS-Session-Token", sessionToken)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
@@ -494,7 +497,7 @@ func runProxyApprove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("approval failed: %s", string(respBody))
 	}
 
-	ui.Success(fmt.Sprintf("Approved: %s can be used for %s requests to %s (this session only)", secretKey, method, domain))
+	ui.Success("Approved one waiting request.")
 	return nil
 }
 
@@ -515,55 +518,49 @@ func startInteractiveApprovalLoop(engine *proxy.Engine) {
 	}
 
 	go func() {
-		// Track keys we're already prompting for to avoid duplicate prompts
-		// when multiple requests for the same key arrive simultaneously.
-		handling := make(map[proxy.ApprovalKey]bool)
+		// Track approval IDs we've already prompted for. Each ID is a single
+		// waiting request, so the human decides one request at a time and no
+		// decision is ever reused.
+		prompted := make(map[string]bool)
 
 		for key := range engine.Approvals.Notifications() {
-			// Already granted this session — the waiter will unblock on its own.
-			if engine.Approvals.IsApproved(key) {
-				continue
-			}
-			// Already printing a prompt for this key.
-			if handling[key] {
-				continue
-			}
-			handling[key] = true
-
-			// Print immediately — no wait.
-			fmt.Println()
-			ui.Banner("Approval Required")
-			ui.Divider()
-			ui.StatusRow("Secret:", ui.BrandStyle.Render(key.SecretKey))
-			agent := key.AgentID
-			if agent == "" {
-				agent = "(anonymous)"
-			}
-			ui.StatusRow("Agent:", agent)
-			ui.StatusRow("Request:", fmt.Sprintf("%s → %s", key.Method, key.Domain))
-			fmt.Println()
-			fmt.Print(ui.WarningStyle.Render("Allow? [y/N/always]: "))
-
-			var response string
-			fmt.Fscanln(os.Stdin, &response)
-			response = strings.TrimSpace(strings.ToLower(response))
-
-			switch response {
-			case "y", "yes", "always":
-				engine.Approvals.Approve(key)
-				ui.Success(fmt.Sprintf("Approved: %s for %s → %s (this session)", key.SecretKey, key.Method, key.Domain))
-				if response == "always" {
-					ui.Info("'always' grants approval for this proxy session only — restart proxy to reset.")
+			for _, p := range engine.Approvals.PendingApprovals() {
+				if p.Key != key || prompted[p.ID] {
+					continue
 				}
-				// Keep in handling — already granted, future requests unblock instantly.
-			default:
-				engine.Approvals.Deny(key)
-				ui.Warning(fmt.Sprintf("Denied: %s for %s → %s", key.SecretKey, key.Method, key.Domain))
-				// Remove from handling so a future request for the same key re-prompts.
-				delete(handling, key)
-			}
+				prompted[p.ID] = true
 
-			fmt.Println()
+				fmt.Println()
+				ui.Banner("Approval Required")
+				ui.Divider()
+				ui.StatusRow("Secret:", ui.BrandStyle.Render(p.Key.SecretKey))
+				agent := p.Key.AgentID
+				if agent == "" {
+					agent = "(anonymous)"
+				}
+				ui.StatusRow("Agent:", agent)
+				ui.StatusRow("Request:", fmt.Sprintf("%s → %s", p.Key.Method, p.Key.Domain))
+				ui.StatusRow("Approval ID:", p.ID)
+				fmt.Println()
+				fmt.Print(ui.WarningStyle.Render("Allow this one request? [y/N]: "))
+
+				var response string
+				fmt.Fscanln(os.Stdin, &response)
+				response = strings.TrimSpace(strings.ToLower(response))
+
+				if response == "y" || response == "yes" {
+					if engine.Approvals.ApproveByID(p.ID) {
+						ui.Success(fmt.Sprintf("Approved one request: %s for %s → %s", p.Key.SecretKey, p.Key.Method, p.Key.Domain))
+					} else {
+						ui.Warning("That request is no longer waiting (it may have timed out).")
+					}
+				} else {
+					engine.Approvals.DenyByID(p.ID)
+					ui.Warning(fmt.Sprintf("Denied: %s for %s → %s", p.Key.SecretKey, p.Key.Method, p.Key.Domain))
+				}
+
+				fmt.Println()
+			}
 		}
 	}()
 }

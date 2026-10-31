@@ -724,52 +724,41 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 					Domain:    targetDomain,
 					Method:    method,
 				}
-				if e.Approvals == nil || !e.Approvals.IsApproved(approvalKey) {
-					// Transient proxy + interactive TTY: prompt inline.
-					if e.Transient && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
-						telemetry.RecordInteractivePromptShown()
-						fmt.Fprintf(os.Stdout, "\n[AgentSecrets] Secret '%s' requires approval for %s to %s.\n", inj.SecretKey, method, targetDomain)
-						fmt.Fprintf(os.Stdout, "Approve this request? (y/N): ")
-						var response string
-						_, err := fmt.Fscanln(os.Stdin, &response)
-						if err == nil {
-							response = strings.TrimSpace(strings.ToLower(response))
-							if response == "y" || response == "yes" {
-								if e.Approvals != nil {
-									e.Approvals.Approve(approvalKey)
-								}
-								continue
-							} else {
-								msg := fmt.Sprintf("Secret '%s' requires approval for %s to %s — request was denied by user",
-									inj.SecretKey, method, targetDomain)
-								return logBlocked("policy_approval_denied", msg)
-							}
+				// Transient proxy + interactive TTY: prompt inline. The prompt
+				// is written to THIS process's terminal, which the requesting
+				// agent cannot read, so the decision stays with the human.
+				if e.Transient && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+					telemetry.RecordInteractivePromptShown()
+					fmt.Fprintf(os.Stdout, "\n[AgentSecrets] Secret '%s' requires approval for %s to %s.\n", inj.SecretKey, method, targetDomain)
+					fmt.Fprintf(os.Stdout, "Approve this request? (y/N): ")
+					var response string
+					if _, err := fmt.Fscanln(os.Stdin, &response); err == nil {
+						response = strings.TrimSpace(strings.ToLower(response))
+						if response == "y" || response == "yes" {
+							// Approved for THIS request only. No session grant
+							// is recorded, so the next call prompts again.
+							continue
 						}
 					}
+					msg := fmt.Sprintf("Secret '%s' requires approval for %s to %s — request was denied by user",
+						inj.SecretKey, method, targetDomain)
+					return logBlocked("policy_approval_denied", msg)
+				}
 
-					// Daemon proxy with an approval hold: hold the HTTP
-					// connection open on a channel — the proxy terminal's
-					// approval goroutine (or /approve endpoint) signals it as
-					// soon as the developer responds. Any other caller fails
-					// fast: a held connection nobody can approve hangs the
-					// client for the whole hold.
-					telemetry.RecordInteractivePromptSkipped()
-					if e.Approvals != nil && e.ApprovalHold > 0 {
-						// WaitForApproval blocks until approval/denial/timeout.
-						if approved := e.Approvals.WaitForApproval(approvalKey, e.ApprovalHold); !approved {
-							msg := fmt.Sprintf(
-								"Secret '%s' requires approval for %s to %s — "+
-									"approve in the proxy terminal or run: agentsecrets proxy approve %s %s %s",
-								inj.SecretKey, method, targetDomain,
-								inj.SecretKey, method, targetDomain,
-							)
-							return logBlocked("policy_approval_required", msg)
-						}
-					} else {
-						msg := fmt.Sprintf("Secret '%s' requires approval for %s to %s — run: agentsecrets proxy approve %s %s %s",
-							inj.SecretKey, method, targetDomain, inj.SecretKey, method, targetDomain)
-						return logBlocked("policy_approval_required", msg)
+				// Daemon proxy with an approval hold: hold the HTTP connection
+				// open on a channel. Only a human at the proxy terminal can
+				// release it, and only for this one request.
+				telemetry.RecordInteractivePromptSkipped()
+				if e.Approvals != nil && e.ApprovalHold > 0 {
+					if approved := e.Approvals.WaitForApproval(approvalKey, e.ApprovalHold); !approved {
+						return logBlocked("policy_approval_required",
+							fmt.Sprintf("Secret '%s' requires approval for %s to %s — a human must approve it in the proxy terminal; it was not approved",
+								inj.SecretKey, method, targetDomain))
 					}
+				} else {
+					return logBlocked("policy_approval_required",
+						fmt.Sprintf("Secret '%s' requires approval for %s to %s, but no interactive proxy terminal is attached — start 'agentsecrets proxy start' in a terminal so a human can approve",
+							inj.SecretKey, method, targetDomain))
 				}
 			}
 		}

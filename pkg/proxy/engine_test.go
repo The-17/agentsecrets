@@ -549,7 +549,58 @@ func TestEnginePolicies(t *testing.T) {
 		t.Errorf("expected 403 for blocked domain, got %d", res.StatusCode)
 	}
 
-	// 3. Policy request_permission (initially fails with 403)
+	// 3. Policy request_permission: the request is held open until a human
+	// approves THIS request. ApprovalHold makes the engine wait on a channel.
+	engine.ApprovalHold = 2 * time.Second
+
+	statusCh := make(chan int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		r, e := engine.Execute(CallRequest{
+			TargetURL:  "http://approved.com/v1",
+			Method:     "POST",
+			Injections: []Injection{{Style: "bearer", SecretKey: "SECRET_B"}},
+			AgentID:    "agent-1",
+		})
+		if e != nil {
+			errCh <- e
+			return
+		}
+		statusCh <- r.StatusCode
+	}()
+
+	// The request must register as pending with a server-generated ID.
+	var id string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if p := engine.Approvals.PendingApprovals(); len(p) == 1 {
+			id = p[0].ID
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if id == "" {
+		t.Fatal("request never registered as pending")
+	}
+
+	// 4. Approve that one request by ID and verify it passes.
+	if !engine.Approvals.ApproveByID(id) {
+		t.Fatal("ApproveByID rejected a live pending request")
+	}
+	select {
+	case e := <-errCh:
+		t.Fatalf("Execute failed: %v", e)
+	case status := <-statusCh:
+		if status != 200 {
+			t.Errorf("expected 200 after approval, got %d", status)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("approved request never completed")
+	}
+
+	// 5. Approvals are single-use: a second identical request is NOT covered
+	// by the first approval. With a short hold it blocks then fails closed.
+	engine.ApprovalHold = 50 * time.Millisecond
 	res, err = engine.Execute(CallRequest{
 		TargetURL:  "http://approved.com/v1",
 		Method:     "POST",
@@ -560,27 +611,7 @@ func TestEnginePolicies(t *testing.T) {
 		t.Fatalf("Execute failed: %v", err)
 	}
 	if res.StatusCode != 403 {
-		t.Errorf("expected 403 (needs approval), got %d", res.StatusCode)
-	}
-
-	// 4. Grant approval and verify it passes
-	engine.Approvals.Approve(ApprovalKey{
-		AgentID:   "agent-1",
-		SecretKey: "SECRET_B",
-		Domain:    "approved.com",
-		Method:    "POST",
-	})
-	res, err = engine.Execute(CallRequest{
-		TargetURL:  "http://approved.com/v1",
-		Method:     "POST",
-		Injections: []Injection{{Style: "bearer", SecretKey: "SECRET_B"}},
-		AgentID:    "agent-1",
-	})
-	if err != nil {
-		t.Fatalf("Execute failed: %v", err)
-	}
-	if res.StatusCode != 200 {
-		t.Errorf("expected 200 after approval, got %d", res.StatusCode)
+		t.Errorf("expected 403 on the second request (approvals are single-use), got %d", res.StatusCode)
 	}
 }
 
