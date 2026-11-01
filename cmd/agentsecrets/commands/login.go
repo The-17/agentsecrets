@@ -252,7 +252,7 @@ func performLogin() error {
 	var result *auth.LoginResult
 	if err := ui.Spinner("Logging in...", func() error {
 		var err error
-		result, err = app.Auth().PerformLogin(email, password, nil, nil)
+		result, err = app.Auth().Login(email, password)
 		return err
 	}); err != nil {
 		// Keep the specific hints but fail the process. Logging in is what every
@@ -261,6 +261,18 @@ func performLogin() error {
 			"Double check your email spelling and password.",
 			"If you don't have an account, run 'agentsecrets init' to sign up.",
 			"Verify that the AgentSecrets API endpoint is accessible from your network.")
+	}
+
+	// Migrate legacy (password-only) accounts to OPAQUE after a successful
+	// password login. Enrollment is idempotent on the client: if we already
+	// recorded enrollment, skip it, since re-enrolling would rotate the record.
+	// Failures are non-fatal — the session already works.
+	if !config.GetOpaqueEnrolled() && app.Auth().ServerSupportsOpaque() {
+		if err := app.Auth().EnrollOpaque(email, password); err != nil {
+			ui.Warning("OPAQUE enrollment skipped: " + err.Error())
+		} else {
+			ui.Success("Upgraded to OPAQUE: your password never leaves this device.")
+		}
 	}
 
 	fmt.Println()

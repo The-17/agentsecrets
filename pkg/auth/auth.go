@@ -133,6 +133,15 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		return nil, fmt.Errorf("login: failed to parse response: %w", err)
 	}
 
+	return s.completeLogin(email, password, privateKey, publicKey, &loginResp)
+}
+
+// completeLogin stores tokens, the keypair, the vault, and workspace keys from a
+// parsed login response. privateKey/publicKey are the unlocked keypair; when
+// privateKey is nil the vault (or legacy blob) is unlocked with the password.
+// Both PerformLogin (password) and OpaqueLogin (OPAQUE exchange) share it so the
+// two auth paths produce an identical local session.
+func (s *Service) completeLogin(email, password string, privateKey, publicKey []byte, loginResp *loginResponse) (*LoginResult, error) {
 	result := &LoginResult{}
 	userID := loginResp.Data.User.ID
 	record, recordVersion, err := s.loginVault(loginResp.Data, userID)
@@ -140,7 +149,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		return nil, err
 	}
 
-	// 2. If no keypair provided (login flow), unlock from the vault or legacy blob.
+	// If no keypair provided (login flow), unlock from the vault or legacy blob.
 	var (
 		fromVault bool
 		bridgeVK  []byte
@@ -201,7 +210,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		return nil, fmt.Errorf("login: failed to save keypair: %w", err)
 	}
 
-	// 4. Create a vault for a legacy account, heal a stale envelope, or pin the
+	// Create a vault for a legacy account, heal a stale envelope, or pin the
 	// existing proof key. Failures here are warnings, not login blockers.
 	state := &vaultLoginState{
 		UserID:     userID,
@@ -217,7 +226,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		return nil, fmt.Errorf("login: %w", err)
 	}
 
-	// 5. Decrypt and cache all workspace keys
+	// Decrypt and cache all workspace keys
 	if err := cacheWorkspaces(privateKey, publicKey, loginResp.Data.Workspaces); err != nil {
 		return nil, fmt.Errorf("login: %w", err)
 	}

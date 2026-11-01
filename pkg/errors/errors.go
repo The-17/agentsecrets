@@ -16,6 +16,9 @@ const (
 	ErrUnauthorized       ErrorCode = "AUTH-401"
 	ErrInvalidCredentials ErrorCode = "AUTH-402"
 	ErrForbidden          ErrorCode = "AUTH-403"
+	// ErrOPAQUEPasswordDisabled means the account is OPAQUE-enrolled and has no
+	// password factor. The caller must retry through the OPAQUE exchange.
+	ErrOPAQUEPasswordDisabled ErrorCode = "AUTH-406"
 	ErrServerInternal     ErrorCode = "SRV-500"
 	ErrConnection         ErrorCode = "NET-101"
 	ErrConnectionTimeout  ErrorCode = "NET-102"

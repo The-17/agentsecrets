@@ -90,6 +90,10 @@ type GlobalConfig struct {
 	// reconciled with the server. Login writes the cache once; without this
 	// timestamp an invitation stayed invisible until the next login.
 	WorkspacesSyncedAt int64 `json:"workspaces_synced_at,omitempty"`
+	// OpaqueEnrolled records that this account has completed OPAQUE enrollment
+	// on this device. It gates re-enrollment (which would rotate the record) and
+	// tells the login command to prefer the OPAQUE exchange over password.
+	OpaqueEnrolled bool `json:"opaque_enrolled,omitempty"`
 }
 
 // GetWorkspacesSyncedAt returns when the workspace cache was last reconciled
@@ -649,6 +653,26 @@ func SetEmail(email string) error {
 		c = &GlobalConfig{}
 	}
 	c.Email = email
+	return SaveGlobalConfig(c)
+}
+
+// GetOpaqueEnrolled reports whether this account has completed OPAQUE
+// enrollment on this device.
+func GetOpaqueEnrolled() bool {
+	c, err := LoadGlobalConfig()
+	if err != nil {
+		return false
+	}
+	return c.OpaqueEnrolled
+}
+
+// SetOpaqueEnrolled records the OPAQUE enrollment state for this account.
+func SetOpaqueEnrolled(enrolled bool) error {
+	c, _ := LoadGlobalConfig()
+	if c == nil {
+		c = &GlobalConfig{}
+	}
+	c.OpaqueEnrolled = enrolled
 	return SaveGlobalConfig(c)
 }
 

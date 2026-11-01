@@ -21,9 +21,10 @@ import (
 //     The password becomes the account's password factor.
 //   - hasKeys == true (returning account): skip key setup.
 //
-// Both cases then run PerformLogin, which authenticates with the password,
-// unlocks the vault locally, stores the keypair, and caches workspace keys.
-// The password never leaves this device.
+// Both cases then run Login, which authenticates with the password (or the
+// OPAQUE exchange when the account is enrolled), unlocks the vault locally,
+// stores the keypair, and caches workspace keys. The password never leaves
+// this device.
 func (s *Service) CompleteSocialOnboarding(email, password string, hasKeys bool) (*LoginResult, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
@@ -49,9 +50,10 @@ func (s *Service) CompleteSocialOnboarding(email, password string, hasKeys bool)
 		}
 	}
 
-	// PerformLogin does the rest: authenticate with the password, unlock the
-	// vault, store the keypair, and cache workspace keys.
-	result, err := s.PerformLogin(email, password, nil, nil)
+	// Login authenticates with the password (or the OPAQUE exchange when the
+	// account is enrolled), unlocks the vault, stores the keypair, and caches
+	// workspace keys.
+	result, err := s.Login(email, password)
 	if err != nil {
 		return nil, fmt.Errorf("social onboarding: %w", err)
 	}

@@ -39,9 +39,13 @@ var endpointMap = map[string]map[string]string{
 		"confirm_email":     "auth/update-email/confirm/",
 		"oauth_authorize":   "auth/oauth/{provider}/authorize/",
 		"oauth_exchange":    "auth/oauth/{provider}/exchange/",
-		"keys_initialize":   "auth/keys/initialize/",
-		"keymaterial":       "auth/keymaterial/",
-		"capabilities":      "auth/capabilities/",
+		"keys_initialize":        "auth/keys/initialize/",
+		"keymaterial":            "auth/keymaterial/",
+		"capabilities":           "auth/capabilities/",
+		"opaque_register_start":  "auth/opaque/register/start/",
+		"opaque_register_finish": "auth/opaque/register/finish/",
+		"opaque_login_start":      "auth/opaque/login/start/",
+		"opaque_login_finish":     "auth/opaque/login/finish/",
 	},
 	"secrets": {
 		"list":            "secrets/{project_id}/",
@@ -396,6 +400,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, jsonData []b
 // It returns a formatted error including the status code and any message from the API.
 func (c *Client) DecodeError(resp *http.Response) error {
 	var errResp struct {
+		Code    string `json:"code"`
 		Message string `json:"message"`
 		Error   string `json:"error"`
 		Detail  string `json:"detail"`
@@ -434,6 +439,12 @@ func (c *Client) DecodeError(resp *http.Response) error {
 			isLoginOrSignup = strings.Contains(path, "/auth/login/") || strings.Contains(path, "/auth/register/")
 		}
 		if isLoginOrSignup {
+			// An OPAQUE-enrolled account has no password factor. Surface a
+			// distinct code so the caller can fall back to the OPAQUE exchange
+			// instead of treating it as a wrong password.
+			if errResp.Code == "password_login_disabled" {
+				return errors.New(errors.ErrOPAQUEPasswordDisabled, baseErr.Error(), baseErr)
+			}
 			return errors.New(errors.ErrInvalidCredentials, baseErr.Error(), baseErr)
 		}
 		return errors.New(errors.ErrUnauthorized, fmt.Sprintf("%v. Your session may have expired. Please run 'agentsecrets login' to authenticate again.", baseErr), baseErr)
