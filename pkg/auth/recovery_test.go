@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,6 +31,40 @@ type recoveryServer struct {
 	newVault        *vault.Vault
 	expectedVer     int
 	passwordCall    bool
+
+	// sidecarURL, when set, makes the server advertise OPAQUE and proxy the
+	// register endpoints to a real sidecar, so a test can prove recovery
+	// re-enrolls the account. opaqueEnrolled flips when register/finish lands.
+	sidecarURL     string
+	opaqueEnrolled bool
+}
+
+// forwardOpaque proxies a CLI JSON body to the real sidecar, injecting the
+// credential id the control plane owns, and wraps the answer in Django's
+// CustomResponse.success envelope.
+func (rs *recoveryServer) forwardOpaque(w http.ResponseWriter, r *http.Request, sidecarPath string) {
+	raw, _ := io.ReadAll(r.Body)
+	var body map[string]any
+	_ = json.Unmarshal(raw, &body)
+	body["credential_id"] = "recovery@example.com"
+	buf, _ := json.Marshal(body)
+	req, _ := http.NewRequest(r.Method, rs.sidecarURL+sidecarPath, bytes.NewReader(buf))
+	req.Header.Set("Authorization", "Bearer e2e-token")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if sidecarPath == "/v1/register/finish" {
+		rs.opaqueEnrolled = true
+	}
+	env, _ := json.Marshal(map[string]any{"status": "success", "data": json.RawMessage(out)})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(env)
 }
 
 func (rs *recoveryServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +141,18 @@ func (rs *recoveryServer) handler(w http.ResponseWriter, r *http.Request) {
 		rs.newVault = &next
 		rs.passwordCall = true
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "ok"})
+
+	case "/auth/capabilities/":
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+			"data":   map[string]interface{}{"opaque": rs.sidecarURL != ""},
+		})
+
+	case "/auth/opaque/register/start/":
+		rs.forwardOpaque(w, r, "/v1/register/response")
+
+	case "/auth/opaque/register/finish/":
+		rs.forwardOpaque(w, r, "/v1/register/finish")
 
 	default:
 		w.WriteHeader(http.StatusNotFound)
@@ -232,6 +280,108 @@ func TestRecoverAccountRejectsWrongRecoveryKey(t *testing.T) {
 	}
 	if rs.passwordCall {
 		t.Fatal("password reset ran without a valid unlock")
+	}
+}
+
+// newRecoveryFixture builds a vault and a recovery server for a throwaway
+// account, returning the pieces a recovery test needs.
+func newRecoveryFixture(t *testing.T, userID, oldPassword string) (*recoveryServer, *vault.Vault, *vault.Material, []byte) {
+	t.Helper()
+	privateKey, _, err := crypto.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, material, err := vault.Create(userID, oldPassword, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawVault, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := &recoveryServer{
+		userID:          userID,
+		nonce:           "fixed-nonce",
+		vault:           v,
+		rawVault:        rawVault,
+		rawRecoveryView: recoveryViewJSON(t, v),
+		challenge:       fmt.Sprintf("as-vault-recover-v1\nuser:%s\nnonce:fixed-nonce\nexpires:%d\n", userID, time.Now().Add(5*time.Minute).Unix()),
+	}
+	return rs, v, material, rawVault
+}
+
+// TestRecoverAccountClearsStaleOpaqueFlag locks the core bug: recovery clears
+// the server's OPAQUE record and restores the password, so the local
+// OpaqueEnrolled flag must be cleared or the login command would see "already
+// enrolled" and never re-enroll, leaving the account password-only.
+func TestRecoverAccountClearsStaleOpaqueFlag(t *testing.T) {
+	setupAuthTest(t)
+	const (
+		userID      = "user-opaque-recovery"
+		oldPassword = "forgotten-password"
+		newPassword = "recovered-password"
+	)
+	rs, _, material, _ := newRecoveryFixture(t, userID, oldPassword)
+	server := httptest.NewServer(http.HandlerFunc(rs.handler))
+	defer server.Close()
+
+	// The account had enrolled OPAQUE before recovering.
+	if err := config.SetOpaqueEnrolled(true); err != nil {
+		t.Fatal(err)
+	}
+
+	client := api.NewClient(func() string { return config.GetAccessToken() })
+	client.BaseURL = server.URL
+	svc := NewService(client)
+
+	result, err := svc.RecoverAccount("test@example.com", vault.EncodeRecoveryKey(material.RecoveryKey), newPassword)
+	if err != nil {
+		t.Fatalf("RecoverAccount: %v", err)
+	}
+	if config.GetOpaqueEnrolled() {
+		t.Error("OpaqueEnrolled still true after recovery; login would never re-enroll")
+	}
+	if !result.RecoveryConfirmed {
+		t.Error("result.RecoveryConfirmed = false, want true (using the recovery key proves possession)")
+	}
+}
+
+// TestRecoverAccountReenrollsOpaque proves recovery leaves the account able to
+// re-enroll: with a live sidecar and capabilities reporting OPAQUE, RecoverAccount
+// must drive register/start + register/finish and record the enrollment.
+func TestRecoverAccountReenrollsOpaque(t *testing.T) {
+	setupAuthTest(t)
+	sidecar := startSidecar(t)
+	const (
+		userID      = "user-reenroll"
+		oldPassword = "forgotten-password"
+		newPassword = "recovered-password"
+	)
+	rs, _, material, _ := newRecoveryFixture(t, userID, oldPassword)
+	rs.sidecarURL = sidecar
+	server := httptest.NewServer(http.HandlerFunc(rs.handler))
+	defer server.Close()
+
+	if err := config.SetOpaqueEnrolled(false); err != nil {
+		t.Fatal(err)
+	}
+
+	client := api.NewClient(func() string { return config.GetAccessToken() })
+	client.BaseURL = server.URL
+	svc := NewService(client)
+
+	result, err := svc.RecoverAccount("test@example.com", vault.EncodeRecoveryKey(material.RecoveryKey), newPassword)
+	if err != nil {
+		t.Fatalf("RecoverAccount: %v", err)
+	}
+	if !result.RecoveryConfirmed {
+		t.Fatal("recovery not confirmed; re-enrollment should be gated on it")
+	}
+	if !rs.opaqueEnrolled {
+		t.Fatal("register/finish was not called; the recovered account was not re-enrolled")
+	}
+	if !config.GetOpaqueEnrolled() {
+		t.Error("OpaqueEnrolled not set after successful re-enrollment")
 	}
 }
 

@@ -152,6 +152,11 @@ func (s *Service) RecoverAccount(email, recoveryKey, newPassword string) (*Login
 		if err := fullVault.RewrapPassword(userID, vk, newPassword); err != nil {
 			return nil, fmt.Errorf("recovery: this account has no password factor to reset")
 		}
+		// Using the recovery key proves the user has it, so mark recovery
+		// confirmed. This is the gate OPAQUE enrollment relies on: enrolling an
+		// account whose recovery key was never saved would strand it once the
+		// password factor is removed.
+		fullVault.ConfirmRecovery()
 		fullVault.BumpVersion()
 		if err := fullVault.Sign(userID, vk); err != nil {
 			return nil, fmt.Errorf("recovery: resign vault: %w", err)
@@ -175,6 +180,23 @@ func (s *Service) RecoverAccount(email, recoveryKey, newPassword string) (*Login
 			result.Warnings = append(result.Warnings, "password reset, but the local verification hash could not be saved")
 		}
 		result.VaultVersion = fullVault.VaultVersion
+		result.RecoveryConfirmed = fullVault.RecoveryConfirmed
+	}
+
+	// Recovery cleared the server's OPAQUE record and restored the password, so
+	// the local flag must be cleared too. Otherwise the login command would see
+	// "already enrolled" and never re-enroll, leaving the account password-only.
+	if err := config.SetOpaqueEnrolled(false); err != nil {
+		result.Warnings = append(result.Warnings, "recovered, but the local OPAQUE flag could not be cleared")
+	}
+
+	// Re-enroll OPAQUE now that the account is password-only again. This is
+	// gated on a confirmed recovery key and a server that actually runs OPAQUE;
+	// a failure leaves the recovered password working.
+	if newPassword != "" && result.RecoveryConfirmed && s.ServerSupportsOpaque() {
+		if err := s.EnrollOpaque(email, newPassword); err != nil {
+			result.Warnings = append(result.Warnings, "recovered, but OPAQUE re-enrollment failed: "+err.Error())
+		}
 	}
 
 	if err := cacheWorkspaces(privateKey, publicKey, loginResp.Data.Workspaces); err != nil {

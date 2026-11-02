@@ -58,9 +58,11 @@ func TestRecoveryAgainstLiveServer(t *testing.T) {
 		t.Fatalf("vault version %d, want %d", recovered.VaultVersion, signup.VaultVersion+1)
 	}
 
-	// The new password must drive a normal login that unlocks the rewrapped
-	// vault, and the old password must stop working.
-	login, err := svc.PerformLogin(email, newPassword, nil, nil)
+	// The new password must drive a login that unlocks the rewrapped vault, and
+	// the old password must stop working. Recovery re-enrolls OPAQUE on a
+	// capable server, which disables the password factor, so use Login (it
+	// falls back to the OPAQUE exchange) rather than PerformLogin.
+	login, err := svc.Login(email, newPassword)
 	if err != nil {
 		t.Fatalf("login with new password: %v", err)
 	}
@@ -70,7 +72,7 @@ func TestRecoveryAgainstLiveServer(t *testing.T) {
 	if login.VaultVersion != recovered.VaultVersion {
 		t.Fatalf("login vault version %d, want %d", login.VaultVersion, recovered.VaultVersion)
 	}
-	if _, err := svc.PerformLogin(email, oldPassword, nil, nil); err == nil {
+	if _, err := svc.Login(email, oldPassword); err == nil {
 		t.Fatal("old password still logs in")
 	}
 }

@@ -264,10 +264,16 @@ func performLogin() error {
 	}
 
 	// Migrate legacy (password-only) accounts to OPAQUE after a successful
-	// password login. Enrollment is idempotent on the client: if we already
-	// recorded enrollment, skip it, since re-enrolling would rotate the record.
+	// password login. Enrollment runs only when:
+	//   - this session did not already authenticate through OPAQUE (that would
+	//     rotate the server-side record on every login),
+	//   - the device has not already recorded enrollment,
+	//   - the recovery key is confirmed saved (enrolling removes the password
+	//     factor, so an unconfirmed recovery key would strand the account),
+	//   - the server actually runs OPAQUE.
 	// Failures are non-fatal — the session already works.
-	if !config.GetOpaqueEnrolled() && app.Auth().ServerSupportsOpaque() {
+	if !result.OpaqueAuthenticated && !config.GetOpaqueEnrolled() &&
+		result.RecoveryConfirmed && app.Auth().ServerSupportsOpaque() {
 		if err := app.Auth().EnrollOpaque(email, password); err != nil {
 			ui.Warning("OPAQUE enrollment skipped: " + err.Error())
 		} else {

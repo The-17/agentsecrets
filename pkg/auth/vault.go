@@ -23,6 +23,17 @@ type LoginResult struct {
 	// A social sign-up creates an account with no keys, so the CLI must run
 	// first-time key setup instead of asking for an existing password.
 	HasKeys bool
+	// RecoveryConfirmed reports whether the vault's recovery key has been
+	// confirmed saved. Enrollment in OPAQUE is gated on this: enrolling an
+	// account whose recovery key was never saved can strand it, because the
+	// password factor is removed by enrollment.
+	RecoveryConfirmed bool
+	// OpaqueAuthenticated reports that this session authenticated through the
+	// OPAQUE exchange (the login/finish response carried a session key). It is
+	// the authoritative "do not enroll again" signal; enrollment must not run
+	// when the session already used OPAQUE, or it would rotate the record on
+	// every login.
+	OpaqueAuthenticated bool
 }
 
 type vaultEnvelope struct {
@@ -189,6 +200,7 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 	if state.Record != nil {
 		if state.FromVault {
 			state.Result.VaultVersion = state.Version
+			state.Result.RecoveryConfirmed = state.Record.RecoveryConfirmed
 			return s.pinVault(state.Record)
 		}
 		if state.BridgeVK != nil {
@@ -202,6 +214,7 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 				return nil
 			}
 			state.Result.VaultVersion = state.Record.VaultVersion
+			state.Result.RecoveryConfirmed = state.Record.RecoveryConfirmed
 			return s.pinVault(state.Record)
 		}
 		state.Result.Warnings = append(state.Result.Warnings, "vault exists but no envelope matched this login; the legacy key was used")
@@ -221,6 +234,7 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 		if vk, uerr := existing.UnlockWithPassword(state.UserID, state.Password); uerr == nil {
 			if pk, perr := existing.PrivateKey(state.UserID, vk); perr == nil && bytes.Equal(pk, state.PrivateKey) {
 				state.Result.VaultVersion = version
+				state.Result.RecoveryConfirmed = existing.RecoveryConfirmed
 				return s.pinVault(existing)
 			}
 		}
@@ -245,6 +259,7 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 			return nil
 		}
 		state.Result.VaultVersion = existing.VaultVersion
+		state.Result.RecoveryConfirmed = existing.RecoveryConfirmed
 		return s.pinVault(existing)
 	}
 

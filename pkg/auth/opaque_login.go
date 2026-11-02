@@ -79,7 +79,14 @@ func (s *Service) OpaqueLogin(email, password string) (*LoginResult, error) {
 	if err := config.SetOpaqueEnrolled(true); err != nil {
 		return nil, fmt.Errorf("opaque login: %w", err)
 	}
-	return s.completeLogin(email, password, nil, nil, &loginResp)
+	result, err := s.completeLogin(email, password, nil, nil, &loginResp)
+	if err != nil {
+		return nil, err
+	}
+	// The session authenticated through OPAQUE, so enrollment must not run
+	// again; re-enrolling would rotate the server-side record.
+	result.OpaqueAuthenticated = true
+	return result, nil
 }
 
 // EnrollOpaque upgrades an already-authenticated account to OPAQUE. It runs once,
