@@ -433,18 +433,19 @@ func (c *Client) DecodeError(resp *http.Response) error {
 
 	switch resp.StatusCode {
 	case 401:
+		// An OPAQUE-enrolled account has no password factor. This is a distinct
+		// server signal that any endpoint can return (login falls back to the
+		// OPAQUE exchange; change-password points the user at recovery), so map
+		// it before the generic 401 handling instead of only for login/signup.
+		if errResp.Code == "password_login_disabled" {
+			return errors.New(errors.ErrOPAQUEPasswordDisabled, baseErr.Error(), baseErr)
+		}
 		isLoginOrSignup := false
 		if resp.Request != nil && resp.Request.URL != nil {
 			path := resp.Request.URL.Path
 			isLoginOrSignup = strings.Contains(path, "/auth/login/") || strings.Contains(path, "/auth/register/")
 		}
 		if isLoginOrSignup {
-			// An OPAQUE-enrolled account has no password factor. Surface a
-			// distinct code so the caller can fall back to the OPAQUE exchange
-			// instead of treating it as a wrong password.
-			if errResp.Code == "password_login_disabled" {
-				return errors.New(errors.ErrOPAQUEPasswordDisabled, baseErr.Error(), baseErr)
-			}
 			return errors.New(errors.ErrInvalidCredentials, baseErr.Error(), baseErr)
 		}
 		return errors.New(errors.ErrUnauthorized, fmt.Sprintf("%v. Your session may have expired. Please run 'agentsecrets login' to authenticate again.", baseErr), baseErr)

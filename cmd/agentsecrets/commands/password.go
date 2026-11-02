@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -69,6 +70,17 @@ recovery key stays valid.`,
 		if err := ui.Spinner("Changing password...", func() error {
 			return app.Auth().ChangePassword(current, next)
 		}); err != nil {
+			// An OPAQUE-enrolled account has no password factor, so the server
+			// refuses a password change. The only way to set a new password is
+			// the recovery key, which rewraps the vault and re-enrolls OPAQUE.
+			if errors.FromError(err).Code == errors.ErrOPAQUEPasswordDisabled {
+				ui.ErrorWithSuggestions(
+					fmt.Errorf("your account uses OPAQUE, so the password cannot be changed here"),
+					"Run 'agentsecrets login' and choose the recovery-key option to set a new password.",
+					"Recovery rewraps the vault under the new password and re-enrolls OPAQUE automatically.",
+				)
+				return nil
+			}
 			ui.ErrorWithSuggestions(
 				fmt.Errorf("Password change failed: %w", err),
 				"Check that the current password is correct.",
