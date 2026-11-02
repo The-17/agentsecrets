@@ -3,6 +3,7 @@ package opaque
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,7 +29,13 @@ func sidecarURL(t *testing.T) string {
 		t.Fatalf("print-keys: %v", err)
 	}
 
-	const addr = "127.0.0.1:8899"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
 	cmd := exec.Command(bin, "--addr", addr)
 	cmd.Env = append(os.Environ(),
 		"OPAQUE_SIDECAR_TOKEN=e2e-token",
@@ -150,5 +157,61 @@ func TestClientAgainstRealSidecar(t *testing.T) {
 	})
 	if _, _, err := LoginFinish(badClient, badStart["ke2"], e2eCredID); err == nil {
 		t.Fatal("client accepted a login with the wrong password")
+	}
+}
+
+// TestLoginAfterCredentialIDChange registers under one credential id and logs
+// in under another, mirroring an account email change. The OPAQUE record is
+// bound to the registration credential id, so this proves whether changing the
+// email breaks OPAQUE login (which would lock the account out, because the
+// password factor is disabled once enrolled).
+func TestLoginAfterCredentialIDChange(t *testing.T) {
+	base := sidecarURL(t)
+	const (
+		password = "changed-id-password"
+		oldID    = "old-email@example.com"
+		newID    = "new-email@example.com"
+	)
+
+	client, regStart, err := RegisterStart(password)
+	if err != nil {
+		t.Fatalf("register start: %v", err)
+	}
+	regOut := postJSON(t, base+"/v1/register/response", map[string]string{
+		"reg_request":   EncodeB64(regStart),
+		"credential_id": oldID,
+	})
+	regResp, err := decodeB64(regOut["reg_response"])
+	if err != nil {
+		t.Fatalf("decode reg_response: %v", err)
+	}
+	record, err := RegisterFinish(client, regResp, oldID)
+	if err != nil {
+		t.Fatalf("register finish: %v", err)
+	}
+	finishOut := postJSON(t, base+"/v1/register/finish", map[string]string{
+		"reg_record":    EncodeB64(record),
+		"credential_id": oldID,
+	})
+	stored := finishOut["record"]
+	if stored == "" {
+		t.Fatal("sidecar returned an empty stored record")
+	}
+
+	loginClient, ke1, err := LoginStart(password)
+	if err != nil {
+		t.Fatalf("login start: %v", err)
+	}
+	startOut := postJSON(t, base+"/v1/login/start", map[string]string{
+		"ke1":           EncodeB64(ke1),
+		"record":        stored,
+		"credential_id": newID,
+	})
+	// The envelope is bound to the registration credential id, so a changed id
+	// must fail. This is why the server refuses an email change while OPAQUE is
+	// enrolled: the account email is the credential id, and swapping it would
+	// strand the account (the password factor is removed on enrollment).
+	if _, _, err := LoginFinish(loginClient, startOut["ke2"], newID); err == nil {
+		t.Fatal("login succeeded with a changed credential id; the email-change guard assumes it must fail")
 	}
 }

@@ -449,6 +449,14 @@ func (c *Client) DecodeError(resp *http.Response) error {
 			return errors.New(errors.ErrInvalidCredentials, baseErr.Error(), baseErr)
 		}
 		return errors.New(errors.ErrUnauthorized, fmt.Sprintf("%v. Your session may have expired. Please run 'agentsecrets login' to authenticate again.", baseErr), baseErr)
+	case 409:
+		// Email change is refused while OPAQUE is enrolled (the email is the
+		// credential identifier). Surface it as a distinct code so the email
+		// command can explain why instead of hinting at a duplicate address.
+		if errResp.Code == "email_change_disabled" {
+			return errors.New(errors.ErrEmailChangeDisabled, baseErr.Error(), baseErr)
+		}
+		return baseErr
 	case 403:
 		return errors.New(errors.ErrForbidden, fmt.Sprintf("%v. Permission denied.", baseErr), baseErr)
 	case 500:

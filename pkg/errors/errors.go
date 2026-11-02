@@ -19,6 +19,10 @@ const (
 	// ErrOPAQUEPasswordDisabled means the account is OPAQUE-enrolled and has no
 	// password factor. The caller must retry through the OPAQUE exchange.
 	ErrOPAQUEPasswordDisabled ErrorCode = "AUTH-406"
+	// ErrEmailChangeDisabled means the server refused an email change because
+	// the account email is the OPAQUE credential identifier; changing it would
+	// invalidate the registered record.
+	ErrEmailChangeDisabled ErrorCode = "AUTH-407"
 	ErrServerInternal     ErrorCode = "SRV-500"
 	ErrConnection         ErrorCode = "NET-101"
 	ErrConnectionTimeout  ErrorCode = "NET-102"

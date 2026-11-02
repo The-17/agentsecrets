@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	apperrors "github.com/The-17/agentsecrets/pkg/errors"
 )
 
 func TestAPIClient(t *testing.T) {
@@ -153,5 +155,19 @@ func TestDecodeError(t *testing.T) {
 	err = client.DecodeError(resp3.Result())
 	if !strings.Contains(err.Error(), "502 Bad Gateway") {
 		t.Errorf("Expected '502 Bad Gateway' in error, got: %v", err)
+	}
+
+	// Case 4: a 409 email_change_disabled maps to a distinct code so the email
+	// command can explain the OPAQUE constraint instead of a duplicate-address hint.
+	resp4 := httptest.NewRecorder()
+	resp4.WriteHeader(http.StatusConflict)
+	json.NewEncoder(resp4).Encode(map[string]string{
+		"code":    "email_change_disabled",
+		"message": "Email change is not available for OPAQUE-enrolled accounts.",
+	})
+	err = client.DecodeError(resp4.Result())
+	cliErr, ok := err.(*apperrors.CLIError)
+	if !ok || cliErr.Code != apperrors.ErrEmailChangeDisabled {
+		t.Errorf("Expected %s code, got: %v", apperrors.ErrEmailChangeDisabled, err)
 	}
 }

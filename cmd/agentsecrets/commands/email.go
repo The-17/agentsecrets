@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -41,6 +42,14 @@ var emailUpdateCmd = &cobra.Command{
 		if err := ui.Spinner("Requesting email change...", func() error {
 			return app.Auth().UpdateEmail(newEmail)
 		}); err != nil {
+			if errors.FromError(err).Code == errors.ErrEmailChangeDisabled {
+				ui.ErrorWithSuggestions(
+					fmt.Errorf("email change is not available for this account"),
+					"Your account uses OPAQUE, and the email is bound into the OPAQUE credential.",
+					"Changing it would invalidate your login, so it is refused. Contact support if you must change the address.",
+				)
+				return nil
+			}
 			ui.ErrorWithSuggestions(
 				fmt.Errorf("email change request failed: %w", err),
 				"Make sure the new address is not already registered.",
