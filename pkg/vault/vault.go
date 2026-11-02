@@ -450,8 +450,14 @@ func Create(userID, password string, privateKey []byte) (*Vault, *Material, erro
 	return v, &Material{VK: vk, RecoveryKey: recoveryKey}, nil
 }
 
-// UnlockWithPassword unwraps the VK with the password envelope.
+// UnlockWithPassword unwraps the VK with the password envelope. It refuses
+// v2 (split-share) vaults: there the password envelope wraps only a share,
+// and mistaking it for the VK must fail loudly instead of silently
+// producing the wrong key. Use UnlockWithShares.
 func (v *Vault) UnlockWithPassword(userID, password string) ([]byte, error) {
+	if v.Version != Version {
+		return nil, fmt.Errorf("%w: split-share vault; unlock with the OPAQUE login", ErrVersion)
+	}
 	env := v.findEnvelope(TypePassword)
 	if env == nil {
 		return nil, ErrEnvelopeNotFound
@@ -787,7 +793,7 @@ func (v *Vault) PinPublicKey(pinned string) error {
 
 // Validate checks the record structure before it is uploaded.
 func (v *Vault) Validate() error {
-	if v.Version != Version {
+	if v.Version != Version && v.Version != Version2 {
 		return ErrVersion
 	}
 	if v.VaultVersion < 1 {
@@ -843,6 +849,14 @@ func (v *Vault) Validate() error {
 			if env.KDF != KDFHKDF || env.CredentialID == "" {
 				return fmt.Errorf("%w: invalid passkey envelope", ErrVersion)
 			}
+		case TypeOpaque:
+			// The OPAQUE share is not classed as server-invisible: the
+			// export key never crosses the wire, but the OPRF holder can
+			// derive it during a login. The recovery envelope carries the
+			// invisible-factor invariant on its own.
+			if env.KDF != KDFHKDF {
+				return fmt.Errorf("%w: opaque envelope KDF %q", ErrVersion, env.KDF)
+			}
 		default:
 			// An envelope type this build does not recognise is ignored, not
 			// rejected. A vault is shared state written by whichever client
@@ -856,6 +870,13 @@ func (v *Vault) Validate() error {
 	}
 	if v.RecoveryConfirmed && !hasInvisible {
 		return fmt.Errorf("%w: recovery confirmed without a recovery factor", ErrVersion)
+	}
+	if v.Version == Version2 {
+		// A split-share vault without both share envelopes can never be
+		// unlocked. Reject it here rather than at unlock time.
+		if v.findEnvelope(TypePassword) == nil || v.findEnvelope(TypeOpaque) == nil {
+			return fmt.Errorf("%w: split-share vault needs a password and an opaque envelope", ErrVersion)
+		}
 	}
 	if v.Bridge != nil {
 		if v.Bridge.KDF != KDFHKDF {
