@@ -1,0 +1,36 @@
+# .github/workflows/ci.yml
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # The full suite is the release gate: no tag ships unless every package
+      # passes. This is the durable version of scripts/verify.sh, which is
+      # local-only and gitignored.
+      - name: Test
+        run: go test ./... -count=1

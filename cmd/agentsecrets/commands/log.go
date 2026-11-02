@@ -428,7 +428,7 @@ func queryLogs(filter log.Filter) ([]proxy.AuditEvent, error) {
 	// does not carry the local enforcement outcome, and QueryRemote drops these
 	// flags entirely — so when one is set we query the local forensic DB, the
 	// authoritative source for those decisions.
-	if filter.Blocked || filter.Redacted || filter.Failed {
+	if enforcementFilterNeedsLocal(filter) {
 		return logService.QueryLocal(filter)
 	}
 
@@ -437,6 +437,14 @@ func queryLogs(filter log.Filter) ([]proxy.AuditEvent, error) {
 		return logService.QueryRemote(wsID, filter)
 	}
 	return logService.QueryLocal(filter)
+}
+
+// enforcementFilterNeedsLocal reports whether a filter selects on an
+// enforcement outcome (blocked/redacted/failed) that only the local proxy's
+// forensic store records. The remote server view does not carry those
+// outcomes, so such a filter must query the local store (LOC-015b).
+func enforcementFilterNeedsLocal(f log.Filter) bool {
+	return f.Blocked || f.Redacted || f.Failed
 }
 
 func runLogListWithFilter(cmd *cobra.Command, filter log.Filter) error {
@@ -883,10 +891,7 @@ var logReplayCmd = &cobra.Command{
 			fmt.Println("─────────────────────────────────────────────────────────")
 			fmt.Printf("REPLAY STATE FOR EVENT %s (degraded — no local forensic record)\n", id)
 			fmt.Println("─────────────────────────────────────────────────────────")
-			decision := "PERMITTED"
-			if ev.Status == "BLOCKED" || ev.Status == "FAILED" {
-				decision = "BLOCKED"
-			}
+			decision := replayDecisionFromEvent(ev)
 			ui.StatusRow("Final Decision", decision)
 			ui.StatusRow("Status", fmt.Sprintf("%s (%d)", ev.Status, ev.StatusCode))
 			ui.StatusRow("Credential State", "Not available (no local forensic record)")
@@ -970,6 +975,17 @@ var logReplayCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// replayDecisionFromEvent derives the coarse decision shown in a degraded
+// replay (no local forensic record) from the audit event's status. It mirrors
+// the full replay's BLOCKED/PERMITTED vocabulary so a server-side-only log
+// still yields a decision instead of "not found" (LOC-016).
+func replayDecisionFromEvent(ev *proxy.AuditEvent) string {
+	if ev.Status == "BLOCKED" || ev.Status == "FAILED" {
+		return "BLOCKED"
+	}
+	return "PERMITTED"
 }
 
 func init() {
