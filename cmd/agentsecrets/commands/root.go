@@ -422,12 +422,28 @@ func ensureDaemonInitialized() error {
 		return nil
 	}
 
-	// Step 2: If daemon is not running, try starting it. If not installed, run auto-setup.
+	// Step 2: If the daemon is not running, bring it up. The daemon runs as its
+	// own dedicated (unprivileged) user — systemd User= on systemd hosts, a system
+	// user via `sudo keychain-auth start -s` elsewhere — so starting it never
+	// escalates privilege. We only ever invoke the existing start paths
+	// (EnsureDaemonRunning), which preserve that isolation; we never launch the
+	// daemon as root ad-hoc.
 	if !keychainauth.IsAvailable() {
-		if kcPath, err := keychainauth.EnsureInstalled(); err == nil {
-			_ = keychainauth.EnsureDaemonRunning(kcPath)
+		kcPath, installErr := keychainauth.EnsureInstalled()
+		if installErr == nil {
+			// Installed: try to start/restart it without re-running full setup.
+			// If it cannot be started (e.g. authorization needed and none cached —
+			// common on a headless host without a TTY sudo) fail closed with a
+			// clear message, instead of silently falling through to a full re-setup
+			// that re-prompts for a password it cannot show.
+			if startErr := keychainauth.EnsureDaemonRunning(kcPath); startErr != nil && !keychainauth.IsAvailable() {
+				return keychainRequiredError("keychain-auth daemon", startErr)
+			}
 		}
 		if !keychainauth.IsAvailable() {
+			// Genuinely unconfigured: run full setup (installs the sandbox,
+			// registers this binary, starts the daemon). This is the only path
+			// that may prompt for authorization.
 			ensureSudoCached("keychain-auth sandbox system setup is required. Please authorize when prompted.")
 			if err := ui.Spinner("Setting up keychain-auth...", keychainauth.AutoSetup); err != nil {
 				return keychainRequiredError("keychain-auth setup", err)
