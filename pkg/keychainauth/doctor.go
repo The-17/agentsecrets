@@ -502,13 +502,20 @@ func (r *Report) checkStorePermissions() {
 	}
 
 	if mode&0o004 != 0 {
+		path := r.ConfigPath
 		r.add(Finding{
 			ID:     "store.world-readable",
 			Title:  "keychain-auth trust store is world-readable",
-			Detail: fmt.Sprintf("%s has mode %#o; it reveals which binaries are trusted", r.ConfigPath, mode),
+			Detail: fmt.Sprintf("%s has mode %#o; it reveals which binaries are trusted", path, mode),
 			Status: StatusWarn,
-			Remedy: "Not exploitable on its own — the store holds no secrets and the daemon still verifies hashes. " +
-				"Tighten it only if your threat model requires hiding the trusted-binary list.",
+			// Not exploitable on its own (the store holds no secrets and the
+			// daemon verifies hashes), so this stays a warning. But tightening
+			// to 0640 is strictly safer and non-destructive, so doctor --fix
+			// applies it and re-checks.
+			needsSudo: r.daemonNeedsSudo(),
+			repair: func() error {
+				return tightenStoreRead(path, mode)
+			},
 		})
 		return
 	}
@@ -606,7 +613,7 @@ func (r *Report) Repair(run func(label string, fn func() error) error) *Report {
 // worth doing automatically (as opposed to warnings that are purely informational).
 func isSafeWarnRepair(id string) bool {
 	switch id {
-	case "socket.stale", "daemon.outdated", "daemon.version-unknown", "daemon.status-unavailable", "policy.unverified":
+	case "socket.stale", "daemon.outdated", "daemon.version-unknown", "daemon.status-unavailable", "policy.unverified", "store.world-readable":
 		return true
 	}
 	return false
@@ -617,6 +624,26 @@ func isSafeWarnRepair(id string) bool {
 // permissions.
 func tightenStorePermissions(path string, current os.FileMode) error {
 	target := current &^ os.FileMode(0o022)
+	if err := os.Chmod(path, target); err == nil {
+		return nil
+	}
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("cannot tighten permissions on %s", path)
+	}
+	out, err := runSudo(20*time.Second, "chmod", fmt.Sprintf("%#o", uint32(target)), path)
+	if err != nil {
+		return fmt.Errorf("tighten %s permissions: %w (%s)", path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// tightenStoreRead removes the world-read bit from a store file, preserving
+// ownership, and escalates only if the current user cannot chmod it. Unlike
+// tightenStorePermissions it targets 0o004, and unlike the system-store helper
+// (ensureStoreReadableByDaemon) it never chowns: this store may be the user's
+// own config under $HOME. It never widens permissions.
+func tightenStoreRead(path string, current os.FileMode) error {
+	target := current &^ os.FileMode(0o004)
 	if err := os.Chmod(path, target); err == nil {
 		return nil
 	}
