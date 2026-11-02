@@ -1142,6 +1142,11 @@ func compareVersions(v1, v2 string) int {
 func ensureSandboxInstalled(keychainAuthPath string) error {
 	// Ensure config directory exists
 	if _, err := os.Stat("/etc/keychain-auth/config.json"); err == nil {
+		// Already installed. Re-assert the store's permissions: the installer can
+		// leave it world-readable (0644), and a setup re-run is the natural moment
+		// to tighten it to 0640 root:<daemon-group>. ensureStoreReadableByDaemon
+		// is a no-op when the permissions are already correct.
+		ensureStoreReadableByDaemon("/etc/keychain-auth/config.json")
 		return nil
 	}
 
