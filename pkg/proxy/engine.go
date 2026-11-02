@@ -594,7 +594,7 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 
 	// 2. Enforce HTTPS Target
 	if strings.ToLower(u.Scheme) != "https" && flag.Lookup("test.v") == nil {
-		return logBlocked("non_https_blocked", "Non-HTTPS requests are strictly blocked by the proxy to prevent credential exposure. Use HTTPS instead.")
+		return logBlocked("non_https_blocked", "Non-HTTPS requests are strictly blocked by the proxy to prevent credential exposure and SSRF: a plaintext request can be redirected to an internal service or an attacker-controlled host before any credential is injected. Use HTTPS instead.")
 	}
 
 	// 3. Resolve Agent Identity and enforce capabilities and workspace/project/environment scopes.
