@@ -115,8 +115,8 @@ func AutoSetup() error {
 
 	// Start the daemon BEFORE registering. install.sh already starts the systemd
 	// unit, so this is usually a no-op; it also covers the user-mode fallback.
-	// Bringing the daemon up first means authorization goes through it
-	// (passwordless, daemon-owned store) instead of a privileged direct write.
+	// Bringing the daemon up first means the store the daemon will load already
+	// exists and is owned by the daemon, so registration writes it in place.
 	if err := EnsureDaemonRunning(kcPath); err != nil {
 		return fmt.Errorf("keychain-auth setup: %w", err)
 	}
@@ -579,10 +579,9 @@ func EnsureRegistered(keychainAuthPath string) error {
 	// The daemon reloads its trust store on every new connection, so the freshly
 	// written policy is picked up by the verification request below without
 	// restarting the daemon. A restart would only re-read the same file and, on
-	// systemd, would require sudo — which would put an elevation prompt back on
-	// every upgrade and defeat the passwordless re-authorization this design
-	// targets. Drop any cached connection so Init() below dials a fresh one that
-	// reloads the store.
+	// systemd, would require a second sudo `systemctl restart` for no benefit.
+	// Drop any cached connection so Init() below dials a fresh one that reloads
+	// the store.
 	Close()
 
 	// Prove the daemon now accepts this binary instead of assuming it does.
@@ -595,33 +594,28 @@ func EnsureRegistered(keychainAuthPath string) error {
 	return nil
 }
 
-// authorizeBinary runs keychain-auth's authorize command for selfPath.
+// authorizeBinary runs keychain-auth's authorize command for selfPath, elevating
+// only when the host's registration requires it.
 //
-// It tries the passwordless, daemon-mediated path first: `keychain-auth authorize`
-// asks the running daemon to write the trust store as its own user, so no elevation
-// is needed on a host running the new daemon. Only if that fails (an older daemon
-// whose authorize writes the store directly, or a daemon that is unreachable) does
-// it escalate via runSudo — and only on a host where registration genuinely
-// requires root. This keeps re-authorization prompt-free after the daemon upgrade
-// while staying compatible with daemons that predate daemon-mediated authorization.
-//
-// The binary is invoked by its resolved absolute path: keychain-auth is commonly
-// installed under ~/.agentsecrets/bin, which is not in sudo's secure_path, so a
-// bare `sudo keychain-auth` would fail with "command not found".
+// Authorization is an administrative action: the daemon writes the trust store as
+// its own user, but only accepts the request from an administrator. On a system
+// install that means running the command through sudo, which the command layer has
+// already primed (a single prompt for the whole operation). The binary is invoked
+// by its resolved absolute path: keychain-auth is commonly installed under
+// ~/.agentsecrets/bin, which is not in sudo's secure_path, so a bare
+// `sudo keychain-auth` would fail with "command not found".
 func authorizeBinary(keychainAuthPath, selfPath string) error {
-	// Preferred: daemon-mediated, passwordless.
-	output, err := exec.Command(keychainAuthPath, "authorize", selfPath, serviceName).CombinedOutput()
-	if err == nil {
-		return nil
-	}
-
-	// Fallback: escalate only when the host actually requires it, so we never
-	// prompt for a password that isn't needed.
+	var (
+		output []byte
+		err    error
+	)
 	if requiresSudoForRegistration(keychainAuthPath) {
 		output, err = runSudo(120*time.Second, keychainAuthPath, "authorize", selfPath, serviceName)
-		if err == nil {
-			return nil
-		}
+	} else {
+		output, err = exec.Command(keychainAuthPath, "authorize", selfPath, serviceName).CombinedOutput()
+	}
+	if err == nil {
+		return nil
 	}
 
 	outStr := strings.TrimSpace(string(output))
@@ -640,13 +634,13 @@ func requiresSudoForRegistration(keychainAuthPath string) bool {
 		return false
 	}
 	// A systemd unit decides first, because it decides which store the daemon
-	// will load. The unit runs the daemon as its own system user, which reads
-	// /etc/keychain-auth/config.json; an unprivileged `authorize` against an
-	// older daemon (pre-daemon-mediated authorization) would write the caller's
-	// own store and the daemon would keep denying the binary it was just told to
-	// trust. authorizeBinary tries the passwordless daemon path first and only
-	// escalates here when that fails, so this remains the fallback for older
-	// daemons rather than a per-upgrade prompt.
+	// will load. The unit runs the daemon as its own system user, which owns
+	// /etc/keychain-auth/config.json. Authorizing a binary grants it service
+	// access, so the daemon accepts that request only from an administrator:
+	// on a system install the caller must be root, i.e. the command runs under
+	// sudo. This is a deliberate security boundary, not just a permissions
+	// detail — an unprivileged process (including an adversarial agent running
+	// as the user) must not be able to grant itself access.
 	statusSaysSudo := queryStatusRequiresSudo(keychainAuthPath)
 	return privilegedRegistrationRequired(statusSaysSudo, systemdUnitExists())
 }
@@ -1178,17 +1172,15 @@ func ensureSandboxInstalled(keychainAuthPath string) error {
 // not world-readable, so the daemon can read AND write it as its own user.
 //
 // The daemon owns its trust store: install.sh chowns /etc/keychain-auth/config.json
-// to keychain-auth:keychain-auth and mode 0600, and the daemon writes it during
-// authorization (daemon-mediated, no elevation from the caller). The agentsecrets
-// CLI must NEVER chown the store to root — that would strip the daemon's write
-// access and force the old sudo-every-time model. This helper only ever
-// re-asserts the correct daemon ownership and a non-world-readable mode; it never
-// widens permissions.
+// to keychain-auth:keychain-auth and mode 0600, and the daemon writes it when an
+// administrator authorizes a binary. The agentsecrets CLI must NEVER chown the
+// store to root — that would strip the daemon's write access and force the old
+// root-owned-store model. This helper only ever re-asserts the correct daemon
+// ownership and a non-world-readable mode; it never widens permissions.
 func ensureStoreOwnedByDaemon(storePath string) {
 	for _, owner := range []string{"keychain-auth:keychain-auth", "keychainauth:keychainauth"} {
-		if _, err := user.LookupGroup("keychain-auth"); err != nil {
-			// Try the alternative group name, then give up on chown and just
-			// strip world-read below.
+		group := owner[strings.Index(owner, ":")+1:]
+		if _, err := user.LookupGroup(group); err != nil {
 			continue
 		}
 		if _, err := runSudo(20*time.Second, "chown", owner, storePath); err != nil {
