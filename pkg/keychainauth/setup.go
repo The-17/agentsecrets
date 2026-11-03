@@ -133,7 +133,7 @@ func AutoSetup() error {
 // compareVersions check in EnsureInstalled and is upgraded to the latest release,
 // so a daemon binary change always reaches users rather than leaving a stale
 // daemon in place.
-const RequiredDaemonVersion = "3.3.0"
+const RequiredDaemonVersion = "4.0.0"
 
 // candidateDaemonPaths returns all standard filesystem and PATH locations where keychain-auth can reside across all operating systems.
 func candidateDaemonPaths() []string {
