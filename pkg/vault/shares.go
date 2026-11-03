@@ -49,6 +49,11 @@ const (
 
 	// opaqueShareInfo is the HKDF info string for the OPAQUE-share KEK.
 	opaqueShareInfo = "as:v1/opaque-share"
+
+	// MinClientVersionV2 is the first client release that understands the v2
+	// split-share vault. A v2 vault names it so an older CLI fails with a
+	// clear upgrade message instead of a parse error.
+	MinClientVersionV2 = "4.1.0"
 )
 
 // xorBytes returns a ⊕ b. Both slices must be the same length.

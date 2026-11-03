@@ -133,7 +133,17 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		return nil, fmt.Errorf("login: failed to parse response: %w", err)
 	}
 
-	return s.completeLogin(email, password, privateKey, publicKey, &loginResp)
+	return s.completeLogin(email, password, privateKey, publicKey, &loginResp, loginOptions{})
+}
+
+// loginOptions carries what differs between the password and OPAQUE paths.
+// ExportKey is the OPAQUE export key (nil on a password login); it is the
+// second vault share's KEK and the signal that this session authenticated
+// through OPAQUE. ServerVaultV2 gates the v1 -> v2 migration so a server can
+// hold migration back during rollout without a client release.
+type loginOptions struct {
+	ExportKey     []byte
+	ServerVaultV2 bool
 }
 
 // completeLogin stores tokens, the keypair, the vault, and workspace keys from a
@@ -141,7 +151,7 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 // privateKey is nil the vault (or legacy blob) is unlocked with the password.
 // Both PerformLogin (password) and OpaqueLogin (OPAQUE exchange) share it so the
 // two auth paths produce an identical local session.
-func (s *Service) completeLogin(email, password string, privateKey, publicKey []byte, loginResp *loginResponse) (*LoginResult, error) {
+func (s *Service) completeLogin(email, password string, privateKey, publicKey []byte, loginResp *loginResponse, opts loginOptions) (*LoginResult, error) {
 	result := &LoginResult{}
 	userID := loginResp.Data.User.ID
 	record, recordVersion, err := s.loginVault(loginResp.Data, userID)
@@ -153,11 +163,13 @@ func (s *Service) completeLogin(email, password string, privateKey, publicKey []
 	var (
 		fromVault bool
 		bridgeVK  []byte
+		vaultVK   []byte
 	)
 	if privateKey == nil {
-		privateKey, fromVault, bridgeVK, err = s.unlockLoginKey(
+		privateKey, fromVault, bridgeVK, vaultVK, err = s.unlockLoginKey(
 			userID, password, record,
 			loginResp.Data.EncryptedPrivateKey, loginResp.Data.KeySalt,
+			opts.ExportKey,
 		)
 		if err != nil {
 			return nil, err
@@ -213,14 +225,17 @@ func (s *Service) completeLogin(email, password string, privateKey, publicKey []
 	// Create a vault for a legacy account, heal a stale envelope, or pin the
 	// existing proof key. Failures here are warnings, not login blockers.
 	state := &vaultLoginState{
-		UserID:     userID,
-		Password:   password,
-		PrivateKey: privateKey,
-		Record:     record,
-		Version:    recordVersion,
-		FromVault:  fromVault,
-		BridgeVK:   bridgeVK,
-		Result:     result,
+		UserID:        userID,
+		Password:      password,
+		PrivateKey:    privateKey,
+		Record:        record,
+		Version:       recordVersion,
+		FromVault:     fromVault,
+		BridgeVK:      bridgeVK,
+		VK:            vaultVK,
+		ExportKey:     opts.ExportKey,
+		ServerVaultV2: opts.ServerVaultV2,
+		Result:        result,
 	}
 	if err := s.ensureVault(state); err != nil {
 		return nil, fmt.Errorf("login: %w", err)

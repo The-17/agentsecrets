@@ -52,7 +52,7 @@ func (s *Service) OpaqueLogin(email, password string) (*LoginResult, error) {
 		return nil, fmt.Errorf("opaque login start: parse: %w", err)
 	}
 
-	ke3, _, err := opaque.LoginFinish(client, startData.Data.KE2, credID)
+	ke3, _, exportKey, err := opaque.LoginFinishWithExport(client, startData.Data.KE2, credID)
 	if err != nil {
 		return nil, fmt.Errorf("opaque login: %w", err)
 	}
@@ -79,7 +79,10 @@ func (s *Service) OpaqueLogin(email, password string) (*LoginResult, error) {
 	if err := config.SetOpaqueEnrolled(true); err != nil {
 		return nil, fmt.Errorf("opaque login: %w", err)
 	}
-	result, err := s.completeLogin(email, password, nil, nil, &loginResp)
+	result, err := s.completeLogin(email, password, nil, nil, &loginResp, loginOptions{
+		ExportKey:     exportKey,
+		ServerVaultV2: s.ServerSupportsVaultV2(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -171,6 +174,29 @@ func (s *Service) ServerSupportsOpaque() bool {
 		return false
 	}
 	return capResp.Data.Opaque
+}
+
+// ServerSupportsVaultV2 reports whether the control plane accepts the v2
+// split-share vault. The client gates the v1 -> v2 migration on it so a server
+// can hold migration back during rollout without a client release.
+func (s *Service) ServerSupportsVaultV2() bool {
+	resp, err := s.API.Call("auth.capabilities", "GET", nil, nil, nil)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var capResp struct {
+		Data struct {
+			VaultV2 bool `json:"vault_v2"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&capResp); err != nil {
+		return false
+	}
+	return capResp.Data.VaultV2
 }
 
 // isOPAQUEPasswordDisabled reports whether err is the server's signal that the

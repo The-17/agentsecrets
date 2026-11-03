@@ -136,8 +136,27 @@ func (s *Service) pinVault(v *vault.Vault) error {
 // unlockLoginKey prefers the vault, then the legacy blob, and finally tries the
 // bridge so a password change made by an old client is healed. bridgeVK is set
 // only when the legacy key opened the bridge and the password envelope is stale.
-func (s *Service) unlockLoginKey(userID, password string, record *vault.Vault, encPrivKey, salt string) (privateKey []byte, fromVault bool, bridgeVK []byte, err error) {
+// vaultVK is set when the vault's password envelope opened it, and is what the
+// split-share migration needs to re-wrap the vault without a second Argon2id.
+func (s *Service) unlockLoginKey(userID, password string, record *vault.Vault, encPrivKey, salt string, exportKey []byte) (privateKey []byte, fromVault bool, bridgeVK, vaultVK []byte, err error) {
 	if record != nil {
+		// A v2 vault requires both the password share and the OPAQUE share.
+		// Without an export key (a plain password login) it cannot be opened,
+		// and the caller must use the OPAQUE login instead.
+		if record.IsSplit() {
+			if len(exportKey) == 0 {
+				return nil, false, nil, nil, fmt.Errorf("login: this vault requires the OPAQUE login exchange")
+			}
+			vk, uerr := record.UnlockWithShares(userID, password, exportKey)
+			if uerr != nil {
+				return nil, false, nil, nil, fmt.Errorf("login: vault: %w", uerr)
+			}
+			pk, perr := record.PrivateKey(userID, vk)
+			if perr != nil {
+				return nil, false, nil, nil, fmt.Errorf("login: vault: %w", perr)
+			}
+			return pk, true, nil, vk, nil
+		}
 		hasPassword, hasPasskey := false, false
 		for _, envelopeType := range record.EnvelopeTypes() {
 			switch envelopeType {
@@ -148,45 +167,48 @@ func (s *Service) unlockLoginKey(userID, password string, record *vault.Vault, e
 			}
 		}
 		if !hasPassword && hasPasskey {
-			return nil, false, nil, fmt.Errorf("login: this account requires a passkey, which this CLI version does not support yet")
+			return nil, false, nil, nil, fmt.Errorf("login: this account requires a passkey, which this CLI version does not support yet")
 		}
 		if vk, uerr := record.UnlockWithPassword(userID, password); uerr == nil {
 			pk, perr := record.PrivateKey(userID, vk)
 			if perr != nil {
-				return nil, false, nil, fmt.Errorf("login: vault: %w", perr)
+				return nil, false, nil, nil, fmt.Errorf("login: vault: %w", perr)
 			}
-			return pk, true, nil, nil
+			return pk, true, nil, vk, nil
 		}
 	}
 
 	if encPrivKey == "" || salt == "" {
 		if record != nil {
-			return nil, false, nil, fmt.Errorf("login: vault password envelope failed and legacy key material is missing")
+			return nil, false, nil, nil, fmt.Errorf("login: vault password envelope failed and legacy key material is missing")
 		}
-		return nil, false, nil, fmt.Errorf("login: encryption keys missing from server response")
+		return nil, false, nil, nil, fmt.Errorf("login: encryption keys missing from server response")
 	}
 
 	privateKey, err = crypto.DecryptPrivateKey(encPrivKey, password, salt)
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("login: %w", err)
+		return nil, false, nil, nil, fmt.Errorf("login: %w", err)
 	}
 	if record != nil {
 		if vk, berr := record.UnlockWithBridge(userID, privateKey); berr == nil {
-			return privateKey, false, vk, nil
+			return privateKey, false, vk, nil, nil
 		}
 	}
-	return privateKey, false, nil, nil
+	return privateKey, false, nil, nil, nil
 }
 
 type vaultLoginState struct {
-	UserID     string
-	Password   string
-	PrivateKey []byte
-	Record     *vault.Vault
-	Version    int
-	FromVault  bool
-	BridgeVK   []byte
-	Result     *LoginResult
+	UserID        string
+	Password      string
+	PrivateKey    []byte
+	Record        *vault.Vault
+	Version       int
+	FromVault     bool
+	BridgeVK      []byte
+	VK            []byte
+	ExportKey     []byte
+	ServerVaultV2 bool
+	Result        *LoginResult
 }
 
 // ensureVault creates a vault for a migrated account, heals a stale password
@@ -201,6 +223,9 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 		if state.FromVault {
 			state.Result.VaultVersion = state.Version
 			state.Result.RecoveryConfirmed = state.Record.RecoveryConfirmed
+			if err := s.maybeMigrateToShares(state); err != nil {
+				state.Result.Warnings = append(state.Result.Warnings, fmt.Sprintf("vault share migration failed: %v", err))
+			}
 			return s.pinVault(state.Record)
 		}
 		if state.BridgeVK != nil {
@@ -276,6 +301,40 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 	state.Result.VaultCreated = true
 	state.Result.VaultVersion = v.VaultVersion
 	return s.pinVault(v)
+}
+
+// maybeMigrateToShares upgrades a v1 vault to the v2 split-share scheme when
+// every gate allows it: the session authenticated through OPAQUE (export key
+// present), the server advertises vault_v2, the recovery key is confirmed, and
+// the vault is still v1. This is the only place a vault is upgraded, and it
+// runs client-side because the server never holds a key. A failure is a
+// warning, never a login blocker: the v1 vault keeps working.
+func (s *Service) maybeMigrateToShares(state *vaultLoginState) error {
+	if state.Record == nil || state.Record.IsSplit() {
+		return nil
+	}
+	if len(state.ExportKey) == 0 || !state.ServerVaultV2 {
+		return nil
+	}
+	if !state.Result.RecoveryConfirmed {
+		return nil
+	}
+	if len(state.VK) == 0 {
+		return nil
+	}
+	if err := state.Record.MigrateToShares(state.UserID, state.Password, state.VK, state.ExportKey); err != nil {
+		return err
+	}
+	state.Record.MinClientVersion = vault.MinClientVersionV2
+	state.Record.BumpVersion()
+	if err := state.Record.Sign(state.UserID, state.VK); err != nil {
+		return err
+	}
+	if err := s.putVault(state.Record, state.Version); err != nil {
+		return err
+	}
+	state.Result.VaultVersion = state.Record.VaultVersion
+	return nil
 }
 
 // ConfirmRecovery marks the recovery key as saved after the user proves they

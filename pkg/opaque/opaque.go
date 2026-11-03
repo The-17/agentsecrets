@@ -55,21 +55,29 @@ func RegisterStart(password string) (*opaque.Client, []byte, error) {
 // RegisterFinish completes registration from the server's reg_response and
 // returns the record the client must store on the server.
 func RegisterFinish(client *opaque.Client, regResponse []byte, credentialID string) ([]byte, error) {
+	record, _, err := RegisterFinishWithExport(client, regResponse, credentialID)
+	return record, err
+}
+
+// RegisterFinishWithExport also returns the export key. The export key is the
+// high-entropy, client-only secret RFC 9807 derives from the OPRF output; the
+// vault uses it as the second share's KEK. It is never sent to the server.
+func RegisterFinishWithExport(client *opaque.Client, regResponse []byte, credentialID string) (record, exportKey []byte, err error) {
 	conf := opaque.DefaultConfiguration()
 	dser, err := conf.Deserializer()
 	if err != nil {
-		return nil, fmt.Errorf("opaque: deserializer: %w", err)
+		return nil, nil, fmt.Errorf("opaque: deserializer: %w", err)
 	}
 	parsed, err := dser.RegistrationResponse(regResponse)
 	if err != nil {
-		return nil, fmt.Errorf("opaque: parse registration response: %w", err)
+		return nil, nil, fmt.Errorf("opaque: parse registration response: %w", err)
 	}
-	record, _, err := client.RegistrationFinalize(parsed, []byte(credentialID), nil)
+	rec, export, err := client.RegistrationFinalize(parsed, []byte(credentialID), nil)
 	if err != nil {
-		return nil, fmt.Errorf("opaque: registration finalize: %w", err)
+		return nil, nil, fmt.Errorf("opaque: registration finalize: %w", err)
 	}
 	client.ClearState()
-	return record.Serialize(), nil
+	return rec.Serialize(), export, nil
 }
 
 // LoginStart produces KE1, which the server forwards to its sidecar alongside
@@ -90,25 +98,34 @@ func LoginStart(password string) (*opaque.Client, []byte, error) {
 // LoginFinish completes the exchange. A wrong password fails here, before any
 // session is acknowledged.
 func LoginFinish(client *opaque.Client, ke2, credentialID string) (ke3 []byte, sessionKey []byte, err error) {
+	ke3, sessionKey, _, err = LoginFinishWithExport(client, ke2, credentialID)
+	return ke3, sessionKey, err
+}
+
+// LoginFinishWithExport also returns the export key, which the vault uses as
+// the OPAQUE-share KEK. It is deterministic per (password, OPRF seed,
+// credential id), so every login on every device reproduces it, and it is
+// never stored or sent anywhere.
+func LoginFinishWithExport(client *opaque.Client, ke2, credentialID string) (ke3, sessionKey, exportKey []byte, err error) {
 	conf := opaque.DefaultConfiguration()
 	dser, err := conf.Deserializer()
 	if err != nil {
-		return nil, nil, fmt.Errorf("opaque: deserializer: %w", err)
+		return nil, nil, nil, fmt.Errorf("opaque: deserializer: %w", err)
 	}
 	raw, err := decodeB64(ke2)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opaque: decode ke2: %w", err)
+		return nil, nil, nil, fmt.Errorf("opaque: decode ke2: %w", err)
 	}
 	parsed, err := dser.KE2(raw)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opaque: parse ke2: %w", err)
+		return nil, nil, nil, fmt.Errorf("opaque: parse ke2: %w", err)
 	}
-	k3, key, _, err := client.GenerateKE3(parsed, []byte(credentialID), nil)
+	k3, key, export, err := client.GenerateKE3(parsed, []byte(credentialID), nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opaque: login failed: %w", err)
+		return nil, nil, nil, fmt.Errorf("opaque: login failed: %w", err)
 	}
 	client.ClearState()
-	return k3.Serialize(), key, nil
+	return k3.Serialize(), key, export, nil
 }
 
 // EncodeB64 exposes the encoding used on the wire so callers stay consistent.
