@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/The-17/agentsecrets/pkg/errors"
+	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -42,14 +42,6 @@ var emailUpdateCmd = &cobra.Command{
 		if err := ui.Spinner("Requesting email change...", func() error {
 			return app.Auth().UpdateEmail(newEmail)
 		}); err != nil {
-			if errors.FromError(err).Code == errors.ErrEmailChangeDisabled {
-				ui.ErrorWithSuggestions(
-					fmt.Errorf("email change is not available for this account"),
-					"Your account uses OPAQUE, and the email is bound into the OPAQUE credential.",
-					"Changing it would invalidate your login, so it is refused. Contact support if you must change the address.",
-				)
-				return nil
-			}
 			ui.ErrorWithSuggestions(
 				fmt.Errorf("email change request failed: %w", err),
 				"Make sure the new address is not already registered.",
@@ -93,9 +85,52 @@ var emailUpdateCmd = &cobra.Command{
 			return nil
 		}
 
+		// An OPAQUE-enrolled account keeps its credential record keyed by the
+		// email, so re-enroll it under the new address to keep login working.
+		// The password never leaves the device; only the OPAQUE record moves.
+		if config.GetOpaqueEnrolled() {
+			password, ok := promptReenrollPassword()
+			if !ok {
+				ui.Warning("Email updated, but OPAQUE was not re-linked. Run 'agentsecrets login' with your new email and password to finish the switch.")
+				return nil
+			}
+			if _, err := app.Auth().EnrollOpaque(newEmail, password); err != nil {
+				ui.Warning("Email updated, but OPAQUE re-link failed: " + err.Error() +
+					". Run 'agentsecrets login' with your new email and password to finish.")
+				return nil
+			}
+			ui.Success("Email updated and OPAQUE re-linked to your new address. Log in again to finish.")
+			return nil
+		}
+
 		ui.Success("Email updated. Log in again to pick up the new address on this device.")
 		return nil
 	},
+}
+
+// promptReenrollPassword asks for the account password so OPAQUE can be
+// re-enrolled under the new email after an address change.
+func promptReenrollPassword() (string, bool) {
+	var password string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Password").
+				Description("Re-enter your password to re-link OPAQUE to your new email.").
+				EchoMode(huh.EchoModePassword).
+				Value(&password).
+				Validate(func(s string) error {
+					if len(s) < 8 {
+						return fmt.Errorf("password must be at least 8 characters")
+					}
+					return nil
+				}),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return "", false
+	}
+	return password, true
 }
 
 func init() {

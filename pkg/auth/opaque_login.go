@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/errors"
@@ -102,12 +103,17 @@ func (s *Service) OpaqueLogin(email, password string) (*LoginResult, error) {
 //  3. RegisterFinish(client, reg_response, credential_id) -> record
 //  4. POST /auth/opaque/register/finish/ (JWT) {reg_record, credential_id}
 //     -> server stores the record and disables the password factor.
-func (s *Service) EnrollOpaque(email, password string) error {
+// EnrollOpaque upgrades an already-authenticated account to OPAQUE and returns
+// the OPAQUE export key derived during registration. The export key is the
+// second vault share's KEK, so this is also where the account vault is upgraded
+// to the v2 split-share scheme (enforce v2). The upgrade is best-effort: a
+// failure leaves the v1 vault working and the next OPAQUE login migrates it.
+func (s *Service) EnrollOpaque(email, password string) ([]byte, error) {
 	credID := email
 
 	client, regStart, err := opaque.RegisterStart(password)
 	if err != nil {
-		return fmt.Errorf("opaque enroll: %w", err)
+		return nil, fmt.Errorf("opaque enroll: %w", err)
 	}
 
 	startResp, err := s.API.Call("auth.opaque_register_start", "POST", map[string]string{
@@ -115,11 +121,11 @@ func (s *Service) EnrollOpaque(email, password string) error {
 		"credential_id": credID,
 	}, nil, nil)
 	if err != nil {
-		return fmt.Errorf("opaque enroll start: %w", err)
+		return nil, fmt.Errorf("opaque enroll start: %w", err)
 	}
 	defer startResp.Body.Close()
 	if startResp.StatusCode != http.StatusOK {
-		return s.API.DecodeError(startResp)
+		return nil, s.API.DecodeError(startResp)
 	}
 	var startData struct {
 		Data struct {
@@ -128,16 +134,16 @@ func (s *Service) EnrollOpaque(email, password string) error {
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(startResp.Body).Decode(&startData); err != nil {
-		return fmt.Errorf("opaque enroll start: parse: %w", err)
+		return nil, fmt.Errorf("opaque enroll start: parse: %w", err)
 	}
 
 	regResp, err := opaque.DecodeB64(startData.Data.RegResponse)
 	if err != nil {
-		return fmt.Errorf("opaque enroll start: decode reg_response: %w", err)
+		return nil, fmt.Errorf("opaque enroll start: decode reg_response: %w", err)
 	}
-	record, err := opaque.RegisterFinish(client, regResp, credID)
+	record, exportKey, err := opaque.RegisterFinishWithExport(client, regResp, credID)
 	if err != nil {
-		return fmt.Errorf("opaque enroll finish: %w", err)
+		return nil, fmt.Errorf("opaque enroll finish: %w", err)
 	}
 
 	// register/finish is JWT-protected; the API client adds the stored token.
@@ -145,13 +151,21 @@ func (s *Service) EnrollOpaque(email, password string) error {
 		"reg_record":    opaque.EncodeB64(record),
 		"credential_id": credID,
 	}, nil, nil, http.StatusOK); err != nil {
-		return fmt.Errorf("opaque enroll finish: %w", err)
+		return nil, fmt.Errorf("opaque enroll finish: %w", err)
 	}
 
 	if err := config.SetOpaqueEnrolled(true); err != nil {
-		return fmt.Errorf("opaque enroll: %w", err)
+		return nil, fmt.Errorf("opaque enroll: %w", err)
 	}
-	return nil
+
+	// Enforce v2: upgrade the account vault to the split-share scheme now that
+	// the OPAQUE export key (the second share's KEK) is available. Best-effort:
+	// on failure the v1 vault still works and the next login migrates it.
+	if err := s.enforceV2Vault(email, password, exportKey); err != nil {
+		fmt.Fprintf(os.Stderr, "opaque enroll: vault v2 migration skipped: %v\n", err)
+	}
+
+	return exportKey, nil
 }
 
 // ServerSupportsOpaque reports whether the control plane has an OPAQUE sidecar

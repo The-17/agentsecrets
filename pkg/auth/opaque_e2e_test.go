@@ -56,7 +56,7 @@ func TestOpaqueAgainstLiveServer(t *testing.T) {
 		t.Fatalf("ConfirmRecovery: %v", err)
 	}
 
-	if err := svc.EnrollOpaque(email, password); err != nil {
+	if _, err := svc.EnrollOpaque(email, password); err != nil {
 		t.Fatalf("EnrollOpaque: %v", err)
 	}
 	if !config.GetOpaqueEnrolled() {

@@ -149,8 +149,14 @@ func (s *Service) RecoverAccount(email, recoveryKey, newPassword string) (*Login
 
 	if newPassword != "" {
 		expectedVersion := fullVault.VaultVersion
-		if err := fullVault.RewrapPassword(userID, vk, newPassword); err != nil {
-			return nil, fmt.Errorf("recovery: this account has no password factor to reset")
+		// For a v1 vault the password envelope wraps the full VK. For a v2 split
+		// vault it wraps the password share k1, which cannot be derived yet
+		// (the new OPAQUE export key arrives from re-enrollment below), so the
+		// share rotation happens after EnrollOpaque via RotateShares.
+		if !fullVault.IsSplit() {
+			if err := fullVault.RewrapPassword(userID, vk, newPassword); err != nil {
+				return nil, fmt.Errorf("recovery: this account has no password factor to reset")
+			}
 		}
 		// Using the recovery key proves the user has it, so mark recovery
 		// confirmed. This is the gate OPAQUE enrollment relies on: enrolling an
@@ -194,8 +200,24 @@ func (s *Service) RecoverAccount(email, recoveryKey, newPassword string) (*Login
 	// gated on a confirmed recovery key and a server that actually runs OPAQUE;
 	// a failure leaves the recovered password working.
 	if newPassword != "" && result.RecoveryConfirmed && s.ServerSupportsOpaque() {
-		if err := s.EnrollOpaque(email, newPassword); err != nil {
-			result.Warnings = append(result.Warnings, "recovered, but OPAQUE re-enrollment failed: "+err.Error())
+		exportKey, rerr := s.EnrollOpaque(email, newPassword)
+		if rerr != nil {
+			result.Warnings = append(result.Warnings, "recovered, but OPAQUE re-enrollment failed: "+rerr.Error())
+		} else if fullVault.IsSplit() && len(exportKey) > 0 {
+			// The OPAQUE record rotated, so the OPAQUE share must be re-wrapped
+			// under the new export key. We hold the full VK (from the recovery
+			// key) and the new password, so RotateShares regenerates both shares
+			// and re-wraps them. Then bump, sign, and upload.
+			if rerr := fullVault.RotateShares(userID, vk, newPassword, exportKey); rerr != nil {
+				result.Warnings = append(result.Warnings, "recovered, but the vault OPAQUE share could not be re-wrapped: "+rerr.Error())
+			} else {
+				fullVault.BumpVersion()
+				if serr := fullVault.Sign(userID, vk); serr != nil {
+					result.Warnings = append(result.Warnings, "recovered, but the vault proof could not be re-signed: "+serr.Error())
+				} else if perr := s.putVault(fullVault, fullVault.VaultVersion-1); perr != nil {
+					result.Warnings = append(result.Warnings, "recovered, but the re-wrapped vault could not be saved: "+perr.Error())
+				}
+			}
 		}
 	}
 

@@ -194,7 +194,7 @@ func TestOpaqueEnrollAndLogin(t *testing.T) {
 	svc := setupOpaqueTest(t)
 	const password = "opaque-test-password"
 
-	if err := svc.EnrollOpaque(opaqueTestCredID, password); err != nil {
+	if _, err := svc.EnrollOpaque(opaqueTestCredID, password); err != nil {
 		t.Fatalf("EnrollOpaque: %v", err)
 	}
 	if !config.GetOpaqueEnrolled() {
@@ -202,7 +202,7 @@ func TestOpaqueEnrollAndLogin(t *testing.T) {
 	}
 
 	// Replay enrollment: it must be idempotent on the client (no record rotation).
-	if err := svc.EnrollOpaque(opaqueTestCredID, password); err != nil {
+	if _, err := svc.EnrollOpaque(opaqueTestCredID, password); err != nil {
 		t.Fatalf("EnrollOpaque replay: %v", err)
 	}
 
@@ -222,7 +222,7 @@ func TestLoginFallsBackToOpaque(t *testing.T) {
 	const password = "opaque-test-password"
 
 	// Enroll first so the server has a record (as a real enrolled account would).
-	if err := svc.EnrollOpaque(opaqueTestCredID, password); err != nil {
+	if _, err := svc.EnrollOpaque(opaqueTestCredID, password); err != nil {
 		t.Fatalf("enroll: %v", err)
 	}
 	// Simulate a fresh device: the local flag is clear, so the first attempt hits
@@ -241,7 +241,7 @@ func TestLoginFallsBackToOpaque(t *testing.T) {
 
 func TestOpaqueLoginWrongPasswordFails(t *testing.T) {
 	svc := setupOpaqueTest(t)
-	if err := svc.EnrollOpaque(opaqueTestCredID, "opaque-test-password"); err != nil {
+	if _, err := svc.EnrollOpaque(opaqueTestCredID, "opaque-test-password"); err != nil {
 		t.Fatalf("enroll: %v", err)
 	}
 	if _, err := svc.OpaqueLogin(opaqueTestCredID, "wrong-password"); err == nil {

@@ -285,3 +285,34 @@ func (v *Vault) RewrapOpaque(userID string, share, newExportKey []byte) error {
 
 // IsSplit reports whether this vault uses the v2 split-share scheme.
 func (v *Vault) IsSplit() bool { return v.Version == Version2 }
+
+// RotateShares regenerates both split shares of a v2 vault under a new password
+// and a new OPAQUE export key, preserving the full Vault Key. It is used after
+// the OPAQUE record rotates — password change or recovery re-enrollment — when
+// the export key changes, and after a password change when the password share
+// must be re-wrapped. vk is the full Vault Key, which the caller must hold:
+// recovery holds it from the recovery key, a live login holds it from the
+// unlocked vault. The caller bumps the version, signs, and uploads.
+func (v *Vault) RotateShares(userID string, vk []byte, newPassword string, newExportKey []byte) error {
+	if v.Version != Version2 {
+		return fmt.Errorf("%w: rotate expects a split-share vault", ErrVersion)
+	}
+	if len(vk) != KeySize || len(newExportKey) != KeySize {
+		return fmt.Errorf("vault: share inputs must be %d bytes", KeySize)
+	}
+	k1, err := randomBytes(KeySize)
+	if err != nil {
+		return err
+	}
+	k2, err := xorBytes(vk, k1)
+	if err != nil {
+		return err
+	}
+	if err := v.RewrapPassword(userID, k1, string(newPassword)); err != nil {
+		return err
+	}
+	if err := v.RewrapOpaque(userID, k2, newExportKey); err != nil {
+		return err
+	}
+	return nil
+}

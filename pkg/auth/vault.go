@@ -303,6 +303,41 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 	return s.pinVault(v)
 }
 
+// enforceV2Vault upgrades an account's vault to the v2 split-share scheme at
+// OPAQUE enrollment, when the encryption key is derivable from the password. It
+// is best-effort: a failure leaves the v1 vault working and the next OPAQUE
+// login migrates it. The export key from the just-completed registration is the
+// second share's KEK, so enrollment immediately closes the data-at-rest gap.
+func (s *Service) enforceV2Vault(email, password string, exportKey []byte) error {
+	userID := config.GetUserID()
+	if userID == "" {
+		return nil
+	}
+	v, version, supported, err := s.fetchVault(userID)
+	if err != nil || !supported || v == nil {
+		return nil
+	}
+	if v.IsSplit() {
+		// Already v2. A re-enrollment (e.g. after recovery) re-wraps the OPAQUE
+		// share, but that needs the full Vault Key, which only recovery holds,
+		// so it is done by the caller.
+		return nil
+	}
+	vk, err := v.UnlockWithPassword(userID, password)
+	if err != nil {
+		return fmt.Errorf("vault unlock for split migration: %w", err)
+	}
+	if err := v.MigrateToShares(userID, password, vk, exportKey); err != nil {
+		return err
+	}
+	v.MinClientVersion = vault.MinClientVersionV2
+	v.BumpVersion()
+	if err := v.Sign(userID, vk); err != nil {
+		return err
+	}
+	return s.putVault(v, version)
+}
+
 // maybeMigrateToShares upgrades a v1 vault to the v2 split-share scheme when
 // every gate allows it: the session authenticated through OPAQUE (export key
 // present), the server advertises vault_v2, the recovery key is confirmed, and

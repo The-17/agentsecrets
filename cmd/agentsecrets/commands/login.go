@@ -274,7 +274,7 @@ func performLogin() error {
 	// Failures are non-fatal — the session already works.
 	if !result.OpaqueAuthenticated && !config.GetOpaqueEnrolled() &&
 		result.RecoveryConfirmed && app.Auth().ServerSupportsOpaque() {
-		if err := app.Auth().EnrollOpaque(email, password); err != nil {
+		if _, err := app.Auth().EnrollOpaque(email, password); err != nil {
 			ui.Warning("OPAQUE enrollment skipped: " + err.Error())
 		} else {
 			ui.Success("Upgraded to OPAQUE: your password never leaves this device.")
