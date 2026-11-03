@@ -5,11 +5,28 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/opaque"
 )
+
+// opaqueCredentialNamespace is the fixed namespace for the OPAQUE credential
+// id. Changing it would orphan every enrolled account, and the browser mirror
+// (agentsecrets-website/src/lib/opaque-wasm.ts) hard-codes the same value.
+var opaqueCredentialNamespace = uuid.MustParse("6f9619ff-8b86-d011-b42d-00c04fc964ff")
+
+// opaqueCredentialID derives the OPAQUE credential id for an account. The id is
+// authenticated inside the OPAQUE record, so every client must derive it the
+// same way: the CLI and the browser both use the lowercased email as a UUIDv5
+// name. A client that sent a different id could not log in to an account
+// enrolled by another client.
+func opaqueCredentialID(email string) string {
+	return uuid.NewSHA1(opaqueCredentialNamespace, []byte(strings.ToLower(strings.TrimSpace(email)))).String()
+}
 
 // OpaqueLogin authenticates with an OPAQUE (RFC 9807) exchange instead of a raw
 // password. The password never leaves the device; it only derives the session
@@ -24,7 +41,7 @@ import (
 //     -> login response (tokens + key material)
 //  5. completeLogin stores the session exactly like PerformLogin.
 func (s *Service) OpaqueLogin(email, password string) (*LoginResult, error) {
-	credID := email // stable per-account id used as the OPAQUE credential id
+	credID := opaqueCredentialID(email)
 
 	client, ke1, err := opaque.LoginStart(password)
 	if err != nil {
@@ -109,7 +126,7 @@ func (s *Service) OpaqueLogin(email, password string) (*LoginResult, error) {
 // to the v2 split-share scheme (enforce v2). The upgrade is best-effort: a
 // failure leaves the v1 vault working and the next OPAQUE login migrates it.
 func (s *Service) EnrollOpaque(email, password string) ([]byte, error) {
-	credID := email
+	credID := opaqueCredentialID(email)
 
 	client, regStart, err := opaque.RegisterStart(password)
 	if err != nil {

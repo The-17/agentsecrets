@@ -90,7 +90,9 @@ func setupOpaqueTest(t *testing.T) *Service {
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
-		body["credential_id"] = opaqueTestCredID
+		// The client-supplied credential_id is forwarded unchanged: the OPAQUE
+		// record binds it, so overwriting it here would hide a derivation
+		// mismatch between enrollment and login.
 		if injectRecord {
 			body["record"] = storedRecord
 		}
