@@ -113,6 +113,10 @@ var endpointMap = map[string]map[string]string{
 	"audit": {
 		"sync": "internal/audit/logs/",
 	},
+	"forensic": {
+		"sync":   "internal/forensic/logs/",
+		"replay": "forensic/logs/{log_id}/replay/",
+	},
 	"telemetry": {
 		"sync": "/telemetry/sync/",
 	},

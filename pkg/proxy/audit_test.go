@@ -1,12 +1,18 @@
 package proxy_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/The-17/agentsecrets/pkg/api"
+	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/log"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 )
@@ -205,4 +211,169 @@ func TestLogManagementEvent(t *testing.T) {
 		t.Errorf("expected target URL/action 'Added domain test.com', got '%s'", ev.TargetURL)
 	}
 }
+
+func TestSyncUnpushedLogs_DeduplicatedSeparation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agentsecrets-sync-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	origHome := os.Getenv("HOME")
+	origUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	defer func() {
+		os.Setenv("HOME", origHome)
+		os.Setenv("USERPROFILE", origUserProfile)
+	}()
+
+	// Configure authenticated session via fallback token.json and config.json
+	dotAS := filepath.Join(tmpDir, ".agentsecrets")
+	if err := os.MkdirAll(dotAS, 0700); err != nil {
+		t.Fatalf("failed to create .agentsecrets: %v", err)
+	}
+	tokenData := `{"access_token":"fake-access-token","refresh_token":"fake-refresh-token"}`
+	if err := os.WriteFile(filepath.Join(dotAS, "token.json"), []byte(tokenData), 0600); err != nil {
+		t.Fatalf("failed to write token.json: %v", err)
+	}
+	configData := `{"email":"test@example.com"}`
+	if err := os.WriteFile(filepath.Join(dotAS, "config.json"), []byte(configData), 0600); err != nil {
+		t.Fatalf("failed to write config.json: %v", err)
+	}
+	config.InvalidateTokenCache()
+
+	var auditSyncCalls [][]map[string]interface{}
+	var forensicSyncCalls [][]map[string]interface{}
+	var mu sync.Mutex
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		var body []map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
+		switch r.URL.Path {
+		case "/api/internal/audit/logs/":
+			auditSyncCalls = append(auditSyncCalls, body)
+			w.WriteHeader(http.StatusOK)
+		case "/api/internal/forensic/logs/":
+			forensicSyncCalls = append(forensicSyncCalls, body)
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	dbPath := filepath.Join(tmpDir, "audit.db")
+	logger, err := proxy.NewAuditLogger(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create audit logger: %v", err)
+	}
+	defer logger.Close()
+
+	apiClient := api.NewClientWithURL(mockServer.URL+"/api", func() string { return "fake-access-token" })
+	logger.APIClient = apiClient
+
+	// 1. Insert 1 legacy audit event
+	err = logger.Log(proxy.AuditEvent{
+		ID:             "audit_ev_1",
+		Timestamp:      time.Now().UTC(),
+		Environment:    "dev",
+		SecretKeys:     []string{"STRIPE_KEY"},
+		Method:         "POST",
+		TargetURL:      "https://api.stripe.com/v1/charges",
+		Domain:         "api.stripe.com",
+		StatusCode:     200,
+		DurationMs:     40,
+		Status:         "OK",
+		ResolutionPath: "local proxy",
+		WorkspaceID:    "ws-test",
+		ProjectID:      "proj-test",
+	})
+	if err != nil {
+		t.Fatalf("failed to log audit event: %v", err)
+	}
+
+	// 2. Insert 1 forensic audit event
+	err = logger.LogForensic(proxy.ForensicAuditEvent{
+		ID:          "flog_ev_1",
+		Version:     "2",
+		CreatedAt:   time.Now().UTC(),
+		WorkspaceID: "ws-test",
+		ProjectID:   "proj-test",
+		Event: proxy.EventBlock{
+			Type:        "proxy_call",
+			KeyName:     "STRIPE_KEY",
+			Domain:      "api.stripe.com",
+			Path:        "/v1/charges",
+			Method:      "POST",
+			StatusCode:  200,
+			Outcome:     "permitted",
+			LatencyMs:   40,
+			Environment: "dev",
+		},
+		Snapshot: proxy.SnapshotBlock{
+			CapturedAt: time.Now().UTC(),
+			Workspace:  proxy.WorkspaceSnapshot{ID: "ws-test"},
+		},
+		Enforcement: proxy.EnforcementBlock{
+			Decision: "permitted",
+		},
+		Resolution: proxy.ResolutionBlock{
+			SSRFCheckPassed: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to log forensic event: %v", err)
+	}
+
+	// Drain queue so writes land in sqlite
+	logger.Flush()
+
+	// 3. Trigger SyncUnpushedLogs
+	if err := logger.SyncUnpushedLogs(); err != nil {
+		t.Fatalf("SyncUnpushedLogs failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Verify /api/internal/audit/logs/ received ONLY legacy audit event (no duplicate forensic event)
+	if len(auditSyncCalls) != 1 {
+		t.Fatalf("expected 1 call to audit.sync, got %d", len(auditSyncCalls))
+	}
+	if len(auditSyncCalls[0]) != 1 {
+		t.Fatalf("expected 1 entry in audit.sync payload, got %d", len(auditSyncCalls[0]))
+	}
+	if auditSyncCalls[0][0]["id"] != "audit_ev_1" {
+		t.Errorf("expected audit.sync entry ID 'audit_ev_1', got '%v'", auditSyncCalls[0][0]["id"])
+	}
+
+	// Verify /api/internal/forensic/logs/ received ONLY forensic audit event
+	if len(forensicSyncCalls) != 1 {
+		t.Fatalf("expected 1 call to forensic.sync, got %d", len(forensicSyncCalls))
+	}
+	if len(forensicSyncCalls[0]) != 1 {
+		t.Fatalf("expected 1 entry in forensic.sync payload, got %d", len(forensicSyncCalls[0]))
+	}
+	if forensicSyncCalls[0][0]["id"] != "flog_ev_1" {
+		t.Errorf("expected forensic.sync entry ID 'flog_ev_1', got '%v'", forensicSyncCalls[0][0]["id"])
+	}
+
+	// Verify both rows in DB are marked synced = 1
+	var legacySynced, forensicSynced int
+	_ = logger.DB().QueryRow("SELECT synced FROM audit_events WHERE id = 'audit_ev_1'").Scan(&legacySynced)
+	_ = logger.DB().QueryRow("SELECT synced FROM forensic_audit_events WHERE id = 'flog_ev_1'").Scan(&forensicSynced)
+
+	if legacySynced != 1 {
+		t.Errorf("expected legacy event synced = 1, got %d", legacySynced)
+	}
+	if forensicSynced != 1 {
+		t.Errorf("expected forensic event synced = 1, got %d", forensicSynced)
+	}
+}
+
 

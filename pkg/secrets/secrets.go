@@ -2,6 +2,7 @@
 package secrets
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -201,7 +202,9 @@ func (s *Service) ListForEnv(env string) ([]SecretMetadata, error) {
 	}
 
 	list, err := api.CallJSON[struct {
-		Secrets []SecretMetadata `json:"secrets"`
+		Secrets       []SecretMetadata `json:"secrets"`
+		WorkspaceID   string           `json:"workspace_id"`
+		WorkspaceName string           `json:"workspace_name"`
 	}](s.API, "secrets.list", "GET", nil, map[string]string{
 		"project_id": projectID,
 	}, map[string]string{
@@ -209,6 +212,17 @@ func (s *Service) ListForEnv(env string) ([]SecretMetadata, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list secrets: %w", err)
+	}
+
+	// Auto-heal workspace if project was transferred
+	if list.WorkspaceID != "" {
+		if project, err := config.LoadProjectConfig(); err == nil && project != nil && list.WorkspaceID != project.WorkspaceID {
+			project.WorkspaceID = list.WorkspaceID
+			if list.WorkspaceName != "" {
+				project.WorkspaceName = list.WorkspaceName
+			}
+			_ = config.SaveProjectConfig(project)
+		}
 	}
 
 	// Cache the cloud secrets
@@ -250,6 +264,22 @@ func (s *Service) Pull(targetKeys []string) error {
 			continue
 		}
 		plaintext, err := crypto.DecryptSecret(s.Value, wsKey)
+		if err != nil {
+			if selKey, errSel := config.GetSelectedWorkspaceKey(); errSel == nil && selKey != nil && !bytes.Equal(selKey, wsKey) {
+				if p2, err2 := crypto.DecryptSecret(s.Value, selKey); err2 == nil {
+					plaintext = p2
+					err = nil
+					wsKey = selKey
+					if cfg, errCfg := config.LoadGlobalConfig(); errCfg == nil && cfg.SelectedWorkspaceID != "" {
+						project.WorkspaceID = cfg.SelectedWorkspaceID
+						if ws, ok := cfg.Workspaces[cfg.SelectedWorkspaceID]; ok {
+							project.WorkspaceName = ws.Name
+						}
+						_ = config.SaveProjectConfig(project)
+					}
+				}
+			}
+		}
 		if err != nil {
 			continue
 		}
@@ -529,10 +559,36 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 	}
 
 	target = make(map[string]string)
+	decryptFailures := 0
 	for _, m := range list {
-		if p, err := crypto.DecryptSecret(m.Value, wsKey); err == nil {
-			target[m.Key] = p
+		p, err := crypto.DecryptSecret(m.Value, wsKey)
+		if err != nil {
+			if selKey, errSel := config.GetSelectedWorkspaceKey(); errSel == nil && selKey != nil && !bytes.Equal(selKey, wsKey) {
+				if p2, err2 := crypto.DecryptSecret(m.Value, selKey); err2 == nil {
+					p = p2
+					err = nil
+					wsKey = selKey
+					if cfg, errCfg := config.LoadGlobalConfig(); errCfg == nil && cfg.SelectedWorkspaceID != "" {
+						if proj, errP := config.LoadProjectConfig(); errP == nil {
+							proj.WorkspaceID = cfg.SelectedWorkspaceID
+							if ws, ok := cfg.Workspaces[cfg.SelectedWorkspaceID]; ok {
+								proj.WorkspaceName = ws.Name
+							}
+							_ = config.SaveProjectConfig(proj)
+						}
+					}
+				}
+			}
 		}
+		if err == nil {
+			target[m.Key] = p
+		} else {
+			decryptFailures++
+		}
+	}
+
+	if len(list) > 0 && len(target) == 0 && decryptFailures > 0 {
+		return nil, fmt.Errorf("found %d secret(s) in cloud, but decryption failed. The local project workspace key does not match the cloud encryption key", len(list))
 	}
 
 	// 3. Compare Source vs Target
