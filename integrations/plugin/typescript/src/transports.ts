@@ -205,6 +205,9 @@ export class CloudResolverTransport {
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(this.timeoutMs),
+        // The resolver has a fixed origin. A 3xx is a protocol error, not an
+        // invitation to resend the workload token somewhere else.
+        redirect: "manual",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -28,6 +28,24 @@ from .types import CallRequest, CallResult, parse_injections
 _TOKEN_RE = re.compile(r"\bagt_[A-Za-z0-9._-]{8,}\b")
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect.
+
+    The resolver has one fixed origin. Following a 3xx would resend the
+    workload token to a host that never proved it owns the credential, which
+    is client-side SSRF. Returning None makes urllib surface the 3xx as an
+    ``HTTPError`` instead of fetching the new location.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        return None
+
+
+# Built once at import: redirect refusal must not depend on a caller-supplied
+# opener staying honest.
+_NO_REDIRECT_OPEN = urllib.request.build_opener(_NoRedirectHandler).open
+
+
 def _user_agent() -> str:
     """Identify the client so Cloudflare's browser-integrity check accepts us.
 
@@ -207,7 +225,7 @@ class CloudResolverTransport:
         self._token = token
         self._resolver_url = resolver_url.rstrip("/")
         self._timeout = timeout
-        self._opener = opener or urllib.request.urlopen
+        self._opener = opener or _NO_REDIRECT_OPEN
 
     def call(self, request: CallRequest) -> CallResult:
         payload = build_resolve_payload(request)

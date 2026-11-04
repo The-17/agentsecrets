@@ -305,7 +305,16 @@ func callCloud(req CallRequest) (*CallResult, error) {
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := (&http.Client{Timeout: cloudTimeout}).Do(httpReq)
+	client := &http.Client{
+		Timeout: cloudTimeout,
+		// A redirect is data from an untrusted peer, not an instruction to fetch
+		// another location. Following one lets a hostile resolver point the CLI at
+		// an internal or metadata endpoint (client-side SSRF). Refuse it.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, &ResolveError{
 			Mode: ModeCloud,
@@ -315,6 +324,13 @@ func callCloud(req CallRequest) (*CallResult, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, &ResolveError{
+			Mode: ModeCloud,
+			Msg:  "the resolver returned a redirect instead of a resolve response; refusing to follow it",
+			Err:  fmt.Errorf("refused redirect to %q (a resolver response is data, not an instruction to fetch another host)", resp.Header.Get("Location")),
+		}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, decodeResolverError(resp)
 	}

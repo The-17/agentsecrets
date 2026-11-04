@@ -29,6 +29,7 @@ function timeoutSignal(ms: number): AbortSignal {
 }
 
 function decodeError(status: number, bodyText: string): string {
+
   let msg = bodyText.slice(0, 500);
   try {
     const j = JSON.parse(bodyText) as Record<string, unknown>;
@@ -51,6 +52,18 @@ function decodeError(status: number, bodyText: string): string {
     msg += ' — session may be expired. Call auth_login (OAuth) or refresh AGENTSECRETS_TOKEN(_FILE).';
   }
   return msg;
+}
+
+/**
+ * A 3xx is not an answer. Both surfaces have a fixed origin, so a redirect is
+ * always a protocol error: following it would resend the caller's
+ * Authorization header to a host that never proved it owns the credential
+ * (client-side SSRF). Refuse before reading the body.
+ */
+function rejectRedirect(status: number): void {
+  if (status >= 300 && status < 400) {
+    throw new ApiError(status, `server answered with a redirect (${status}) and was not followed`);
+  }
 }
 
 export interface ControlOptions {
@@ -91,12 +104,14 @@ export async function controlCall(
         Authorization: `Bearer ${token}`,
       },
       signal: timeoutSignal(opts.timeoutMs ?? 30000),
+      redirect: 'manual',
     };
     if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
     res = await fetch(url, init);
   } catch (e) {
     throw new ApiError(0, `network error contacting ${baseUrl}: ${e instanceof Error ? e.message : String(e)}`);
   }
+  rejectRedirect(res.status);
   const text = await res.text();
   if (res.status < 200 || res.status >= 300) {
     throw new ApiError(res.status, decodeError(res.status, text));
@@ -161,10 +176,12 @@ export async function cloudResolve(
       },
       body: JSON.stringify(req),
       signal: timeoutSignal(timeoutMs),
+      redirect: 'manual',
     });
   } catch (e) {
     throw new ApiError(0, `network error contacting cloud resolver: ${e instanceof Error ? e.message : String(e)}`);
   }
+  rejectRedirect(res.status);
   const text = await res.text();
   if (res.status < 200 || res.status >= 300) {
     throw new ApiError(res.status, decodeError(res.status, text));

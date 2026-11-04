@@ -154,6 +154,21 @@ type Client struct {
 // ResolveBaseURLFunc is an optional hook to resolve the server base URL dynamically.
 var ResolveBaseURLFunc func() string
 
+// noRedirectHTTPClient is the control-plane transport. The API has a fixed
+// origin and every endpoint path carries its trailing slash, so a 3xx is a
+// protocol error, not a new destination: following it would resend the
+// caller's Authorization header to a host that never proved it owns the
+// token (client-side SSRF). The 3xx response is returned to the caller, which
+// rejects it in CallCtx before any body is decoded.
+func noRedirectHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // NewClient creates a new API client with the resolved base URL.
 func NewClient(tokenFunc func() string) *Client {
 	baseURL := DefaultBaseURL
@@ -166,7 +181,7 @@ func NewClient(tokenFunc func() string) *Client {
 	}
 	return &Client{
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		HTTPClient: noRedirectHTTPClient(30 * time.Second),
 		getToken:   tokenFunc,
 	}
 }
@@ -178,7 +193,7 @@ func NewClientWithURL(baseURL string, tokenFunc func() string) *Client {
 	}
 	return &Client{
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		HTTPClient: noRedirectHTTPClient(30 * time.Second),
 		getToken:   tokenFunc,
 	}
 }
@@ -263,6 +278,14 @@ func (c *Client) CallCtx(ctx context.Context, endpointKey, method string, data i
 	resp, err := c.doRequest(ctx, httpMethod, url, jsonData, "")
 	if err != nil {
 		return nil, err
+	}
+
+	// A 3xx is data from an untrusted peer, never an instruction to fetch
+	// another location. The transport already refuses to follow it; rejecting
+	// it here keeps a redirect body from ever being decoded as an API payload.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("control plane returned a redirect (%d) for %s; refusing to follow it", resp.StatusCode, endpointKey)
 	}
 
 	// Auto-refresh on 401 for authenticated endpoints.
@@ -617,12 +640,24 @@ func FetchWorkloadEnv(ctx context.Context, serverURL, token, environment string)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		// A redirect is data from an untrusted peer, not an instruction to fetch
+		// another location. Following one lets a hostile control plane point the
+		// client at an internal or metadata endpoint (client-side SSRF).
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("network error contacting AgentSecrets control plane: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("control plane returned a redirect (%d); refusing to follow it", resp.StatusCode)
+	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		// The control plane answers 401 for a bad token and 403 for a token that
