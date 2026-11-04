@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -20,6 +22,7 @@ var loginServerFlag string
 var loginRecoveryFlag bool
 var loginGoogleFlag bool
 var loginGithubFlag bool
+var loginEmailFlag string
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
@@ -46,11 +49,17 @@ var loginCmd = &cobra.Command{
 		if loginGoogleFlag && loginGithubFlag {
 			return fmt.Errorf("choose one provider: --google or --github")
 		}
+		if loginEmailFlag != "" && (loginGoogleFlag || loginGithubFlag || loginRecoveryFlag) {
+			return fmt.Errorf("use --email by itself, or --google/--github/--recovery, not in combination")
+		}
 		if loginGoogleFlag {
 			return performOAuth("google")
 		}
 		if loginGithubFlag {
 			return performOAuth("github")
+		}
+		if loginEmailFlag != "" {
+			return performEmailLogin(loginEmailFlag)
 		}
 		// No explicit method: ask when there is a terminal, else keep the
 		// historical email+password path for scripts.
@@ -63,6 +72,7 @@ var loginCmd = &cobra.Command{
 
 func init() {
 	loginCmd.Flags().StringVar(&loginServerFlag, "server", "", "Target AgentSecrets server URL")
+	loginCmd.Flags().StringVar(&loginEmailFlag, "email", "", "Email to sign in with; the password is prompted, or read from stdin when piped (never taken from the command line)")
 	loginCmd.Flags().BoolVar(&loginRecoveryFlag, "recovery", false, "Sign in with your recovery key and set a new password")
 	loginCmd.Flags().BoolVar(&loginGoogleFlag, "google", false, "Sign in with Google")
 	loginCmd.Flags().BoolVar(&loginGithubFlag, "github", false, "Sign in with GitHub")
@@ -248,7 +258,13 @@ func performLogin() error {
 	}
 
 	fmt.Println()
+	return loginWithCreds(email, password)
+}
 
+// loginWithCreds finishes an email+password login: authenticate, optionally
+// enroll OPAQUE, and surface the vault result. Shared by the interactive
+// prompt and the --email flag path.
+func loginWithCreds(email, password string) error {
 	var result *auth.LoginResult
 	if err := ui.Spinner("Logging in...", func() error {
 		var err error
@@ -285,6 +301,56 @@ func performLogin() error {
 	ui.Success("Logged in successfully!")
 	showVaultResult(result, password)
 	return nil
+}
+
+// performEmailLogin handles `login --email <addr>`: it skips the method picker
+// and goes straight to the email+password flow. The password is never taken
+// from a CLI argument (per the repo secret-handling rule); when a terminal is
+// present it is prompted, otherwise it is read from stdin so the command stays
+// scriptable.
+func performEmailLogin(email string) error {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		var password string
+		form := huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Password").
+				EchoMode(huh.EchoModePassword).
+				Value(&password).
+				Validate(func(s string) error {
+					if s == "" {
+						return fmt.Errorf("password is required")
+					}
+					return nil
+				}),
+		))
+		if err := form.Run(); err != nil {
+			return nil // cancelled
+		}
+		fmt.Println()
+		return loginWithCreds(email, password)
+	}
+
+	// No terminal: read the password from stdin (a pipe), never from argv.
+	pw, err := readSecretLine(os.Stdin)
+	if err != nil {
+		return errors.New(errors.ErrUsage,
+			"email login needs a password: pipe it on stdin, e.g. 'echo $PW | agentsecrets login --email you@example.com'",
+			err)
+	}
+	return loginWithCreds(email, strings.TrimSpace(pw))
+}
+
+// readSecretLine reads a single line from r, used to accept a password on stdin
+// for non-interactive logins without ever placing it on the command line.
+func readSecretLine(r io.Reader) (string, error) {
+	sc := bufio.NewScanner(r)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	return sc.Text(), nil
 }
 
 // performRecovery restores a session with the recovery key, then rewraps the
