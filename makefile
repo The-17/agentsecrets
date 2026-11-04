@@ -115,6 +115,15 @@ clean:
 install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
+# The env-guard interposer must travel with the binary: Locate() only searches
+# the binary's own directory, so a missing guard silently degrades to parent-side
+# masking. Copy every guard lib the build produced; when no compiler was present
+# the glob matches nothing and the (graceful) degrade path is preserved.
+	@for f in $(BUILD_DIR)/guard_*; do \
+		if [ -f "$$f" ]; then \
+			cp "$$f" /usr/local/bin/ && echo "✓ Installed guard: $$(basename $$f)"; \
+		fi; \
+	done
 	@echo "✓ Installed to /usr/local/bin/$(BINARY_NAME)"
 
 # Format code
