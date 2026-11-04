@@ -86,7 +86,7 @@ func manualRepairHint() string {
 	kcPath := findBestDaemon()
 	if kcPath == "" {
 		return "  agentsecrets doctor\n\n" +
-			"keychain-auth could not be located. 'agentsecrets doctor' will install it."
+			"If keychain-auth is missing, 'agentsecrets doctor' will install it."
 	}
 
 	elevate := ""
