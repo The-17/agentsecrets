@@ -8,6 +8,7 @@
 package opaque
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -31,6 +32,26 @@ var ErrPasswordLoginDisabled = fmt.Errorf("password login is disabled for this a
 
 func encodeB64(raw []byte) string {
 	return base64.StdEncoding.EncodeToString(raw)
+}
+
+// exportKeySize is the fixed length the v2 split-share vault expects for the
+// OPAQUE-share KEK. The raw OPAQUE export key's length depends on the
+// negotiated suite, so it is normalized to this length at the boundary below.
+const exportKeySize = 32
+
+// normalizeExportKey maps the OPAQUE library's export key to the fixed 32-byte
+// key the v2 vault uses as the OPAQUE-share KEK. The export key is a
+// high-entropy secret derived deterministically from the password, the server's
+// OPRF seed, and the credential id, so every enrollment and every later login
+// reproduces the same key. The mapping is one-way and stays on the client: it
+// never crosses the wire and never alters the OPAQUE protocol bytes, so it cannot
+// desync the server or break the OPAQUE exchange.
+func normalizeExportKey(export []byte) []byte {
+	if len(export) == exportKeySize {
+		return export
+	}
+	sum := sha256.Sum256(export)
+	return sum[:]
 }
 
 func decodeB64(s string) ([]byte, error) {
@@ -77,7 +98,7 @@ func RegisterFinishWithExport(client *opaque.Client, regResponse []byte, credent
 		return nil, nil, fmt.Errorf("opaque: registration finalize: %w", err)
 	}
 	client.ClearState()
-	return rec.Serialize(), export, nil
+	return rec.Serialize(), normalizeExportKey(export), nil
 }
 
 // LoginStart produces KE1, which the server forwards to its sidecar alongside
@@ -125,7 +146,7 @@ func LoginFinishWithExport(client *opaque.Client, ke2, credentialID string) (ke3
 		return nil, nil, nil, fmt.Errorf("opaque: login failed: %w", err)
 	}
 	client.ClearState()
-	return k3.Serialize(), key, export, nil
+	return k3.Serialize(), key, normalizeExportKey(export), nil
 }
 
 // EncodeB64 exposes the encoding used on the wire so callers stay consistent.

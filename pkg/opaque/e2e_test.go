@@ -160,6 +160,67 @@ func TestClientAgainstRealSidecar(t *testing.T) {
 	}
 }
 
+// TestExportKeyNormalizedTo32Bytes proves the OPAQUE export key handed to the v2
+// vault is a fixed 32 bytes and identical between enrollment and a later login.
+// The v2 split-share vault wraps the second share with a KEK derived from this
+// key; if it were suite-length-dependent or non-deterministic, enrollment would
+// wrap with one key and login would try to unwrap with another, sealing the vault.
+func TestExportKeyNormalizedTo32Bytes(t *testing.T) {
+	base := sidecarURL(t)
+	const (
+		password = "export-key-password"
+		credID   = "export-key-user@example.com"
+	)
+
+	client, regStart, err := RegisterStart(password)
+	if err != nil {
+		t.Fatalf("register start: %v", err)
+	}
+	regOut := postJSON(t, base+"/v1/register/response", map[string]string{
+		"reg_request":   EncodeB64(regStart),
+		"credential_id": credID,
+	})
+	regResp, err := decodeB64(regOut["reg_response"])
+	if err != nil {
+		t.Fatalf("decode reg_response: %v", err)
+	}
+	record, enrollExport, err := RegisterFinishWithExport(client, regResp, credID)
+	if err != nil {
+		t.Fatalf("register finish with export: %v", err)
+	}
+	if len(enrollExport) != 32 {
+		t.Fatalf("enroll export key length = %d, want 32", len(enrollExport))
+	}
+	finishOut := postJSON(t, base+"/v1/register/finish", map[string]string{
+		"reg_record":    EncodeB64(record),
+		"credential_id": credID,
+	})
+	stored := finishOut["record"]
+	if stored == "" {
+		t.Fatal("sidecar returned an empty stored record")
+	}
+
+	loginClient, ke1, err := LoginStart(password)
+	if err != nil {
+		t.Fatalf("login start: %v", err)
+	}
+	startOut := postJSON(t, base+"/v1/login/start", map[string]string{
+		"ke1":           EncodeB64(ke1),
+		"record":        stored,
+		"credential_id": credID,
+	})
+	_, _, loginExport, err := LoginFinishWithExport(loginClient, startOut["ke2"], credID)
+	if err != nil {
+		t.Fatalf("login finish with export: %v", err)
+	}
+	if len(loginExport) != 32 {
+		t.Fatalf("login export key length = %d, want 32", len(loginExport))
+	}
+	if !bytes.Equal(enrollExport, loginExport) {
+		t.Fatal("enroll and login export keys differ; the v2 vault would seal itself")
+	}
+}
+
 // TestLoginAfterCredentialIDChange registers under one credential id and logs
 // in under another, mirroring an account email change. The OPAQUE record is
 // bound to the registration credential id, so this proves whether changing the
