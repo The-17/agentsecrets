@@ -306,6 +306,20 @@ func ErrorWithSuggestions(err error, suggestions ...string) {
 	allSuggestions = append(allSuggestions, suggestions...)
 	allSuggestions = append(allSuggestions, details.Suggestions...)
 
+	// De-duplicate. A suggestion supplied by the caller and the registry (or the
+	// error itself) is the same helpful hint, not two; printing it twice reads as
+	// a rendering bug. First occurrence wins, order preserved.
+	seen := make(map[string]struct{}, len(allSuggestions))
+	deduped := allSuggestions[:0]
+	for _, s := range allSuggestions {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		deduped = append(deduped, s)
+	}
+	allSuggestions = deduped
+
 	if len(allSuggestions) > 0 {
 		fmt.Println()
 		fmt.Println(DimStyle.Render(fmt.Sprintf("💡 Actionable suggestions to resolve this (%s):", details.Title)))
