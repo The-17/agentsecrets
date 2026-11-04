@@ -1,0 +1,88 @@
+# .github/workflows/adversarial.yml
+name: adversarial
+
+# Gated security job. NOT run on every push: the happy-path CI already runs the
+# client-side SSRF / fail-closed tests on every commit. This job runs the
+# adversarial fixture matrix (hostile resolver/control-plane responses) and is
+# opt-in so it does not slow normal development:
+#   - manual trigger from the Actions tab, or
+#   - any PR labelled `adversarial`.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go-adversarial:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'adversarial'
+    name: Go adversarial fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+# Build tag `adversarial` gates any hostile fixture suites; the always-on CI
+# keeps the core SSRF / fail-closed tests, this on-demand job re-runs the full
+# client matrix (including that suite) and any broader fixtures added later.
+      - name: Adversarial tests
+        run: go test -tags adversarial -count=1 ./...
+
+  mcp-adversarial:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'adversarial'
+    name: MCP bridge adversarial fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build + test
+        working-directory: integrations/mcp
+        run: |
+          npm install
+          npm run build
+          npm run typecheck
+          npm test
+
+  plugin-ts-adversarial:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'adversarial'
+    name: Plugin (TS) adversarial fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build + test
+        working-directory: integrations/plugin/typescript
+        run: |
+          npm install
+          npm run build
+          npm run typecheck
+          npm test
+
+  plugin-py-adversarial:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'adversarial'
+    name: Plugin (Python) adversarial fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test
+        working-directory: integrations/plugin/python
+        run: |
+          python -m pip install -e .
+          PYTHONPATH=. python -m unittest discover -s tests -t tests
