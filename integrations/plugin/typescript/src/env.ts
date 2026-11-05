@@ -3,6 +3,9 @@ import { delimiter, join } from "node:path";
 
 import { ConfigurationError } from "./errors.js";
 
+// The single resolver host. There is no environment variable or config knob for
+// it: resolution and billing are a fixed official service. The transport takes
+// a URL argument only so tests can point at a local server.
 export const DEFAULT_RESOLVER_URL = "https://resolver.agentsecrets.tech";
 export const MODES = ["local", "cloud"] as const;
 export type PluginMode = (typeof MODES)[number];
@@ -53,7 +56,6 @@ export const NEVER_FORWARD = [
   "AGENTSECRETS_SESSION_TOKEN",
   "AGENTSECRETS_PLUGIN_MODE",
   "AGENTSECRETS_BINARY",
-  "AGENTSECRETS_CLOUD_RESOLVER_URL",
 ] as const;
 
 const NEVER_FORWARD_SET = new Set<string>(NEVER_FORWARD);
@@ -147,11 +149,7 @@ export function resolveMode(options: ResolveModeOptions = {}): ModeConfig {
 
   const binary = findBinary(options.binary);
   const token = readToken(options.token, options.tokenFile);
-  const resolverUrl = (
-    options.resolverUrl ??
-    process.env.AGENTSECRETS_CLOUD_RESOLVER_URL ??
-    DEFAULT_RESOLVER_URL
-  ).trim();
+  const resolverUrl = (options.resolverUrl ?? DEFAULT_RESOLVER_URL).trim();
 
   if (requested === "local") {
     if (!binary) {

@@ -31,7 +31,7 @@ func TestCallCloudDoesNotFollowResolverRedirect(t *testing.T) {
 	}))
 	defer resolver.Close()
 
-	t.Setenv(envResolver, resolver.URL)
+	useTestResolver(t, resolver.URL)
 	t.Setenv(envToken, "workload-token")
 
 	_, err := Call(
@@ -59,7 +59,7 @@ func TestCallCloudRejectsUnreadableResponse(t *testing.T) {
 	}))
 	defer resolver.Close()
 
-	t.Setenv(envResolver, resolver.URL)
+	useTestResolver(t, resolver.URL)
 	t.Setenv(envToken, "workload-token")
 
 	res, err := Call(

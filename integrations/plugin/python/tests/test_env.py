@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from agentsecrets_plugin.env import (
+    DEFAULT_RESOLVER_URL,
     NEVER_FORWARD,
     build_child_env,
     find_binary,
@@ -30,7 +31,6 @@ class ChildEnvTests(unittest.TestCase):
                 "AGENTSECRETS_USE_CLOUD": "1",
                 "AGENTSECRETS_PLUGIN_MODE": "cloud",
                 "AGENTSECRETS_BINARY": "/bin/agentsecrets",
-                "AGENTSECRETS_CLOUD_RESOLVER_URL": "https://resolver.example",
                 "UNRELATED_SECRET": "nope",
             },
             clear=True,
@@ -57,6 +57,15 @@ class ChildEnvTests(unittest.TestCase):
 
 
 class ModeTests(unittest.TestCase):
+    def test_resolver_url_is_fixed_and_env_override_is_ignored(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"AGENTSECRETS_CLOUD_RESOLVER_URL": "https://resolver.example"},
+            clear=True,
+        ), mock.patch("agentsecrets_plugin.env.shutil.which", return_value=None):
+            config = resolve_mode(token="workload-token")
+        self.assertEqual(config.resolver_url, DEFAULT_RESOLVER_URL)
+
     def test_explicit_local_without_binary_fails(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
             "agentsecrets_plugin.env.shutil.which", return_value=None

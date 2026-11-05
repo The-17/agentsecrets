@@ -88,7 +88,6 @@ Everything the bridge reads from the environment. Nothing secret belongs in MCP 
 | `AS_AGENT_TOKEN` / `AGENTSECRETS_AGENT_TOKEN` (+`_FILE`) | Workload token = agent identity |
 | `AGENTSECRETS_AGENT_ID` | Display name for audit attribution |
 | `AGENTSECRETS_SESSION_TOKEN` | Local proxy session (only without the CLI) |
-| `AGENTSECRETS_CLOUD_RESOLVER_URL` | Cloud resolver base (has a sane default) |
 | `AGENTSECRETS_SERVER_URL` / `AGENTSECRETS_API_URL` | Control-plane base, e.g. self-hosted |
 | `AGENTSECRETS_PROJECT` / `AGENTSECRETS_WORKSPACE` | Session context hints (names) |
 | `AGENTSECRETS_ENV` | `development` \| `staging` \| `production` |
@@ -96,6 +95,10 @@ Everything the bridge reads from the environment. Nothing secret belongs in MCP 
 | `AGENTSECRETS_WORKSPACE_KEY` (+`_FILE`) | Base64 data key for headless encrypt/decrypt |
 | `AGENTSECRETS_EMAIL` | Login email (workspace creation) |
 | `AGENTSECRETS_HOME` | Override home dir (tests, containers) |
+
+The cloud resolver is fixed at `https://resolver.agentsecrets.tech`. There is
+no override; pointing the control plane at a self-hosted server does not change
+where resolution or billing happen.
 
 Credential lookup order, by design: explicit env → login sessions → legacy CLI session → static files last. Run `auth_status` anytime to see exactly which source is active.
 

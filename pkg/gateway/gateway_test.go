@@ -27,10 +27,23 @@ func isolateEnv(t *testing.T) {
 	tmp := t.TempDir()
 	config.HomeDirHook = func() (string, error) { return tmp, nil }
 	t.Cleanup(func() { config.HomeDirHook = oldHome })
-	for _, k := range []string{envUseCloud, envMode, envToken, envTokenFile, envResolver, envServerURL} {
+	for _, k := range []string{envUseCloud, envMode, envToken, envTokenFile, envServerURL} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
+	oldResolver := resolverBaseURL
+	resolverBaseURL = DefaultResolverURL
+	t.Cleanup(func() { resolverBaseURL = oldResolver })
+}
+
+// useTestResolver points Resolve at a local httptest server. It is the only
+// supported way to change the resolver host, and it is available to tests in
+// this package only, never to a user through configuration.
+func useTestResolver(t *testing.T, url string) {
+	t.Helper()
+	old := resolverBaseURL
+	resolverBaseURL = url
+	t.Cleanup(func() { resolverBaseURL = old })
 }
 
 func TestSelectPrecedence(t *testing.T) {
@@ -120,15 +133,16 @@ func TestResolverURL(t *testing.T) {
 		t.Errorf("default = %q, want %q", got, DefaultResolverURL)
 	}
 
-	t.Setenv(envResolver, "https://resolver.internal/")
-	if got := ResolverURL(); got != "https://resolver.internal" {
-		t.Errorf("override = %q, want the trailing slash trimmed", got)
+	// There is exactly one resolver. The removed env override must not be read,
+	// even when it is present in the process environment.
+	t.Setenv("AGENTSECRETS_CLOUD_RESOLVER_URL", "https://resolver.internal/")
+	if got := ResolverURL(); got != DefaultResolverURL {
+		t.Errorf("env override moved the resolver to %q; it must stay on %q", got, DefaultResolverURL)
 	}
 
 	// A self-hosted control plane must never move resolution off the official
 	// cloud resolver. Setting the control-plane URL used to derive a resolver
 	// host from it, which let a self-hosted deployment escape billing.
-	t.Setenv(envResolver, "")
 	t.Setenv(envServerURL, "https://self.example/api")
 	if got := ResolverURL(); got != DefaultResolverURL {
 		t.Errorf("self-hosted control plane moved the resolver to %q; it must stay on %q", got, DefaultResolverURL)
@@ -152,7 +166,7 @@ func TestCallCloudSendsHandlesAndNeverPlaintext(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status_code":200,"headers":{"Content-Type":"application/json"},"body":"{\"ok\":true}","redacted":false}`))
 	}))
 	defer srv.Close()
-	t.Setenv(envResolver, srv.URL)
+	useTestResolver(t, srv.URL)
 	t.Setenv(envToken, "workload-token")
 
 	res, err := Call(CallRequest{
@@ -228,7 +242,7 @@ func TestCallCloudSurfacesResolverErrors(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error_code":"domain_blocked","message":"Target host 'evil.example' is not permitted by workspace allowlist"}`))
 	}))
 	defer srv.Close()
-	t.Setenv(envResolver, srv.URL)
+	useTestResolver(t, srv.URL)
 	t.Setenv(envToken, "tok")
 
 	_, err := Call(CallRequest{TargetURL: "https://evil.example/x", Method: "GET"}, Selection{Mode: ModeCloud})
@@ -273,7 +287,7 @@ func TestLocalModeNeverCallsTheResolver(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	t.Setenv(envResolver, srv.URL)
+	useTestResolver(t, srv.URL)
 
 	got, err := SecretsForEnv(Selection{Mode: ModeLocal}, func() (map[string]string, error) {
 		return map[string]string{"LOCAL": "yes"}, nil

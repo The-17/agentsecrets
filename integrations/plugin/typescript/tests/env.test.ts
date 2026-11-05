@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   buildChildEnv,
+  DEFAULT_RESOLVER_URL,
   findBinary,
   NEVER_FORWARD,
   readToken,
@@ -43,7 +44,6 @@ function cleanModeEnv(): Record<string, string | undefined> {
     AGENTSECRETS_TOKEN: undefined,
     AGENTSECRETS_TOKEN_FILE: undefined,
     AGENTSECRETS_PLUGIN_MODE: undefined,
-    AGENTSECRETS_CLOUD_RESOLVER_URL: undefined,
   };
 }
 
@@ -59,7 +59,6 @@ test("child env keeps configuration and scrubs cloud secrets", () => {
       AGENTSECRETS_USE_CLOUD: "1",
       AGENTSECRETS_PLUGIN_MODE: "cloud",
       AGENTSECRETS_BINARY: "/bin/agentsecrets",
-      AGENTSECRETS_CLOUD_RESOLVER_URL: "https://resolver.example",
       UNRELATED_SECRET: "nope",
     },
     () => buildChildEnv(),
@@ -83,6 +82,18 @@ test("overrides cannot reintroduce never-forward keys", () => {
   assert.equal(env.AGENTSECRETS_TOKEN, undefined);
   assert.equal(env.AGENTSECRETS_USE_CLOUD, undefined);
   assert.equal(env.CUSTOM, "value");
+});
+
+test("resolver URL is fixed and the env override is ignored", () => {
+  const config = withEnv(
+    {
+      ...cleanModeEnv(),
+      AGENTSECRETS_CLOUD_RESOLVER_URL: "https://resolver.example",
+      AGENTSECRETS_TOKEN: "workload-token",
+    },
+    () => resolveMode(),
+  );
+  assert.equal(config.resolverUrl, DEFAULT_RESOLVER_URL);
 });
 
 test("explicit local mode without a binary fails", () => {

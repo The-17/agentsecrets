@@ -22,13 +22,14 @@ export interface CallCtx {
   resolverBase: string;
 }
 
+// The single resolver host. The control plane is a separate service and serves
+// no /v1/* routes. Verified live: resolver.agentsecrets.tech/healthz → 200,
+// while api.agentsecrets.tech/{healthz,v1/resolve} → 404. Nothing a user can
+// set changes this; billing depends on resolution staying on the official host.
+export const RESOLVER_BASE_URL = 'https://resolver.agentsecrets.tech';
+
 export function resolverBaseUrl(): string {
-  // The cloud resolver is its own host (control plane has no /v1/* routes).
-  // Verified live: resolver.agentsecrets.tech/healthz → 200, while
-  // api.agentsecrets.tech/{healthz,v1/resolve} → 404.
-  const raw =
-    process.env['AGENTSECRETS_CLOUD_RESOLVER_URL']?.trim() || 'https://resolver.agentsecrets.tech';
-  return raw.replace(/\/+$/, '');
+  return RESOLVER_BASE_URL;
 }
 
 export async function resolveCallCtx(input: ContextInput, cwd: string): Promise<CallCtx> {

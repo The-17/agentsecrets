@@ -10,6 +10,9 @@ from typing import Mapping, Optional
 
 from .errors import ConfigurationError
 
+# The single resolver host. There is no environment variable or config knob for
+# it: resolution and billing are a fixed official service. The transport takes a
+# URL argument only so tests can point at a local server.
 DEFAULT_RESOLVER_URL = "https://resolver.agentsecrets.tech"
 MODES = ("local", "cloud")
 
@@ -62,7 +65,6 @@ NEVER_FORWARD = (
     "AGENTSECRETS_SESSION_TOKEN",
     "AGENTSECRETS_PLUGIN_MODE",
     "AGENTSECRETS_BINARY",
-    "AGENTSECRETS_CLOUD_RESOLVER_URL",
 )
 
 
@@ -121,7 +123,7 @@ def resolve_mode(
 
     found_binary = find_binary(binary)
     found_token = read_token(token, token_file)
-    url = (resolver_url or os.environ.get("AGENTSECRETS_CLOUD_RESOLVER_URL") or DEFAULT_RESOLVER_URL).strip()
+    url = (resolver_url or DEFAULT_RESOLVER_URL).strip()
 
     if requested == "local":
         if not found_binary:

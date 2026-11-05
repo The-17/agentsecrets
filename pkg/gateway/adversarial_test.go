@@ -37,7 +37,7 @@ func TestAdversarialResolverRedirectChainNotFollowed(t *testing.T) {
 	}))
 	defer hop2.Close()
 
-	t.Setenv(envResolver, hop1.URL)
+	useTestResolver(t, hop1.URL)
 	t.Setenv(envToken, "workload-token")
 
 	if _, err := Call(CallRequest{TargetURL: "https://api.example.com/x", Method: "GET"}, Selection{Mode: ModeCloud}); err == nil {
@@ -55,7 +55,7 @@ func TestAdversarialResolverRedirectWithoutLocation(t *testing.T) {
 	}))
 	defer resolver.Close()
 
-	t.Setenv(envResolver, resolver.URL)
+	useTestResolver(t, resolver.URL)
 	t.Setenv(envToken, "workload-token")
 
 	if _, err := Call(CallRequest{TargetURL: "https://api.example.com/x", Method: "GET"}, Selection{Mode: ModeCloud}); err == nil {
@@ -72,7 +72,7 @@ func TestAdversarialResolverMissingStatusCodeRejected(t *testing.T) {
 	}))
 	defer resolver.Close()
 
-	t.Setenv(envResolver, resolver.URL)
+	useTestResolver(t, resolver.URL)
 	t.Setenv(envToken, "workload-token")
 
 	res, err := Call(CallRequest{TargetURL: "https://api.example.com/x", Method: "GET"}, Selection{Mode: ModeCloud})
@@ -90,7 +90,7 @@ func TestAdversarialResolverTypeConfusedStatusCodeRejected(t *testing.T) {
 	}))
 	defer resolver.Close()
 
-	t.Setenv(envResolver, resolver.URL)
+	useTestResolver(t, resolver.URL)
 	t.Setenv(envToken, "workload-token")
 
 	if _, err := Call(CallRequest{TargetURL: "https://api.example.com/x", Method: "GET"}, Selection{Mode: ModeCloud}); err == nil {
@@ -137,7 +137,7 @@ func TestAdversarialResolverUnreachableFailsClosed(t *testing.T) {
 	deadURL := dead.URL
 	dead.Close()
 
-	t.Setenv(envResolver, deadURL)
+	useTestResolver(t, deadURL)
 	t.Setenv(envToken, "workload-token")
 
 	res, err := Call(CallRequest{TargetURL: "https://api.example.com/x", Method: "GET"}, Selection{Mode: ModeCloud})
@@ -160,7 +160,7 @@ func TestAdversarialResolverHugeBodyIsBounded(t *testing.T) {
 	}))
 	defer resolver.Close()
 
-	t.Setenv(envResolver, resolver.URL)
+	useTestResolver(t, resolver.URL)
 	t.Setenv(envToken, "workload-token")
 
 	if _, err := Call(CallRequest{TargetURL: "https://api.example.com/x", Method: "GET"}, Selection{Mode: ModeCloud}); err == nil {

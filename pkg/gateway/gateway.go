@@ -46,9 +46,15 @@ const (
 	ModeCloud Mode = "cloud"
 )
 
-// DefaultResolverURL is the cloud resolver host. It is a separate service from
-// the control plane: api.agentsecrets.tech serves no /v1/* routes.
+// DefaultResolverURL is the single resolver host. It is a separate service from
+// the control plane: api.agentsecrets.tech serves no /v1/* routes. Nothing a
+// user can set changes it; the resolver is a fixed official service and billing
+// depends on that staying true.
 const DefaultResolverURL = "https://resolver.agentsecrets.tech"
+
+// resolverBaseURL is package-private so tests in this package can point Resolve
+// at an httptest server. It is not an environment variable or a config knob.
+var resolverBaseURL = DefaultResolverURL
 
 // Env vars that select a mode. They mirror the MCP bridge and the Python SDK so
 // one environment configures every surface.
@@ -57,7 +63,6 @@ const (
 	envMode       = "AGENTSECRETS_MODE"
 	envToken      = "AGENTSECRETS_TOKEN"
 	envTokenFile  = "AGENTSECRETS_TOKEN_FILE"
-	envResolver  = "AGENTSECRETS_CLOUD_RESOLVER_URL"
 	// envServerURL names a self-hosted control plane for the other surfaces.
 	// It must never influence the resolver: resolution and billing stay on the
 	// official cloud resolver regardless of where the control plane lives.
@@ -146,15 +151,10 @@ func TokenFromEnv() string {
 	return strings.TrimSpace(string(data))
 }
 
-// ResolverURL returns the resolver base URL. Resolution and billing always go
-// to the official cloud resolver; a self-hosted control plane never changes
-// where they go. envResolver is an explicit override and the only thing that
-// can point resolution at a different host.
+// ResolverURL returns the single official resolver host. A self-hosted control
+// plane and the environment cannot change it.
 func ResolverURL() string {
-	if v := strings.TrimSpace(os.Getenv(envResolver)); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-	return DefaultResolverURL
+	return resolverBaseURL
 }
 
 // ResolveError is a mode-specific failure the caller can surface verbatim. It

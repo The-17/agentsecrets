@@ -196,7 +196,10 @@ because the resolver contract cannot encode them. Use local mode for those.
 | `AGENTSECRETS_PROXY_PORT` | Local proxy port passed to the helper |
 | `AGENTSECRETS_TOKEN` | Cloud workload token |
 | `AGENTSECRETS_TOKEN_FILE` | File containing the cloud token; preferred |
-| `AGENTSECRETS_CLOUD_RESOLVER_URL` | Resolver base URL override |
+
+The cloud resolver is fixed at `https://resolver.agentsecrets.tech`. There is
+no override: a self-hosted control plane does not change where resolution or
+billing happen.
 
 ## Security model
 
