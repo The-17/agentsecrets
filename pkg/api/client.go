@@ -680,12 +680,32 @@ func FetchWorkloadEnv(ctx context.Context, serverURL, token, environment string)
 		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, decodeDetail(resp))
 	}
 
-	var envelope struct {
-		Data WorkloadEnvResponse `json:"data"`
+	// Bound the read: a hostile control plane must not be able to exhaust memory
+	// with an arbitrarily large response. Read one byte past the cap to detect it.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxWorkloadResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read workload response: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if int64(len(raw)) > maxWorkloadResponseBytes {
+		return nil, fmt.Errorf("workload response exceeds %d bytes; refusing to buffer it", maxWorkloadResponseBytes)
+	}
+
+	var envelope struct {
+		Data *WorkloadEnvResponse `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("failed to parse workload response: %w", err)
+	}
+	// C4: a 2xx without the documented {"data": ...} envelope is not a success.
+	// Treating it as one silently returned an empty environment for a malformed
+	// or hostile response.
+	if envelope.Data == nil {
+		return nil, fmt.Errorf("workload response is missing the data envelope")
 	}
 
 	return envelope.Data.Secrets, nil
 }
+
+// maxWorkloadResponseBytes caps how much of a workload-env response the client
+// will buffer, so a hostile control plane cannot exhaust memory with a huge body.
+const maxWorkloadResponseBytes = 8 << 20 // 8 MiB
