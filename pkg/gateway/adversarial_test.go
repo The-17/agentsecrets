@@ -98,6 +98,57 @@ func TestAdversarialResolverTypeConfusedStatusCodeRejected(t *testing.T) {
 	}
 }
 
+// A resolver outage must fail closed. If cloud mode ever fell back to local
+// resolution when the resolver was unreachable, an attacker who can block the
+// resolver (or just wait for an outage) would get requests served from the
+// keychain, bypassing the resolver's scope and allowlist enforcement.
+func TestAdversarialCloudOutageNeverFallsBackToLocal(t *testing.T) {
+	isolateEnv(t)
+
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	t.Setenv(envServerURL, deadURL)
+	t.Setenv(envToken, "workload-token")
+
+	localUsed := false
+	got, err := SecretsForEnv(Selection{Mode: ModeCloud}, func() (map[string]string, error) {
+		localUsed = true
+		return map[string]string{"STRIPE_KEY": "sk_local"}, nil
+	}, "")
+	if err == nil {
+		t.Fatalf("expected an error when the control plane is unreachable, got %v", got)
+	}
+	if localUsed {
+		t.Fatal("cloud mode fell back to local resolution during an outage: a downgrade bypasses the resolver trust boundary")
+	}
+	if len(got) != 0 {
+		t.Fatalf("cloud outage returned secrets (%v); it must return nothing", got)
+	}
+}
+
+// The same for the call path: an unreachable resolver is an error, never a
+// result, and never a redirect into another transport.
+func TestAdversarialResolverUnreachableFailsClosed(t *testing.T) {
+	isolateEnv(t)
+
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	t.Setenv(envResolver, deadURL)
+	t.Setenv(envToken, "workload-token")
+
+	res, err := Call(CallRequest{TargetURL: "https://api.example.com/x", Method: "GET"}, Selection{Mode: ModeCloud})
+	if err == nil {
+		t.Fatalf("expected an error when the resolver is unreachable, got %+v", res)
+	}
+	if res != nil {
+		t.Fatalf("unreachable resolver returned a result: %+v", res)
+	}
+}
+
 func TestAdversarialResolverHugeBodyIsBounded(t *testing.T) {
 	isolateEnv(t)
 	huge := strings.Repeat("A", 9<<20) // 9 MiB, over the 8 MiB cap
