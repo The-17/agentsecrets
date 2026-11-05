@@ -42,6 +42,22 @@ func TestAdversarialWorkloadEnvRedirectChainNotFollowed(t *testing.T) {
 	}
 }
 
+// An unreachable control plane must fail closed, not return an empty env that a
+// caller could mistake for "this project has no secrets".
+func TestAdversarialWorkloadEnvUnreachableFailsClosed(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	res, err := FetchWorkloadEnv(context.Background(), deadURL, "tok", "")
+	if err == nil {
+		t.Fatalf("expected an error when the control plane is unreachable, got %v", res)
+	}
+	if res != nil {
+		t.Fatalf("unreachable control plane returned secrets map: %v", res)
+	}
+}
+
 func TestAdversarialWorkloadEnvHugeBodyIsBounded(t *testing.T) {
 	huge := strings.Repeat("A", 9<<20)
 	payload, _ := json.Marshal(map[string]any{"data": map[string]any{"secrets": map[string]string{"PAD": huge}}})
