@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -270,6 +271,11 @@ type resolveResponse struct {
 // generous; the local path has its own 60s client timeout.
 const cloudTimeout = 60 * time.Second
 
+// maxResolverResponseBytes caps how much of a resolver response the CLI will
+// buffer. Upstream payloads larger than this are refused rather than read into
+// memory, so a hostile resolver cannot exhaust the client with a huge body.
+const maxResolverResponseBytes = 8 << 20 // 8 MiB
+
 // callCloud sends one request to the cloud resolver.
 func callCloud(req CallRequest) (*CallResult, error) {
 	token := strings.TrimSpace(req.AgentToken)
@@ -335,9 +341,26 @@ func callCloud(req CallRequest) (*CallResult, error) {
 		return nil, decodeResolverError(resp)
 	}
 
+	// Bound the read: a hostile resolver must not be able to exhaust memory with
+	// an arbitrarily large response. Read one byte past the cap to detect it.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResolverResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("cloud: failed to read resolver response: %w", err)
+	}
+	if int64(len(raw)) > maxResolverResponseBytes {
+		return nil, fmt.Errorf("cloud: resolver response exceeds %d bytes; refusing to buffer it", maxResolverResponseBytes)
+	}
+
 	var out resolveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("cloud: resolver returned an unreadable response: %w", err)
+	}
+
+	// C4: a response missing a valid status_code is an incomplete envelope, not a
+	// success. Without this a hostile resolver answering `{}` would be accepted
+	// as a status-0 call.
+	if out.StatusCode < 100 || out.StatusCode > 599 {
+		return nil, fmt.Errorf("cloud: resolver response is missing a valid status_code (got %d); refusing an incomplete envelope", out.StatusCode)
 	}
 
 	headers := make(map[string][]string, len(out.Headers))
