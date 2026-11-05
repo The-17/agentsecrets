@@ -125,10 +125,13 @@ func TestResolverURL(t *testing.T) {
 		t.Errorf("override = %q, want the trailing slash trimmed", got)
 	}
 
+	// A self-hosted control plane must never move resolution off the official
+	// cloud resolver. Setting the control-plane URL used to derive a resolver
+	// host from it, which let a self-hosted deployment escape billing.
 	t.Setenv(envResolver, "")
 	t.Setenv(envServerURL, "https://self.example/api")
-	if got := ResolverURL(); got != "https://self.example" {
-		t.Errorf("derived = %q, want the /api suffix stripped", got)
+	if got := ResolverURL(); got != DefaultResolverURL {
+		t.Errorf("self-hosted control plane moved the resolver to %q; it must stay on %q", got, DefaultResolverURL)
 	}
 }
 

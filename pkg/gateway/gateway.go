@@ -58,6 +58,9 @@ const (
 	envToken      = "AGENTSECRETS_TOKEN"
 	envTokenFile  = "AGENTSECRETS_TOKEN_FILE"
 	envResolver  = "AGENTSECRETS_CLOUD_RESOLVER_URL"
+	// envServerURL names a self-hosted control plane for the other surfaces.
+	// It must never influence the resolver: resolution and billing stay on the
+	// official cloud resolver regardless of where the control plane lives.
 	envServerURL = "AGENTSECRETS_SERVER_URL"
 )
 
@@ -143,17 +146,13 @@ func TokenFromEnv() string {
 	return strings.TrimSpace(string(data))
 }
 
-// ResolverURL returns the resolver base URL: env override, then a URL derived
-// from the configured server, then the default resolver.
+// ResolverURL returns the resolver base URL. Resolution and billing always go
+// to the official cloud resolver; a self-hosted control plane never changes
+// where they go. envResolver is an explicit override and the only thing that
+// can point resolution at a different host.
 func ResolverURL() string {
 	if v := strings.TrimSpace(os.Getenv(envResolver)); v != "" {
 		return strings.TrimRight(v, "/")
-	}
-	// A self-hosted deployment may serve resolution itself. Only derive a
-	// resolver host from an explicit server override; the default control plane
-	// does not serve /v1/*.
-	if v := strings.TrimSpace(os.Getenv(envServerURL)); v != "" {
-		return strings.TrimRight(strings.TrimSuffix(strings.TrimRight(v, "/"), "/api"), "/")
 	}
 	return DefaultResolverURL
 }
