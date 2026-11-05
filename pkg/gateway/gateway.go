@@ -274,7 +274,7 @@ const cloudTimeout = 60 * time.Second
 // maxResolverResponseBytes caps how much of a resolver response the CLI will
 // buffer. Upstream payloads larger than this are refused rather than read into
 // memory, so a hostile resolver cannot exhaust the client with a huge body.
-const maxResolverResponseBytes = 8 << 20 // 8 MiB
+const maxResolverResponseBytes = 12 << 20 // 12 MiB
 
 // callCloud sends one request to the cloud resolver.
 func callCloud(req CallRequest) (*CallResult, error) {

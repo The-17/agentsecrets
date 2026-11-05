@@ -15,6 +15,45 @@ import { localPayload, parseInjections, prepareRequest } from "./types.js";
 
 const TOKEN_PATTERN = /\bagt_[A-Za-z0-9._-]{8,}\b/g;
 
+/**
+ * Cap how much of a response the client will buffer. A hostile resolver must not
+ * exhaust memory with a huge body. Reads the stream and throws once it would
+ * exceed the cap (one byte of slack detects the overrun).
+ */
+export const MAX_RESPONSE_BYTES = 12 * 1024 * 1024; // 12 MiB
+
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const text = await response.text();
+    if (text.length > maxBytes) {
+      throw new TransportError(`cloud resolver response exceeds ${maxBytes} bytes; refusing to buffer it`);
+    }
+    return text;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new TransportError(`cloud resolver response exceeds ${maxBytes} bytes; refusing to buffer it`);
+      }
+      chunks.push(value);
+    }
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return new TextDecoder().decode(out);
+}
+
 function sanitize(text: string, token?: string): string {
   const withoutToken = token ? text.split(token).join("[REDACTED]") : text;
   return withoutToken.replace(TOKEN_PATTERN, "[REDACTED]");
@@ -214,7 +253,7 @@ export class CloudResolverTransport {
       throw new TransportError(`cloud resolver unreachable: ${sanitize(message, this.token)}`);
     }
 
-    const text = await response.text();
+    const text = await readCapped(response, MAX_RESPONSE_BYTES);
     if (!response.ok) {
       const detail = sanitize(readDetail(text), this.token);
       if (response.status === 401) {

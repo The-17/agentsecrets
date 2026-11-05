@@ -15,7 +15,7 @@ import {
   TransportError,
   UnsupportedInjection,
 } from "../src/errors.js";
-import { CloudResolverTransport, LocalHelperTransport, buildResolvePayload } from "../src/transports.js";
+import { CloudResolverTransport, LocalHelperTransport, MAX_RESPONSE_BYTES, buildResolvePayload } from "../src/transports.js";
 import { normalizeRequest } from "../src/types.js";
 
 const HELPER = `
@@ -359,4 +359,66 @@ test("cloud transport maps auth errors", async () => {
       errorType,
     );
   }
+});
+
+// A2 parity: a hostile resolver must not be able to exhaust client memory with
+// an arbitrarily large 2xx body, and an incomplete envelope (missing
+// status_code) is an error, not a success.
+const HUGE_BODY = "A".repeat(MAX_RESPONSE_BYTES + 1024);
+
+function cappedRequest(injections: Record<string, string> = { bearer: "KEY" }) {
+  return normalizeRequest({ url: "https://api.example.com", injections });
+}
+
+test("cloud transport refuses an oversized resolver body", async () => {
+  const fetchImpl = async (): Promise<Response> =>
+    new Response(JSON.stringify({ status_code: 200, headers: {}, body: HUGE_BODY }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const transport = new CloudResolverTransport({
+    token: "tok",
+    resolverUrl: "https://resolver.example",
+    fetchImpl,
+  });
+  await assert.rejects(transport.call(cappedRequest()), (error: unknown) => {
+    assert.ok(error instanceof TransportError);
+    assert.match(error.message, /exceeds/);
+    return true;
+  });
+});
+
+test("cloud transport refuses an envelope missing status_code", async () => {
+  const fetchImpl = async (): Promise<Response> =>
+    new Response(JSON.stringify({ headers: {}, body: "ok" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const transport = new CloudResolverTransport({
+    token: "tok",
+    resolverUrl: "https://resolver.example",
+    fetchImpl,
+  });
+  await assert.rejects(transport.call(cappedRequest()), (error: unknown) => {
+    assert.ok(error instanceof TransportError);
+    assert.match(error.message, /invalid result/);
+    return true;
+  });
+});
+
+test("cloud transport returns a well-formed result", async () => {
+  const fetchImpl = async (): Promise<Response> =>
+    new Response(JSON.stringify({ status_code: 201, headers: { "x-test": "1" }, body: '{"ok":true}' }), {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    });
+  const transport = new CloudResolverTransport({
+    token: "tok",
+    resolverUrl: "https://resolver.example",
+    fetchImpl,
+  });
+  const result = await transport.call(cappedRequest());
+  assert.equal(result.status_code, 201);
+  assert.equal(result.body, '{"ok":true}');
+  assert.equal(result.headers["x-test"], "1");
 });

@@ -20,6 +20,7 @@ from agentsecrets_plugin.errors import (
 from agentsecrets_plugin.transports import (
     CloudResolverTransport,
     LocalHelperTransport,
+    MAX_RESPONSE_BYTES,
     build_resolve_payload,
 )
 
@@ -264,16 +265,24 @@ class CloudResolverTransportTests(unittest.TestCase):
     def test_posts_handles_with_bearer_auth(self) -> None:
         captured = {}
 
+        body = json.dumps(
+            {
+                "status_code": 201,
+                "headers": {"x-request-id": "abc"},
+                "body": "created",
+                "redacted": True,
+            }
+        ).encode("utf-8")
+
         class Response:
-            def read(self) -> bytes:
-                return json.dumps(
-                    {
-                        "status_code": 201,
-                        "headers": {"x-request-id": "abc"},
-                        "body": "created",
-                        "redacted": True,
-                    }
-                ).encode("utf-8")
+            def __init__(self) -> None:
+                self._sent = False
+
+            def read(self, size=-1) -> bytes:  # noqa: ARG002
+                if self._sent:
+                    return b""
+                self._sent = True
+                return body
 
             def close(self) -> None:
                 pass
@@ -326,6 +335,24 @@ class CloudResolverTransportTests(unittest.TestCase):
                     transport.call(
                         CallRequest(url="https://api.example.com", injections={"bearer": "KEY"})
                     )
+
+    def test_refuses_oversized_body(self) -> None:
+        huge = b"A" * (MAX_RESPONSE_BYTES + 1024)
+
+        class OversizedResponse:
+            def read(self, size=-1) -> bytes:  # noqa: ARG002
+                return huge
+
+            def close(self) -> None:
+                pass
+
+        def opener(request, timeout):  # noqa: ARG001
+            return OversizedResponse()
+
+        transport = CloudResolverTransport("tok", resolver_url="https://resolver.example", opener=opener)
+        with self.assertRaises(TransportError) as ctx:
+            transport.call(CallRequest(url="https://api.example.com", injections={"bearer": "KEY"}))
+        self.assertIn("exceeds", str(ctx.exception))
 
 
 if __name__ == "__main__":

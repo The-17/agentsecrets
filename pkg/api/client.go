@@ -708,4 +708,4 @@ func FetchWorkloadEnv(ctx context.Context, serverURL, token, environment string)
 
 // maxWorkloadResponseBytes caps how much of a workload-env response the client
 // will buffer, so a hostile control plane cannot exhaust memory with a huge body.
-const maxWorkloadResponseBytes = 8 << 20 // 8 MiB
+const maxWorkloadResponseBytes = 12 << 20 // 12 MiB

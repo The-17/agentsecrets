@@ -59,6 +59,32 @@ def _user_agent() -> str:
     return f"agentsecrets-plugin/{version}"
 
 
+# Cap how much of a resolver response the client will buffer. A hostile resolver
+# must not exhaust memory with a huge body.
+MAX_RESPONSE_BYTES = 12 * 1024 * 1024  # 12 MiB
+
+
+def _read_capped(response: Any, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
+    """Read ``response`` into bytes, refusing anything over ``max_bytes``."""
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+            raise TransportError(
+                f"cloud resolver response exceeds {max_bytes} bytes; refusing to buffer it"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 _USER_AGENT = _user_agent()
 
 
@@ -243,7 +269,7 @@ class CloudResolverTransport:
         try:
             response = self._opener(http_request, timeout=self._timeout)
             try:
-                raw = response.read()
+                raw = _read_capped(response)
             finally:
                 close = getattr(response, "close", None)
                 if callable(close):
