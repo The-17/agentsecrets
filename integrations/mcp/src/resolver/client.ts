@@ -66,6 +66,51 @@ function rejectRedirect(status: number): void {
   }
 }
 
+/**
+ * Cap how much of a 2xx body the client will buffer. A hostile or buggy peer
+ * must not be able to exhaust memory with a huge body. Reads the stream and
+ * throws once it would exceed maxBytes (one byte of slack detects the overrun).
+ */
+export const MAX_RESPONSE_BYTES = 12 * 1024 * 1024; // 12 MiB
+
+async function readCapped(res: Response, maxBytes: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    // No stream (e.g. some test shims): fall back to a bounded text read.
+    const text = await res.text();
+    if (text.length > maxBytes) {
+      throw new ApiError(res.status, `response body exceeds ${maxBytes} bytes; refusing to buffer it`);
+    }
+    return text;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new ApiError(res.status, `response body exceeds ${maxBytes} bytes; refusing to buffer it`);
+      }
+      chunks.push(value);
+    }
+  }
+  return new TextDecoder().decode(concat(chunks));
+}
+
+function concat(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
 export interface ControlOptions {
   body?: unknown;
   urlParams?: Record<string, string> | undefined;
@@ -112,7 +157,7 @@ export async function controlCall(
     throw new ApiError(0, `network error contacting ${baseUrl}: ${e instanceof Error ? e.message : String(e)}`);
   }
   rejectRedirect(res.status);
-  const text = await res.text();
+  const text = await readCapped(res, MAX_RESPONSE_BYTES);
   if (res.status < 200 || res.status >= 300) {
     throw new ApiError(res.status, decodeError(res.status, text));
   }
@@ -182,7 +227,7 @@ export async function cloudResolve(
     throw new ApiError(0, `network error contacting cloud resolver: ${e instanceof Error ? e.message : String(e)}`);
   }
   rejectRedirect(res.status);
-  const text = await res.text();
+  const text = await readCapped(res, MAX_RESPONSE_BYTES);
   if (res.status < 200 || res.status >= 300) {
     throw new ApiError(res.status, decodeError(res.status, text));
   }
@@ -193,8 +238,15 @@ export async function cloudResolve(
     throw new ApiError(res.status, 'cloud resolver returned non-JSON success body');
   }
   const m = json as Record<string, unknown>;
+  // C4: an incomplete envelope (no valid status_code) is not a success. Falling
+  // back to res.status would accept a resolver answer that omitted status_code
+  // as a status-0 call. Require a number in the valid HTTP range.
+  const statusCode = m['status_code'];
+  if (typeof statusCode !== 'number' || !Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599) {
+    throw new ApiError(res.status, 'cloud resolver returned an incomplete envelope (missing a valid status_code)');
+  }
   return {
-    status_code: typeof m['status_code'] === 'number' ? m['status_code'] : res.status,
+    status_code: statusCode,
     headers: (m['headers'] as Record<string, string>) ?? {},
     body: typeof m['body'] === 'string' ? m['body'] : '',
     redacted: m['redacted'] === true,

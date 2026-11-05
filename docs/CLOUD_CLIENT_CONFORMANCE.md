@@ -1,7 +1,7 @@
 # Cloud client conformance
 
 Every client that talks to the control plane or the cloud resolver must obey the
-same invariants. There are five of them today, with the same trust boundary:
+same invariants. There are six of them today, with the same trust boundary:
 the server is untrusted at the transport layer. A response is data, never an
 instruction to change where the next request goes or what shape of payload to
 accept.
@@ -61,9 +61,24 @@ The client must only ever address the configured control-plane / resolver
 origin. A response that attempts to redirect or rewrite the target is covered by
 C1; an explicit request to an unexpected host is rejected at the call site.
 
+### C6. Bound the response body
+A hostile or buggy resolver must not be able to exhaust client memory with an
+arbitrarily large 2xx body. Every client reads through a 12 MiB cap and refuses
+anything larger. An incomplete envelope (missing `status_code` for the resolver,
+missing `{data}` for workload env) is an error, not a status-0 or empty success.
+
+- Go: `io.LimitReader` in `gateway.callCloud` and `api.FetchWorkloadEnv`, plus
+  `status_code` / `data`-envelope validation.
+- MCP TS: `readCapped` in `client.ts`, `status_code` validation in `cloudResolve`.
+- Plugin TS / Python: `readCapped` / `_read_capped` in their transports.
+
+Tests: Go `pkg/gateway/adversarial_test.go`, `pkg/api/adversarial_test.go`; MCP
+`tests/client.test.ts`; plugin-TS `tests/transports.test.ts`; plugin-Python
+`test_transports.py::test_refuses_oversized_body`.
+
 ## Adding a client
 
-A new client (another language binding, a new mode) must satisfy C1–C5 and add a
+A new client (another language binding, a new mode) must satisfy C1–C6 and add a
 test that fails before the invariant and passes after, in the same change. Drift
 here is a security regression, not a style nit.
 

@@ -4,7 +4,7 @@
 
 A unified enforcement pipeline that stores, injects, governs, and audits credentials without ever letting them enter the agent's context. Agents execute tasks by referencing a key name, and they never hold, see, or receive the raw value.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green)]() [![Go Version](https://img.shields.io/badge/Go-1.x-00ADD8)]() [![Stars](https://img.shields.io/github/stars/The-17/agentsecrets)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](https://github.com/The-17/agentsecrets/blob/main/LICENSE) [![Go Version](https://img.shields.io/badge/Go-1.x-00ADD8)](https://go.dev/) [![Stars](https://img.shields.io/github/stars/The-17/agentsecrets)](https://github.com/The-17/agentsecrets/stargazers)
 
 **[Website](https://agentsecrets.tech) · [Docs](https://agentsecrets.tech/docs) · [Engineering Publication](https://engineering.theseventeen.co/series/building-agentsecrets)**
 
@@ -151,7 +151,7 @@ The agent managed the entire workflow, and no credential value appeared at any s
 | [Encryption Model](https://agentsecrets.tech/docs/security/encryption) | X25519 key exchange, AES-256-GCM, Argon2id, OS keychain storage, and SHA-256 audit chaining |
 | [Account Vault](docs/vault.md) | Client-held vault key, recovery key, envelope policy, proof pinning, and the legacy migration window |
 | [Build on AgentSecrets](https://agentsecrets.tech/docs/sdk/overview) | Python SDK, zero-knowledge MCP template, and the JS/TS SDK (coming soon) |
-| [Full Command Reference]([https://agentsecrets.tech/docs](https://agentsecrets.tech/docs/cli/account)) | Every subcommand across account, workspace, project, environment, secrets, proxy, and audit |
+| [Full Command Reference](https://agentsecrets.tech/docs/cli/account) | Every subcommand across account, workspace, project, environment, secrets, proxy, and audit |
 
 ## Roadmap · Security · Contributing
 

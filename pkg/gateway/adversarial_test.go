@@ -151,7 +151,7 @@ func TestAdversarialResolverUnreachableFailsClosed(t *testing.T) {
 
 func TestAdversarialResolverHugeBodyIsBounded(t *testing.T) {
 	isolateEnv(t)
-	huge := strings.Repeat("A", 9<<20) // 9 MiB, over the 8 MiB cap
+	huge := strings.Repeat("A", 13<<20) // 13 MiB, over the 12 MiB cap
 	payload, _ := json.Marshal(map[string]any{"status_code": 200, "body": huge})
 	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

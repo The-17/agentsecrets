@@ -59,7 +59,7 @@ func TestAdversarialWorkloadEnvUnreachableFailsClosed(t *testing.T) {
 }
 
 func TestAdversarialWorkloadEnvHugeBodyIsBounded(t *testing.T) {
-	huge := strings.Repeat("A", 9<<20)
+	huge := strings.Repeat("A", 13<<20)
 	payload, _ := json.Marshal(map[string]any{"data": map[string]any{"secrets": map[string]string{"PAD": huge}}})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
