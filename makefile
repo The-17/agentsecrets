@@ -1,4 +1,4 @@
-.PHONY: help build envguard test run clean install fmt lint dev release build-mcp test-mcp clean-mcp
+.PHONY: help build envguard test run clean install fmt lint dev release build-mcp test-mcp clean-mcp wasm-check
 
 # Variables
 BINARY_NAME=agentsecrets
@@ -7,7 +7,9 @@ BUILD_DIR=bin
 GO=go
 GOFMT=gofmt
 GOLINT=golangci-lint
+NODE?=node
 CC?=cc
+WASM_OUT?=/tmp/agentsecrets-opaque.wasm
 
 # Host OS and Go arch, used to pick the right env-guard interposer to build.
 UNAME_S := $(shell uname -s 2>/dev/null)
@@ -24,6 +26,7 @@ help:
 	@echo "  test        Run all tests"
 	@echo "  build-mcp   Build the TypeScript MCP bridge (integrations/mcp)"
 	@echo "  test-mcp    Typecheck + unit/integration/wire tests for the MCP bridge"
+	@echo "  wasm-check  Build the js/wasm OPAQUE client and run its self-check"
 	@echo "  run         Build and run the CLI"
 	@echo "  clean       Remove build artifacts"
 	@echo "  install     Install binary to system"
@@ -199,6 +202,19 @@ clean-mcp:
 	@echo "Cleaning MCP bridge..."
 	@rm -rf integrations/mcp/dist integrations/mcp/dist-tests integrations/mcp/node_modules
 	@echo "✓ Cleaned"
+
+# Browser OPAQUE parity. Builds the same js/wasm module the web console ships
+# and drives it under Node, proving the exports, fresh randomness, single-use
+# handles, failure modes, and the credential-id derivation that the CLI uses.
+# The two live-server harnesses (opaque-wasm-server.mjs / -lifecycle.mjs) take
+# a base URL and are run separately against a server with an OPAQUE sidecar.
+wasm-check:
+	@echo "Building js/wasm OPAQUE client..."
+	GOOS=js GOARCH=wasm $(GO) build -o $(WASM_OUT) ./cmd/wasmopaque/
+	@WASM_EXEC="$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js"; \
+	  if [ ! -f "$$WASM_EXEC" ]; then WASM_EXEC="$$($(GO) env GOROOT)/misc/wasm/wasm_exec.js"; fi; \
+	  $(NODE) scripts/opaque-wasm-check.mjs $(WASM_OUT) "$$WASM_EXEC"
+	@echo "✓ js/wasm OPAQUE self-check passed"
 
 # Quick checks before committing
 pre-commit: fmt test lint

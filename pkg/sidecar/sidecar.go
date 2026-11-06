@@ -345,16 +345,20 @@ func (s *Sidecar) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 // Mux returns the sidecar's routes. Separated from the listener so the same
-// handler can be served from a loopback binary or a serverless function.
+// handler can be served from a loopback binary or a serverless function. The
+// /v1 routes are paced before the bearer-token check on both. Keeping the
+// limiter here, rather than in the listener, means there is one implementation
+// and the serverless path cannot silently opt out of it.
 func (s *Sidecar) Mux() *http.ServeMux {
+	limiter := defaultRateLimiter()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("/v1/register/response", s.auth(s.handleRegisterResponse))
-	mux.Handle("/v1/register/finish", s.auth(s.handleRegisterFinish))
-	mux.Handle("/v1/login/start", s.auth(s.handleLoginStart))
-	mux.Handle("/v1/login/finish", s.auth(s.handleLoginFinish))
+	mux.Handle("/v1/register/response", limiter.pace(s.auth(s.handleRegisterResponse)))
+	mux.Handle("/v1/register/finish", limiter.pace(s.auth(s.handleRegisterFinish)))
+	mux.Handle("/v1/login/start", limiter.pace(s.auth(s.handleLoginStart)))
+	mux.Handle("/v1/login/finish", limiter.pace(s.auth(s.handleLoginFinish)))
 	return mux
 }
