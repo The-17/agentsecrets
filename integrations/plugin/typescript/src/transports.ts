@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-import { buildChildEnv } from "./env.js";
+import { buildChildEnv, DEFAULT_RESOLVER_URL } from "./env.js";
 import {
   AuthenticationError,
   AuthorizationError,
@@ -227,7 +227,10 @@ export class CloudResolverTransport {
 
   constructor(options: CloudResolverOptions) {
     this.token = options.token;
-    this.resolverUrl = (options.resolverUrl ?? "https://resolver.agentsecrets.tech").replace(/\/+$/, "");
+    // DEFAULT_RESOLVER_URL is the single guarded source of the resolver host.
+    // A literal here would be a second source that no test pins, so a host
+    // change in env.ts would silently leave this transport on the old host.
+    this.resolverUrl = (options.resolverUrl ?? DEFAULT_RESOLVER_URL).replace(/\/+$/, "");
     this.timeoutMs = options.timeoutMs ?? 60_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }

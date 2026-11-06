@@ -13,7 +13,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _package_version
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from .env import build_child_env
+from .env import DEFAULT_RESOLVER_URL, build_child_env
 from .errors import (
     AuthenticationError,
     AuthorizationError,
@@ -244,7 +244,11 @@ class CloudResolverTransport:
         self,
         token: str,
         *,
-        resolver_url: str = "https://resolver.agentsecrets.tech",
+        # DEFAULT_RESOLVER_URL is the single guarded source of the resolver
+        # host. A literal here would be a second source that no test pins, so
+        # a host change in env.py would silently leave this transport on the
+        # old host.
+        resolver_url: str = DEFAULT_RESOLVER_URL,
         timeout: float = 60.0,
         opener: Optional[Callable[..., Any]] = None,
     ) -> None:
