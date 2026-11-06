@@ -113,6 +113,21 @@ func TestSelectPrecedence(t *testing.T) {
 		}
 	})
 
+	t.Run("alias token alone does not auto-select cloud", func(t *testing.T) {
+		// 'agent register' tells users to export AS_AGENT_TOKEN. That name is
+		// also a standing local-attribution variable for the proxy, so it must
+		// not silently pick cloud the way AGENTSECRETS_TOKEN does; the user
+		// chooses cloud explicitly (mode cloud / AGENTSECRETS_USE_CLOUD).
+		t.Setenv("AS_AGENT_TOKEN", "agent-token")
+		sel, err := Select("")
+		if err != nil {
+			t.Fatalf("Select: %v", err)
+		}
+		if sel.Mode != ModeLocal {
+			t.Errorf("mode = %q, want local: the AS_AGENT_TOKEN alias must not auto-select cloud", sel.Mode)
+		}
+	})
+
 	t.Run("invalid flag is rejected", func(t *testing.T) {
 		if _, err := Select("hybrid"); err == nil {
 			t.Fatal("expected an error for an unknown mode")
@@ -123,6 +138,65 @@ func TestSelectPrecedence(t *testing.T) {
 		t.Setenv(envMode, "hybrid")
 		if _, err := Select(""); err == nil {
 			t.Fatal("expected an error for an invalid AGENTSECRETS_MODE")
+		}
+	})
+}
+
+// TestTokenFromEnv locks the workload-token lookup the CLI documents in its own
+// errors: canonical names first, then the alias names 'agent register' prints,
+// matching the MCP bridge's workload-credential chain.
+func TestTokenFromEnv(t *testing.T) {
+	isolateEnv(t)
+
+	t.Run("AS_AGENT_TOKEN alias is read", func(t *testing.T) {
+		t.Setenv("AS_AGENT_TOKEN", "register-told-me")
+		if got := TokenFromEnv(); got != "register-told-me" {
+			t.Errorf("token = %q, want the alias read", got)
+		}
+	})
+
+	t.Run("AGENTSECRETS_AGENT_TOKEN alias is read", func(t *testing.T) {
+		t.Setenv("AGENTSECRETS_AGENT_TOKEN", "agent-alt")
+		if got := TokenFromEnv(); got != "agent-alt" {
+			t.Errorf("token = %q, want the alias read", got)
+		}
+	})
+
+	t.Run("AGENTSECRETS_AGENT_TOKEN_FILE is read", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "agent-token")
+		if err := os.WriteFile(path, []byte("agent-file-token\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AGENTSECRETS_AGENT_TOKEN_FILE", path)
+		if got := TokenFromEnv(); got != "agent-file-token" {
+			t.Errorf("token = %q, want the trimmed file contents", got)
+		}
+	})
+
+	t.Run("CANONICAL AGENTSECRETS_TOKEN outranks the aliases", func(t *testing.T) {
+		t.Setenv(envToken, "canonical")
+		t.Setenv("AS_AGENT_TOKEN", "alias")
+		t.Setenv("AGENTSECRETS_AGENT_TOKEN", "alt")
+		if got := TokenFromEnv(); got != "canonical" {
+			t.Errorf("token = %q, want the canonical name to win", got)
+		}
+	})
+
+	t.Run("AGENTSECRETS_TOKEN_FILE outranks the aliases", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(path, []byte("canonical-file\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(envTokenFile, path)
+		t.Setenv("AS_AGENT_TOKEN", "alias")
+		if got := TokenFromEnv(); got != "canonical-file" {
+			t.Errorf("token = %q, want the canonical file to win", got)
+		}
+	})
+
+	t.Run("empty everywhere means empty", func(t *testing.T) {
+		if got := TokenFromEnv(); got != "" {
+			t.Errorf("token = %q, want empty", got)
 		}
 	})
 }

@@ -48,7 +48,7 @@ func runMode(cmd *cobra.Command, args []string) error {
 		ui.StatusRow("Selected by:", selection.Source)
 		ui.StatusRow("Saved mode:", stored)
 		if selection.Mode == gateway.ModeCloud && gateway.TokenFromEnv() == "" {
-			ui.Warning("Cloud mode is selected but no workload token is set. Set AGENTSECRETS_TOKEN or AGENTSECRETS_TOKEN_FILE.")
+			ui.Warning("Cloud mode is selected but no workload token is set. Set AGENTSECRETS_TOKEN or AS_AGENT_TOKEN.")
 		}
 		return nil
 	}
@@ -62,7 +62,7 @@ func runMode(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Saved mode: " + mode)
 	if mode == string(gateway.ModeCloud) && gateway.TokenFromEnv() == "" {
-		ui.Warning("No workload token is set yet. Cloud resolution needs AGENTSECRETS_TOKEN or AGENTSECRETS_TOKEN_FILE.")
+		ui.Warning("No workload token is set yet. Cloud resolution needs AGENTSECRETS_TOKEN or AS_AGENT_TOKEN.")
 	}
 	return nil
 }

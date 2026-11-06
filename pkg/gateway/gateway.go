@@ -59,14 +59,22 @@ var resolverBaseURL = DefaultResolverURL
 // Env vars that select a mode. They mirror the MCP bridge and the Python SDK so
 // one environment configures every surface.
 const (
-	envUseCloud   = "AGENTSECRETS_USE_CLOUD"
-	envMode       = "AGENTSECRETS_MODE"
-	envToken      = "AGENTSECRETS_TOKEN"
-	envTokenFile  = "AGENTSECRETS_TOKEN_FILE"
+	envUseCloud  = "AGENTSECRETS_USE_CLOUD"
+	envMode      = "AGENTSECRETS_MODE"
+	envToken     = "AGENTSECRETS_TOKEN"
+	envTokenFile = "AGENTSECRETS_TOKEN_FILE"
 	// envServerURL names a self-hosted control plane for the other surfaces.
 	// It must never influence the resolver: resolution and billing stay on the
 	// official cloud resolver regardless of where the control plane lives.
 	envServerURL = "AGENTSECRETS_SERVER_URL"
+
+	// What 'agent register' tells users to export. The MCP bridge already
+	// accepts these as the workload credential; the local proxy uses
+	// AS_AGENT_TOKEN for agent attribution. They supplement, never outrank,
+	// the canonical AGENTSECRETS_TOKEN names.
+	envAgentToken     = "AS_AGENT_TOKEN"
+	envAgentTokenAlt  = "AGENTSECRETS_AGENT_TOKEN"
+	envAgentTokenFile = "AGENTSECRETS_AGENT_TOKEN_FILE"
 )
 
 // Selection records the resolved mode and why it won. The reason is shown in
@@ -125,22 +133,47 @@ func Select(flag string) (Selection, error) {
 		return Selection{Mode: Mode(stored), Source: "config"}, nil
 	}
 
-	if TokenFromEnv() != "" {
+	// Auto-detecting cloud from the environment stays on the canonical
+	// AGENTSECRETS_TOKEN names only. The AS_AGENT_TOKEN alias is a legitimate
+	// standing part of a local-only setup (it drives agent attribution in the
+	// proxy), so treating it as a cloud selector would silently move those
+	// commands onto the billed resolver. A user who wants cloud with only the
+	// alias exported picks it explicitly (mode cloud, AGENTSECRETS_USE_CLOUD).
+	if strings.TrimSpace(os.Getenv(envToken)) != "" || tokenFromFile(envTokenFile) != "" {
 		return Selection{Mode: ModeCloud, Source: envToken}, nil
 	}
 
 	return Selection{Mode: ModeLocal, Source: "default"}, nil
 }
 
-// TokenFromEnv returns the workload token supplied by the environment, reading
-// AGENTSECRETS_TOKEN and then the file named by AGENTSECRETS_TOKEN_FILE. The
-// file indirection exists so a token never has to sit in a process listing or
-// a client config.
+// TokenFromEnv returns the workload token supplied by the environment: the
+// canonical AGENTSECRETS_TOKEN, then the file named by AGENTSECRETS_TOKEN_FILE,
+// then the alias names 'agent register' prints (AS_AGENT_TOKEN,
+// AGENTSECRETS_AGENT_TOKEN, and the file named by AGENTSECRETS_AGENT_TOKEN_FILE).
+// The alias order mirrors the MCP bridge's workload-credential chain. The file
+// indirection exists so a token never has to sit in a process listing or a
+// client config.
 func TokenFromEnv() string {
 	if tok := strings.TrimSpace(os.Getenv(envToken)); tok != "" {
 		return tok
 	}
-	path := strings.TrimSpace(os.Getenv(envTokenFile))
+	if tok := tokenFromFile(envTokenFile); tok != "" {
+		return tok
+	}
+	if tok := strings.TrimSpace(os.Getenv(envAgentToken)); tok != "" {
+		return tok
+	}
+	if tok := strings.TrimSpace(os.Getenv(envAgentTokenAlt)); tok != "" {
+		return tok
+	}
+	return tokenFromFile(envAgentTokenFile)
+}
+
+// tokenFromFile trims the contents of the file the variable names. Empty on a
+// missing variable or unreadable file: a resolution failure for an explicitly
+// broken path is surfaced by the caller's own error, not guessed around here.
+func tokenFromFile(fileEnv string) string {
+	path := strings.TrimSpace(os.Getenv(fileEnv))
 	if path == "" {
 		return ""
 	}
@@ -285,7 +318,7 @@ func callCloud(req CallRequest) (*CallResult, error) {
 		return nil, &ResolveError{
 			Mode: ModeCloud,
 			Msg:  "cloud resolution needs a workload token, and none was provided",
-			Err:  fmt.Errorf("set AGENTSECRETS_TOKEN (or AGENTSECRETS_TOKEN_FILE), or mint one with 'agentsecrets agent token issue'"),
+			Err:  fmt.Errorf("set AGENTSECRETS_TOKEN (or AS_AGENT_TOKEN), or mint one with 'agentsecrets agent token issue'"),
 		}
 	}
 
@@ -585,7 +618,7 @@ func SecretsForEnv(sel Selection, local func() (map[string]string, error), envir
 			return nil, &ResolveError{
 				Mode: ModeCloud,
 				Msg:  "cloud resolution needs a workload token, and none was provided",
-				Err:  fmt.Errorf("set AGENTSECRETS_TOKEN (or AGENTSECRETS_TOKEN_FILE)"),
+				Err:  fmt.Errorf("set AGENTSECRETS_TOKEN (or AS_AGENT_TOKEN)"),
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
