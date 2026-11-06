@@ -10,6 +10,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/agents"
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/errors"
+	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -122,7 +123,7 @@ var agentRegisterCmd = &cobra.Command{
 		}
 
 		fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
-		fmt.Printf("To use it: export AS_AGENT_TOKEN=%s\n", resp.Token)
+		fmt.Printf("To use it: export %s=%s\n", gateway.WorkloadTokenEnv, resp.Token)
 
 		var storeInKeychain bool
 		if cmd.Flags().Changed("save-token") {

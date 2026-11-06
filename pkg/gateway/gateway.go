@@ -56,22 +56,30 @@ const DefaultResolverURL = "https://resolver.agentsecrets.tech"
 // at an httptest server. It is not an environment variable or a config knob.
 var resolverBaseURL = DefaultResolverURL
 
+// WorkloadTokenEnv is the single canonical name for the workload credential.
+// Every surface that prints or reads a token instruction uses this constant,
+// so `agent register` cannot drift from the gateway again. The legacy aliases
+// below remain accepted for compatibility but are never advertised as the
+// primary name.
+const WorkloadTokenEnv = "AGENTSECRETS_TOKEN"
+
 // Env vars that select a mode. They mirror the MCP bridge and the Python SDK so
 // one environment configures every surface.
 const (
 	envUseCloud  = "AGENTSECRETS_USE_CLOUD"
 	envMode      = "AGENTSECRETS_MODE"
-	envToken     = "AGENTSECRETS_TOKEN"
+	envToken     = WorkloadTokenEnv
 	envTokenFile = "AGENTSECRETS_TOKEN_FILE"
 	// envServerURL names a self-hosted control plane for the other surfaces.
 	// It must never influence the resolver: resolution and billing stay on the
 	// official cloud resolver regardless of where the control plane lives.
 	envServerURL = "AGENTSECRETS_SERVER_URL"
 
-	// What 'agent register' tells users to export. The MCP bridge already
-	// accepts these as the workload credential; the local proxy uses
-	// AS_AGENT_TOKEN for agent attribution. They supplement, never outrank,
-	// the canonical AGENTSECRETS_TOKEN names.
+	// Legacy workload-credential names accepted for compatibility. The local
+	// proxy uses AS_AGENT_TOKEN for agent attribution, so it is also a
+	// legitimate local-only variable. They supplement, never outrank, the
+	// canonical AGENTSECRETS_TOKEN names, and only the canonical names select
+	// cloud mode automatically.
 	envAgentToken     = "AS_AGENT_TOKEN"
 	envAgentTokenAlt  = "AGENTSECRETS_AGENT_TOKEN"
 	envAgentTokenFile = "AGENTSECRETS_AGENT_TOKEN_FILE"
@@ -88,15 +96,20 @@ type Selection struct {
 //
 // Precedence, highest first:
 //
-//  1. an explicit flag (--cloud / --local)
+//  1. an explicit flag (--cloud / --local), a single-request override
 //  2. AGENTSECRETS_USE_CLOUD / AGENTSECRETS_MODE
-//  3. the persisted preference (agentsecrets mode cloud|local)
-//  4. a workload token in the environment, which only makes sense in cloud
-//  5. local
+//  3. the project's mode (.agentsecrets/project.json)
+//  4. the persisted global preference (agentsecrets mode cloud|local)
+//  5. a workload token in the environment, which only makes sense in cloud
+//  6. local
 //
 // An explicit "local" choice outranks a token in the environment. Otherwise a
 // stray AGENTSECRETS_TOKEN would silently move every command onto a billed
 // cloud path after the user asked for local.
+//
+// Project mode sits above the global preference so one project can run in
+// cloud while the rest of the workspace stays local. It sits below env vars so
+// a container can override a project's checked-in choice without editing it.
 func Select(flag string) (Selection, error) {
 	switch flag {
 	case string(ModeCloud):
@@ -129,6 +142,10 @@ func Select(flag string) (Selection, error) {
 		}
 	}
 
+	if stored := config.GetProjectMode(); stored != "" {
+		return Selection{Mode: Mode(stored), Source: "project config"}, nil
+	}
+
 	if stored := config.GetDefaultMode(); stored != "" {
 		return Selection{Mode: Mode(stored), Source: "config"}, nil
 	}
@@ -148,11 +165,10 @@ func Select(flag string) (Selection, error) {
 
 // TokenFromEnv returns the workload token supplied by the environment: the
 // canonical AGENTSECRETS_TOKEN, then the file named by AGENTSECRETS_TOKEN_FILE,
-// then the alias names 'agent register' prints (AS_AGENT_TOKEN,
-// AGENTSECRETS_AGENT_TOKEN, and the file named by AGENTSECRETS_AGENT_TOKEN_FILE).
-// The alias order mirrors the MCP bridge's workload-credential chain. The file
-// indirection exists so a token never has to sit in a process listing or a
-// client config.
+// then the legacy aliases (AS_AGENT_TOKEN, AGENTSECRETS_AGENT_TOKEN, and the
+// file named by AGENTSECRETS_AGENT_TOKEN_FILE). The alias order mirrors the MCP
+// bridge's workload-credential chain. The file indirection exists so a token
+// never has to sit in a process listing or a client config.
 func TokenFromEnv() string {
 	if tok := strings.TrimSpace(os.Getenv(envToken)); tok != "" {
 		return tok

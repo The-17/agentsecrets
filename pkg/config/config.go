@@ -143,6 +143,11 @@ type ProjectConfig struct {
 	LastPull      string `json:"last_pull"`
 	LastPush      string `json:"last_push"`
 	StorageMode   int    `json:"storage_mode"`
+	// Mode is this project's credential resolution choice ("local" or
+	// "cloud"). Empty means inherit the global choice. A project-level mode
+	// outranks the global one but is outranked by a flag or an env var, so one
+	// project can run in cloud while the rest of the workspace stays local.
+	Mode string `json:"mode,omitempty"`
 }
 
 // ServerTarget describes the resolved server and its configuration source.
@@ -577,7 +582,10 @@ func LoadProjectConfig() (*ProjectConfig, error) {
 	cachedProjectRoot = root
 	cachedProjectConfigMu.Unlock()
 
-	return &config, nil
+	// Hand back a copy, never the cached pointer. A caller that writes a field
+	// (SetProjectMode does) would otherwise mutate the cache in place.
+	cfg := config
+	return &cfg, nil
 }
 
 // SaveProjectConfig writes .agentsecrets/project.json to the nearest project root.
@@ -591,6 +599,15 @@ func SaveProjectConfig(config *ProjectConfig) error {
 		root = "."
 	}
 
+	projectFile := filepath.Join(root, ".agentsecrets", "project.json")
+	if err := writeJSON(projectFile, config, 0644); err != nil {
+		return err
+	}
+
+	// Cache only after the write succeeded. A failed save must not leave the
+	// in-memory config describing a state that never reached disk, because
+	// stored fields (mode, project_id) drive routing and resolution decisions
+	// for the rest of this process.
 	cachedProjectConfigMu.Lock()
 	if config != nil {
 		cfg := *config
@@ -601,8 +618,7 @@ func SaveProjectConfig(config *ProjectConfig) error {
 	}
 	cachedProjectConfigMu.Unlock()
 
-	projectFile := filepath.Join(root, ".agentsecrets", "project.json")
-	return writeJSON(projectFile, config, 0644)
+	return nil
 }
 
 // --- Helper functions ---
@@ -1045,6 +1061,39 @@ func SetDefaultMode(mode string) error {
 	}
 	c.DefaultMode = mode
 	return SaveGlobalConfig(c)
+}
+
+// GetProjectMode returns the mode persisted in .agentsecrets/project.json, or
+// "" when the project has not chosen one. An unreadable or absent project
+// config is not an error: a command outside a project simply has no
+// project-level choice, and Select falls through to the global preference.
+// Values other than "local" and "cloud" are ignored so a corrupt file cannot
+// force an unknown mode into the router.
+func GetProjectMode() string {
+	pc, err := LoadProjectConfig()
+	if err != nil || pc == nil {
+		return ""
+	}
+	if pc.Mode == "cloud" || pc.Mode == "local" {
+		return pc.Mode
+	}
+	return ""
+}
+
+// SetProjectMode persists the mode for the current project. It rejects values
+// other than "local" and "cloud" so a typo cannot silently fall back, and it
+// fails loudly when there is no project to write to rather than creating a
+// stray config file.
+func SetProjectMode(mode string) error {
+	if mode != "local" && mode != "cloud" {
+		return fmt.Errorf("mode must be %q or %q, got %q", "local", "cloud", mode)
+	}
+	pc, err := LoadProjectConfig()
+	if err != nil {
+		return err
+	}
+	pc.Mode = mode
+	return SaveProjectConfig(pc)
 }
 
 // --- Environment Resolution ---

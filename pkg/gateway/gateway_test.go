@@ -27,13 +27,37 @@ func isolateEnv(t *testing.T) {
 	tmp := t.TempDir()
 	config.HomeDirHook = func() (string, error) { return tmp, nil }
 	t.Cleanup(func() { config.HomeDirHook = oldHome })
-	for _, k := range []string{envUseCloud, envMode, envToken, envTokenFile, envServerURL} {
+	for _, k := range []string{envUseCloud, envMode, envToken, envTokenFile, envServerURL, config.ProjectDirEnv,
+		"AS_AGENT_TOKEN", "AGENTSECRETS_AGENT_TOKEN", "AGENTSECRETS_AGENT_TOKEN_FILE"} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
+	config.InvalidateProjectCache()
+	t.Cleanup(config.InvalidateProjectCache)
 	oldResolver := resolverBaseURL
 	resolverBaseURL = DefaultResolverURL
 	t.Cleanup(func() { resolverBaseURL = oldResolver })
+}
+
+// useProjectMode pins project resolution to a temporary project carrying the
+// given mode. An empty mode writes no mode key, which models a project that has
+// not made a choice.
+func useProjectMode(t *testing.T, mode string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agentsecrets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"project_id":"p-1"}`
+	if mode != "" {
+		body = `{"project_id":"p-1","mode":"` + mode + `"}`
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".agentsecrets", "project.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.ProjectDirEnv, dir)
+	config.InvalidateProjectCache()
+	t.Cleanup(config.InvalidateProjectCache)
 }
 
 // useTestResolver points Resolve at a local httptest server. It is the only
@@ -142,9 +166,92 @@ func TestSelectPrecedence(t *testing.T) {
 	})
 }
 
+// TestSelectProjectMode pins the project-level override. A project mode is a
+// persisted choice for that project only: it outranks the global preference and
+// the token fallback, but a flag or an env var still wins so a container can
+// override a checked-in choice without editing the repo.
+func TestSelectProjectMode(t *testing.T) {
+	t.Run("project mode outranks global mode", func(t *testing.T) {
+		isolateEnv(t)
+		if err := config.SetDefaultMode("local"); err != nil {
+			t.Fatal(err)
+		}
+		useProjectMode(t, "cloud")
+		sel, err := Select("")
+		if err != nil {
+			t.Fatalf("Select: %v", err)
+		}
+		if sel.Mode != ModeCloud || sel.Source != "project config" {
+			t.Errorf("got %q/%q, want cloud/project config", sel.Mode, sel.Source)
+		}
+	})
+
+	t.Run("project mode outranks a token", func(t *testing.T) {
+		isolateEnv(t)
+		useProjectMode(t, "local")
+		t.Setenv(envToken, "workload-token")
+		sel, err := Select("")
+		if err != nil {
+			t.Fatalf("Select: %v", err)
+		}
+		if sel.Mode != ModeLocal || sel.Source != "project config" {
+			t.Errorf("got %q/%q, want local/project config", sel.Mode, sel.Source)
+		}
+	})
+
+	t.Run("env mode outranks project mode", func(t *testing.T) {
+		isolateEnv(t)
+		useProjectMode(t, "local")
+		t.Setenv(envMode, "cloud")
+		sel, err := Select("")
+		if err != nil {
+			t.Fatalf("Select: %v", err)
+		}
+		if sel.Mode != ModeCloud || sel.Source != envMode {
+			t.Errorf("got %q/%q, want cloud/%s", sel.Mode, sel.Source, envMode)
+		}
+	})
+
+	t.Run("flag outranks project mode", func(t *testing.T) {
+		isolateEnv(t)
+		useProjectMode(t, "cloud")
+		sel, err := Select("local")
+		if err != nil {
+			t.Fatalf("Select: %v", err)
+		}
+		if sel.Mode != ModeLocal || sel.Source != "flag" {
+			t.Errorf("got %q/%q, want local/flag", sel.Mode, sel.Source)
+		}
+	})
+
+	t.Run("unset project mode falls through", func(t *testing.T) {
+		isolateEnv(t)
+		useProjectMode(t, "")
+		sel, err := Select("")
+		if err != nil {
+			t.Fatalf("Select: %v", err)
+		}
+		if sel.Mode != ModeLocal || sel.Source != "default" {
+			t.Errorf("got %q/%q, want local/default", sel.Mode, sel.Source)
+		}
+	})
+
+	t.Run("corrupt project mode is ignored", func(t *testing.T) {
+		isolateEnv(t)
+		useProjectMode(t, "hybrid")
+		sel, err := Select("")
+		if err != nil {
+			t.Fatalf("Select: %v", err)
+		}
+		if sel.Mode != ModeLocal {
+			t.Errorf("mode = %q, want local: a corrupt project mode must not reach the router", sel.Mode)
+		}
+	})
+}
+
 // TestTokenFromEnv locks the workload-token lookup the CLI documents in its own
-// errors: canonical names first, then the alias names 'agent register' prints,
-// matching the MCP bridge's workload-credential chain.
+// errors: canonical names first, then legacy aliases, matching the MCP bridge's
+// workload-credential chain.
 func TestTokenFromEnv(t *testing.T) {
 	isolateEnv(t)
 
