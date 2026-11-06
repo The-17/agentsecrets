@@ -121,10 +121,20 @@ func redactSecretFromResponse(body []byte, secretValue string) []byte {
 	}
 
 	// 5. Prefix-only leak: sometimes APIs echo just the beginning of a key
-	// (e.g. "Invalid key: sk_live_51H"). Redact if >=12 char prefix appears.
-	if len(secretValue) >= 12 {
+	// (e.g. "Invalid key: <first 16 chars>"). Redact if >=16 chars of a >=24 char
+	// value appear.
+	//
+	// The thresholds are deliberately higher than rule 4. This rule matches a
+	// BARE prefix with no mask character to signal truncation, so a short
+	// prefix is indistinguishable from ordinary prose: a 21-char human secret
+	// used to redact its first 14 characters wherever they appeared, silently
+	// rewriting legitimate upstream content. Real API credentials are 24+
+	// chars, so they keep full two-thirds coverage; below 24 the masked forms
+	// (rule 4) still catch real echoes, and a bare short prefix is accepted as
+	// the cost of not corrupting valid answers.
+	if len(secretValue) >= 24 {
 		prefixCut := len(secretValue) * 2 / 3 // first two-thirds of the value
-		if prefixCut >= 12 {
+		if prefixCut >= 16 {
 			body = bytes.ReplaceAll(body, []byte(secretValue[:prefixCut]), []byte(redactionPlaceholder))
 		}
 	}
