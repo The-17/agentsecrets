@@ -1,0 +1,11 @@
+# Cloud mode is one decision, set once by the platform. The binary is bundled in
+# the npm package (Phase 1), so there is no GitHub fetch at boot.
+services:
+  app:
+    build: .
+    environment:
+      AGENTSECRETS_MODE: cloud
+      # Injected by the orchestrator / CI secret store, never committed.
+      AGENTSECRETS_TOKEN: ${AGENTSECRETS_TOKEN}
+    # `agentsecrets env --` resolves via POST /api/workloads/env/ and execs the app.
+    command: ["agentsecrets", "env", "--", "node", "server.js"]

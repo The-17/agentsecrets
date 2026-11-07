@@ -166,6 +166,58 @@ func TestSelectPrecedence(t *testing.T) {
 	})
 }
 
+// TestPhase2CloudZeroConfig asserts the Phase 2 contract: cloud mode is reachable
+// from two platform env vars alone — AGENTSECRETS_MODE=cloud and a workload token
+// — with no `agentsecrets mode cloud` command and no writable ~/.agentsecrets
+// config file in the image. isolateEnv redirects the config home to a fresh temp
+// dir, so the assertion holds even on a machine that has previously run `mode`.
+func TestPhase2CloudZeroConfig(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv(envMode, "cloud")
+	t.Setenv(envToken, "workload-token")
+
+	sel, err := Select("")
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if sel.Mode != ModeCloud {
+		t.Fatalf("mode = %q, want cloud", sel.Mode)
+	}
+	if sel.Source != envMode {
+		t.Errorf("source = %q, want %q: cloud must come from the platform env var, not a config file or command", sel.Source, envMode)
+	}
+
+	// The cloud env path must not require a local project config: pass nil local.
+	var gotEnv string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/workloads/env/" {
+			t.Errorf("cloud env path = %q, want /api/workloads/env/", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer workload-token" {
+			t.Errorf("authorization = %q, want the workload token bearer", r.Header.Get("Authorization"))
+		}
+		var payload struct {
+			Env string `json:"env"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		gotEnv = payload.Env
+		_, _ = w.Write([]byte(`{"data":{"secrets":{"DATABASE_URL":"postgres://x","API_KEY":"secret"}}}`))
+	}))
+	defer srv.Close()
+	t.Setenv(envServerURL, srv.URL)
+
+	secrets, err := SecretsForEnv(sel, nil, "qa")
+	if err != nil {
+		t.Fatalf("SecretsForEnv: %v", err)
+	}
+	if gotEnv != "qa" {
+		t.Errorf("resolver env = %q, want qa: the named environment must be forwarded, not dropped", gotEnv)
+	}
+	if len(secrets) != 2 {
+		t.Errorf("injected %d secrets, want 2", len(secrets))
+	}
+}
+
 // TestSelectProjectMode pins the project-level override. A project mode is a
 // persisted choice for that project only: it outranks the global preference and
 // the token fallback, but a flag or an env var still wins so a container can

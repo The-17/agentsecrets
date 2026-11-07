@@ -1,0 +1,24 @@
+# Cloud mode is one decision, set once on the job. The binary is bundled in the
+# wheel (Phase 1), so there is no GitHub fetch at boot. AGENTSECRETS_TOKEN is a
+# repo/ENV secret, never printed or committed.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AGENTSECRETS_MODE: cloud
+      AGENTSECRETS_TOKEN: ${{ secrets.AGENTSECRETS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install agentsecrets-cli==4.0.0
+      # `agentsecrets env --` resolves secrets via POST /api/workloads/env/ and
+      # execs the deploy script with them injected into its environment.
+      - run: agentsecrets env -- python deploy.py

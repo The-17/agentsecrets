@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "env": {
+    "AGENTSECRETS_MODE": "cloud"
+  },
+  "buildCommand": "npm install && npm run build",
+  "outputDirectory": "dist",
+  "devCommand": "agentsecrets env -- npm run dev"
+}

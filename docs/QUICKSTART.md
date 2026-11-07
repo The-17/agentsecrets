@@ -190,6 +190,44 @@ The doctor inspects the full local trust chain, repairs authorization mismatches
 
 ---
 
+## Cloud mode in production (zero config)
+
+Moving from local to cloud is **one decision, set once by the platform** — not a
+flag on every command. (Plan: [v4 Identity Rebuild](https://artifacts.theseventeen.co/artifacts/11f9d411-df0c-40e9-a0e4-e011f2367fac).)
+
+### The two environment variables
+
+Both reach the binary because the wrapper inherits the environment:
+
+| Variable | Value | Purpose |
+| --- | --- | --- |
+| `AGENTSECRETS_MODE` | `cloud` | Select cloud resolution. No `agentsecrets mode cloud` command, no writable `~/.agentsecrets`, no config file in the image. |
+| `AGENTSECRETS_TOKEN` | a workload token | Authenticates the cloud resolver. Prefer `AGENTSECRETS_TOKEN_FILE` to keep the token out of the process list. |
+
+### What happens at boot
+
+1. **No GitHub fetch, no writable home.** The Go binary ships inside the wheel/package (Phase 1), so it is already on disk. Nothing is downloaded and nothing is written to `~/.agentsecrets` at startup.
+2. **Mode is selected from the environment.** `agentsecrets` reads `AGENTSECRETS_MODE=cloud` (highest env precedence) and resolves through the cloud resolver. No `mode` command and no config file are required.
+3. **Secrets are injected, the token is not.** `agentsecrets env -- <cmd>` resolves secrets via `POST /api/workloads/env/`, injects them into the child process, and execs it. The child receives the secrets; it never receives `AGENTSECRETS_TOKEN`.
+4. **Single-request override still works.** `agentsecrets call --cloud` forces cloud for one call on a local machine.
+
+### Run examples
+
+Copy-ready examples for every surface live in [`docs/deploy-examples/`](deploy-examples/):
+
+- `Dockerfile` — `ENV AGENTSECRETS_MODE=cloud`, `ENTRYPOINT ["agentsecrets", "env", "--"]`
+- `docker-compose.yml` — service `environment` with `AGENTSECRETS_MODE` + `AGENTSECRETS_TOKEN`
+- `vercel.json` — `env.AGENTSECRETS_MODE` and a `devCommand` wrapped in `agentsecrets env --`
+- `github-actions.yml` — job `env` + `agentsecrets env -- python deploy.py`
+
+### Verify in a container (no network, read-only home)
+
+`scripts/verify-cloud-env.sh` runs `agentsecrets env --` inside an `unshare -Urmn`
+namespace with `AGENTSECRETS_MODE=cloud` set and asserts cloud selection, the
+captured injected-env count, and the exit code. A live success run needs a real
+`AGENTSECRETS_TOKEN` and network egress; offline it proves the selection path and
+fail-closed behavior.
+
 ## Next Steps
 
 - [Command Reference](commands/) — full reference for every subcommand

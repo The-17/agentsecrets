@@ -567,6 +567,29 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROXY.md](docs/PROXY.md) for de
 
 ---
 
+## Cloud mode in production (zero config)
+
+Moving from local to cloud is one decision, set once by the platform — not a flag
+on every command. Two environment variables reach the binary because the wrapper
+inherits the environment:
+
+| Variable | Value | Purpose |
+| --- | --- | --- |
+| `AGENTSECRETS_MODE` | `cloud` | Select cloud resolution. No `agentsecrets mode cloud` command, no writable `~/.agentsecrets`, no config file in the image. |
+| `AGENTSECRETS_TOKEN` | workload token | Authenticates the cloud resolver. Prefer `AGENTSECRETS_TOKEN_FILE`. |
+
+At boot: the binary is already on disk (bundled in the wheel by Phase 1, so no
+GitHub fetch and no write to `~/.agentsecrets`); `agentsecrets` selects cloud from
+`AGENTSECRETS_MODE` with no command and no config file; `agentsecrets env -- <cmd>`
+resolves via `POST /api/workloads/env/`, injects the secrets, and execs the child
+(which never sees the token). `agentsecrets call --cloud` stays the single-request
+override.
+
+Run examples (Docker, docker-compose, Vercel, GitHub Actions) and the full boot
+walkthrough are in
+[../docs/QUICKSTART.md → Cloud mode in production](../docs/QUICKSTART.md#cloud-mode-in-production-zero-config)
+and [`../docs/deploy-examples/`](../docs/deploy-examples/).
+
 ## Roadmap
 
 - [x] Core CLI
@@ -595,7 +618,6 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) and [PROXY.md](docs/PROXY.md) for de
 - [ ] JavaScript / Node.js SDK
 - [ ] Secret rotation
 - [ ] Web dashboard
-- [ ] Cloud resolver (serverless + production deployments)
 - [ ] AgentSecrets Connect (multi-tenant credential delegation)
 
 ---
