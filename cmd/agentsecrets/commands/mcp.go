@@ -353,8 +353,9 @@ func installOpenClawSkill(skillsDir string) error {
 	}
 
 	// Write SKILL.md from the one shared source, so `init` and `mcp install`
-	// ship the same procedure. See skill_content.go.
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(InstalledSkill()), 0644); err != nil {
+	// ship the same procedure. OpenClaw gets the universal skill plus the
+	// exec-provider appendix (OpenClawSkill), identical to the registry copy.
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(OpenClawSkill()), 0644); err != nil {
 		return fmt.Errorf("failed to write SKILL.md: %w", err)
 	}
 

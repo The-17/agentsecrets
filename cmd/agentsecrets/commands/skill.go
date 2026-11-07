@@ -18,8 +18,9 @@ import (
 // and pipe it wherever that agent reads instructions, or point --dir at that
 // agent's skills folder.
 //
-// It is also the source of truth for the copies vendored in docs and in the
-// OpenClaw registry, which a drift test pins to the same generator.
+// It is also the source of truth for the copy vendored in the OpenClaw registry
+// (integrations/openclaw/SKILL.md), which `agentsecrets skill --openclaw`
+// regenerates and TestOpenClawSkillMatchesVendoredFile pins to this generator.
 
 var skillCmd = &cobra.Command{
 	Use:   "skill",
@@ -49,16 +50,23 @@ For the clients we install natively, use "agentsecrets mcp install" instead.`,
 func init() {
 	skillCmd.Flags().Bool("all", false, "print SKILL.md and every reference file, separated by headers")
 	skillCmd.Flags().Bool("version", false, "print only the skill version")
+	skillCmd.Flags().Bool("openclaw", false, "print the OpenClaw variant (universal skill plus the exec-provider appendix)")
 	skillCmd.Flags().String("dir", "", "write SKILL.md and references/ into this directory instead of printing")
 }
 
 func runSkill(cmd *cobra.Command, args []string) error {
 	showVersion, _ := cmd.Flags().GetBool("version")
 	showAll, _ := cmd.Flags().GetBool("all")
+	openclaw, _ := cmd.Flags().GetBool("openclaw")
 	dir, _ := cmd.Flags().GetString("dir")
 
 	if showVersion {
 		fmt.Println(skillVersion)
+		return nil
+	}
+
+	if openclaw {
+		fmt.Print(OpenClawSkill())
 		return nil
 	}
 

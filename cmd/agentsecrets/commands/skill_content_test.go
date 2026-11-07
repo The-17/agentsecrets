@@ -67,3 +67,28 @@ func TestSkillBodyContainsGuaranteeSection(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenClawSkillMatchesVendoredFile pins the OpenClaw registry copy
+// (integrations/openclaw/SKILL.md) to the generator. It used to be a hand-edited
+// spin that fell out of sync with the universal skill (it still carried the old
+// "THE RULES" block). This guard fails if anyone edits that file without
+// regenerating it with `agentsecrets skill --openclaw`.
+func TestOpenClawSkillMatchesVendoredFile(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "integrations", "openclaw", "SKILL.md")
+	want := OpenClawSkill()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read vendored OpenClaw skill %s: %v", path, err)
+	}
+	if string(got) != want {
+		t.Errorf("integrations/openclaw/SKILL.md differs from OpenClawSkill(); regenerate with `agentsecrets skill --openclaw > %s`", path)
+	}
+	// The OpenClaw body must be the same single source as every other surface.
+	if !strings.Contains(OpenClawSkill(), skillBodyExpanded()) {
+		t.Error("OpenClawSkill body does not contain the shared skill body")
+	}
+	if !strings.Contains(OpenClawSkill(), "THE EXEC PROVIDER") {
+		t.Error("OpenClawSkill is missing the exec-provider appendix")
+	}
+}
