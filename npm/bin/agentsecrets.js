@@ -1,5 +1,16 @@
 #!/usr/bin/env node
 
+// Locate the AgentSecrets Go binary.
+//
+// Resolution order, highest first:
+//   1. AGENTSECRETS_BINARY - an explicit path supplied by the operator.
+//   2. The binary bundled in the matching npm platform package (install time).
+//   3. A cached binary under the writable home directory.
+//   4. The GitHub release asset (fallback for a launcher-only install).
+//
+// Only the fallback makes a network call, so an install that put the binary on
+// disk works on a read-only filesystem with no egress.
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -40,9 +51,67 @@ function compareVersions(v1, v2) {
   return 0;
 }
 
+function isExecutable(p) {
+  if (!p) return false;
+  try {
+    return fs.statSync(p).isFile() && fs.constants.X_OK !== undefined &&
+      (fs.accessSync(p, fs.constants.X_OK), true);
+  } catch (_) {
+    return false;
+  }
+}
+
+function canWriteDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, '.write_probe');
+    fs.writeFileSync(probe, '');
+    fs.unlinkSync(probe);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function ensureWritableHome() {
+  // An explicit AGENTSECRETS_HOME always wins. Otherwise prefer
+  // ~/.agentsecrets and fall back to a tmp path when HOME cannot be written,
+  // which is the normal state inside a read-only container.
+  const explicit = process.env.AGENTSECRETS_HOME;
+  if (explicit) {
+    fs.mkdirSync(explicit, { recursive: true });
+    return explicit;
+  }
+
+  const preferred = path.join(os.homedir(), '.agentsecrets');
+  if (canWriteDir(preferred)) return preferred;
+
+  const fallback = path.join(os.tmpdir(), 'agentsecrets-home');
+  fs.mkdirSync(fallback, { recursive: true });
+  return fallback;
+}
+
+function bundledBinaryPath(binaryName) {
+  // npm optional platform packages are named after process.platform and
+  // process.arch, e.g. @the-17/agentsecrets-linux-x64. npm installs only the
+  // one whose os/cpu fields match this machine.
+  const pkgName = `@the-17/agentsecrets-${process.platform}-${process.arch}`;
+  try {
+    const root = path.dirname(require.resolve(`${pkgName}/package.json`));
+    const candidate = path.join(root, 'bin', binaryName);
+    if (isExecutable(candidate)) return candidate;
+  } catch (_) {}
+
+  // Also honour a binary bundled directly inside this package, which is how
+  // self-contained builds ship without a sibling platform package.
+  const own = path.join(__dirname, '..', 'bin', binaryName);
+  if (isExecutable(own)) return own;
+  return null;
+}
+
 function checkUpdateNotice() {
   try {
-    const cacheFile = path.join(os.homedir(), '.agentsecrets', 'npm_update_cache.json');
+    const cacheFile = path.join(ensureWritableHome(), 'npm_update_cache.json');
     let cache = null;
     if (fs.existsSync(cacheFile)) {
       try {
@@ -173,21 +242,34 @@ async function downloadBinary(url, dest, isZip = false) {
 
 async function getBinaryPath() {
   const { os_name, arch_name } = getPlatformInfo();
-  const binDir = path.join(os.homedir(), '.agentsecrets', 'bin');
   const binaryName = os_name === 'windows' ? 'agentsecrets.exe' : 'agentsecrets';
-  
-  const version = VERSION;
-  const binaryPath = path.join(binDir, `${binaryName}_${version}`);
 
-  if (fs.existsSync(binaryPath)) {
-    return binaryPath;
+  const override = process.env.AGENTSECRETS_BINARY;
+  if (override) {
+    if (!isExecutable(override)) {
+      throw new Error(
+        `AGENTSECRETS_BINARY is set to ${override}, which is not an executable file. ` +
+        'Refusing to download a different binary over an explicit override.'
+      );
+    }
+    return override;
   }
 
-  process.stderr.write(`AgentSecrets binary not found. Downloading v${version} for ${os_name}/${arch_name}...\n`);
+  const bundled = bundledBinaryPath(binaryName);
+  if (bundled) return bundled;
+
+  const home = ensureWritableHome();
+  const binDir = path.join(home, 'bin');
+  const binaryPath = path.join(binDir, `${binaryName}_${VERSION}`);
+  if (isExecutable(binaryPath)) return binaryPath;
+
+  checkUpdateNotice();
+
+  process.stderr.write(`AgentSecrets binary not found. Downloading v${VERSION} for ${os_name}/${arch_name}...\n`);
 
   const ext = os_name === 'windows' ? 'zip' : 'tar.gz';
-  const assetName = `agentsecrets_${version}_${os_name}_${arch_name}.${ext}`;
-  const url = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${assetName}`;
+  const assetName = `agentsecrets_${VERSION}_${os_name}_${arch_name}.${ext}`;
+  const url = `https://github.com/${GITHUB_REPO}/releases/download/v${VERSION}/${assetName}`;
 
   try {
     await downloadBinary(url, binaryPath);
@@ -200,7 +282,6 @@ async function getBinaryPath() {
 
 async function main() {
   try {
-    checkUpdateNotice();
     const binaryPath = await getBinaryPath();
     const args = process.argv.slice(2);
     const proc = spawn(binaryPath, args, { stdio: 'inherit' });
@@ -219,4 +300,11 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { getBinaryPath };
+module.exports = {
+  getBinaryPath,
+  getPlatformInfo,
+  compareVersions,
+  ensureWritableHome,
+  bundledBinaryPath,
+  isExecutable,
+};

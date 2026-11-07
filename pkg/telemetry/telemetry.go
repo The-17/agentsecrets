@@ -129,14 +129,17 @@ func loadLocked() error {
 		return nil
 	}
 
-	path, err := telemetryFilePath()
-	if err != nil {
-		return err
-	}
-
+	// Initialize in-memory state first so that a read-only or uncreatable HOME
+	// (the normal state inside a container) degrades to in-memory telemetry
+	// instead of panicking on a nil Data.
 	data = &Data{
 		Daily:    make(map[string]*Day),
 		LastSync: time.Now(),
+	}
+
+	path, err := telemetryFilePath()
+	if err != nil {
+		return err
 	}
 
 	b, err := os.ReadFile(path)

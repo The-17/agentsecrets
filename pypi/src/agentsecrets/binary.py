@@ -1,16 +1,31 @@
+"""Locate the AgentSecrets Go binary.
+
+Resolution order, highest first:
+
+1. ``AGENTSECRETS_BINARY`` - an absolute path supplied by the operator.
+2. The binary bundled inside this installed package (a platform wheel).
+3. A cached binary under the writable home directory.
+4. The GitHub release asset (fallback for the pure-Python launcher wheel).
+
+Only the fallback makes a network call. A container that installed a platform
+wheel already has the binary on disk, so ``version`` and ``mode`` work on a
+read-only filesystem with no egress.
+"""
+
+import json
 import os
 import platform
-import sys
-import time
-import urllib.request
-import tarfile
-import zipfile
-import tempfile
 import shutil
 import stat
-import json
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.request
+import zipfile
 
 GITHUB_REPO = "The-17/agentsecrets"
+
 
 def _get_version():
     try:
@@ -30,7 +45,9 @@ def _get_version():
         pass
     return "dev"
 
+
 VERSION = _get_version()
+
 
 def compare_versions(v1, v2):
     p1 = [int(x) for x in (v1 or "").lstrip("v").split(".") if x.isdigit()]
@@ -42,9 +59,56 @@ def compare_versions(v1, v2):
         if p1[i] > p2[i]: return 1
     return 0
 
+
+def _binary_name():
+    return "agentsecrets.exe" if platform.system().lower() == "windows" else "agentsecrets"
+
+
+def _is_executable(path):
+    return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _ensure_writable_dir(path):
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write_probe")
+        with open(probe, "w") as f:
+            f.write("")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def writable_home():
+    """Return a directory the process may write cache files into.
+
+    An explicit ``AGENTSECRETS_HOME`` always wins. Otherwise we prefer
+    ``~/.agentsecrets`` and fall back to a tmp path when HOME cannot be
+    written, which is the normal state inside a read-only container.
+    """
+    explicit = os.environ.get("AGENTSECRETS_HOME")
+    if explicit:
+        os.makedirs(explicit, exist_ok=True)
+        return os.path.abspath(explicit)
+
+    preferred = os.path.join(os.path.expanduser("~"), ".agentsecrets")
+    if _ensure_writable_dir(preferred):
+        return preferred
+
+    fallback = os.path.join(tempfile.gettempdir(), "agentsecrets-home")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
+
+
+def bundled_binary_path():
+    """Path to the binary shipped inside a platform wheel, if present."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", _binary_name())
+
+
 def check_update_notice():
     try:
-        cache_file = os.path.expanduser("~/.agentsecrets/pypi_update_cache.json")
+        cache_file = os.path.join(writable_home(), "pypi_update_cache.json")
         cache = None
         if os.path.exists(cache_file):
             try:
@@ -78,6 +142,7 @@ def check_update_notice():
     except Exception:
         pass
 
+
 def cleanup_old_binaries(base_dir, current_binary_path):
     try:
         if not os.path.exists(base_dir):
@@ -93,6 +158,7 @@ def cleanup_old_binaries(base_dir, current_binary_path):
     except Exception:
         pass
 
+
 def get_platform_info():
     """Returns a tuple of (os_name, arch_name) compatible with GoReleaser naming."""
     system = platform.system().lower()
@@ -105,7 +171,7 @@ def get_platform_info():
         os_name = "windows"
     elif system == "linux":
         os_name = "linux"
-    
+
     arch_name = "amd64"
     if machine in ["x86_64", "amd64"]:
         arch_name = "amd64"
@@ -113,59 +179,66 @@ def get_platform_info():
         arch_name = "arm64"
     elif machine in ["i386", "i686", "x86"]:
         arch_name = "386"
-    
+
     return os_name, arch_name
 
+
 def ensure_binary():
-    """
-    Check if the agentsecrets binary exists for the current platform.
-    If not, download it from GitHub Releases.
-    Returns the absolute path to the binary.
-    """
-    check_update_notice()
-    os_name, arch_name = get_platform_info()
-    
-    base_dir = os.path.expanduser("~/.agentsecrets/bin")
-    os.makedirs(base_dir, exist_ok=True)
-    
-    binary_name = "agentsecrets"
-    if os_name == "windows":
-        binary_name += ".exe"
-    
+    """Return an executable AgentSecrets binary, downloading only as a last resort."""
+    binary_name = _binary_name()
+
+    override = os.environ.get("AGENTSECRETS_BINARY")
+    if override:
+        if not _is_executable(override):
+            raise Exception(
+                f"AGENTSECRETS_BINARY is set to {override!r}, which is not an executable file.\n"
+                "Refusing to download a different binary over an explicit override."
+            )
+        return os.path.abspath(override)
+
+    bundled = bundled_binary_path()
+    if _is_executable(bundled):
+        return bundled
+
+    base_dir = os.path.join(writable_home(), "bin")
     binary_path = os.path.join(base_dir, f"{binary_name}_{VERSION}")
-    
-    if os.path.exists(binary_path):
+    if _is_executable(binary_path):
         return binary_path
-    
+
+    check_update_notice()
+
+    os_name, arch_name = get_platform_info()
+    os.makedirs(base_dir, exist_ok=True)
+
     sys.stderr.write(f"AgentSecrets binary not found. Downloading version {VERSION} for {os_name}/{arch_name}...\n")
-    
+
     ext = "tar.gz" if os_name != "windows" else "zip"
     asset_name = f"agentsecrets_{VERSION}_{os_name}_{arch_name}.{ext}"
     url = f"https://github.com/{GITHUB_REPO}/releases/download/v{VERSION}/{asset_name}"
-    
+
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             archive_path = os.path.join(tmpdir, asset_name)
-            
+
             with urllib.request.urlopen(url) as response, open(archive_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
-            
+
             if ext == "tar.gz":
                 with tarfile.open(archive_path, "r:gz") as tar:
                     tar.extractall(path=tmpdir)
             else:
                 with zipfile.ZipFile(archive_path, 'r') as zip_ref:
                     zip_ref.extractall(tmpdir)
-            
+
             extracted_binary = os.path.join(tmpdir, binary_name)
             if not os.path.exists(extracted_binary):
                 for root, dirs, files in os.walk(tmpdir):
                     if binary_name in files:
                         extracted_binary = os.path.join(root, binary_name)
                         break
-            
+
             shutil.move(extracted_binary, binary_path)
-            
+
             st = os.stat(binary_path)
             os.chmod(binary_path, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -180,15 +253,15 @@ def ensure_binary():
                     )
                 except Exception:
                     pass
-            
+
         cleanup_old_binaries(base_dir, binary_path)
         return binary_path
-        
+
     except Exception as e:
         system_binary = shutil.which("agentsecrets")
         if system_binary and not system_binary.endswith(".py") and "site-packages" not in system_binary:
             return system_binary
-            
+
         raise Exception(
             f"Failed to download AgentSecrets binary from {url}.\n"
             f"Error: {e}\n\n"

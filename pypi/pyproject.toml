@@ -40,3 +40,8 @@ agentsecrets = "agentsecrets.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentsecrets"]
+
+# Custom hook bundles a prebuilt Go binary into a platform wheel when the
+# AGENTSECRETS_WHEEL_BINARY / AGENTSECRETS_WHEEL_TAG env vars are supplied.
+[tool.hatch.build.hooks.custom]
+

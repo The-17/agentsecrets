@@ -7,7 +7,7 @@
     "agentsecrets": "bin/agentsecrets.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [
     "ai",
@@ -33,5 +33,13 @@
   },
   "dependencies": {
     "tar": "^6.2.1"
+  },
+  "optionalDependencies": {
+    "@the-17/agentsecrets-darwin-arm64": "4.0.0-dev",
+    "@the-17/agentsecrets-darwin-x64": "4.0.0-dev",
+    "@the-17/agentsecrets-linux-arm64": "4.0.0-dev",
+    "@the-17/agentsecrets-linux-x64": "4.0.0-dev",
+    "@the-17/agentsecrets-win32-arm64": "4.0.0-dev",
+    "@the-17/agentsecrets-win32-x64": "4.0.0-dev"
   }
 }
