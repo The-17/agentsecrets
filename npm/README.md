@@ -115,6 +115,13 @@ with no command and no config file; `agentsecrets env -- <cmd>` resolves via
 `POST /api/workloads/env/`, injects the secrets, and execs the child (which never
 sees the token). `agentsecrets call --cloud` stays the single-request override.
 
+**Boot-path availability.** A local `npm install` links `agentsecrets` only into
+`node_modules/.bin`, which is on `PATH` inside `npm run`/`npm exec` but not for a
+bare container command. Invoke it as `npx agentsecrets ...` (or the explicit
+`node_modules/.bin/agentsecrets` path) so it resolves at boot without extra PATH
+setup. The Python package additionally ships `python -m agentsecrets`, a
+PATH-independent form. The deploy examples use these path-independent forms.
+
 Run examples (Docker, docker-compose, Vercel, GitHub Actions) and the full boot
 walkthrough are in
 [docs/QUICKSTART.md → Cloud mode in production](https://github.com/The-17/agentsecrets/blob/main/docs/QUICKSTART.md#cloud-mode-in-production-zero-config)

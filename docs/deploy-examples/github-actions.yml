@@ -19,6 +19,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install agentsecrets-cli==4.0.0
-      # `agentsecrets env --` resolves secrets via POST /api/workloads/env/ and
-      # execs the deploy script with them injected into its environment.
-      - run: agentsecrets env -- python deploy.py
+      # `python -m agentsecrets env --` resolves secrets via POST
+      # /api/workloads/env/ and execs the deploy script with them injected into
+      # its environment. The `-m` form is PATH-independent, so it works whether
+      # or not pip placed the `agentsecrets` console script on PATH.
+      - run: python -m agentsecrets env -- python deploy.py

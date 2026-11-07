@@ -7,5 +7,8 @@ services:
       AGENTSECRETS_MODE: cloud
       # Injected by the orchestrator / CI secret store, never committed.
       AGENTSECRETS_TOKEN: ${AGENTSECRETS_TOKEN}
-    # `agentsecrets env --` resolves via POST /api/workloads/env/ and execs the app.
-    command: ["agentsecrets", "env", "--", "node", "server.js"]
+    # `npx agentsecrets` resolves the locally-installed launcher from
+    # node_modules/.bin, so the command works without putting it on PATH by
+    # hand. `agentsecrets env --` resolves via POST /api/workloads/env/ and
+    # execs the app.
+    command: ["npx", "agentsecrets", "env", "--", "node", "server.js"]

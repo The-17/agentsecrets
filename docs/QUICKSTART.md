@@ -213,20 +213,47 @@ Both reach the binary because the wrapper inherits the environment:
 
 ### Run examples
 
-Copy-ready examples for every surface live in [`docs/deploy-examples/`](deploy-examples/):
+Copy-ready examples for every surface live in [`docs/deploy-examples/`](deploy-examples/).
+Every example uses the **PATH-independent** command form so it works the moment
+the package is installed, with no extra PATH setup (see Boot-path availability
+below):
 
-- `Dockerfile` — `ENV AGENTSECRETS_MODE=cloud`, `ENTRYPOINT ["agentsecrets", "env", "--"]`
-- `docker-compose.yml` — service `environment` with `AGENTSECRETS_MODE` + `AGENTSECRETS_TOKEN`
-- `vercel.json` — `env.AGENTSECRETS_MODE` and a `devCommand` wrapped in `agentsecrets env --`
-- `github-actions.yml` — job `env` + `agentsecrets env -- python deploy.py`
+- `Dockerfile` — `ENV AGENTSECRETS_MODE=cloud`, `ENTRYPOINT ["python", "-m", "agentsecrets", "env", "--"]`
+- `docker-compose.yml` — `command: ["npx", "agentsecrets", "env", "--", "node", "server.js"]`
+- `vercel.json` — `env.AGENTSECRETS_MODE` and `devCommand: "npx agentsecrets env -- npm run dev"`
+- `github-actions.yml` — job `env` + `python -m agentsecrets env -- python deploy.py`
 
-### Verify in a container (no network, read-only home)
+### Boot-path availability
+
+The `agentsecrets` command reaches the binary two ways, and the examples pick
+the one that does not depend on the console script being on `PATH`:
+
+- **PyPI.** `pip install agentsecrets-cli` installs a `agentsecrets` console
+  script (on `PATH` only when the install location is on `PATH`, e.g. a venv's
+  `bin/` or `/usr/local/bin`). It also ships a `python -m agentsecrets` module
+  entry point that resolves the package from the active interpreter's
+  `site-packages`, so `python -m agentsecrets ...` works even from a `--user`
+  install or a minimal container `PATH`.
+- **npm.** `npm install @the-17/agentsecrets` links the launcher into
+  `node_modules/.bin`, which is on `PATH` only inside `npm run`/`npm exec`. The
+  examples invoke it as `npx agentsecrets`, which resolves the local bin, or via
+  the explicit `node_modules/.bin/agentsecrets` path.
+
+Either way, the bundled Go binary is found by the wrapper (Phase 1), so no
+GitHub fetch and no writable `~/.agentsecrets` are needed at boot.
+
+### Verify
 
 `scripts/verify-cloud-env.sh` runs `agentsecrets env --` inside an `unshare -Urmn`
 namespace with `AGENTSECRETS_MODE=cloud` set and asserts cloud selection, the
 captured injected-env count, and the exit code. A live success run needs a real
 `AGENTSECRETS_TOKEN` and network egress; offline it proves the selection path and
 fail-closed behavior.
+
+`scripts/verify-boot-path.sh` proves the command is callable at boot across every
+surface — the `agentsecrets` console script, `python -m agentsecrets`, the npm
+`node_modules/.bin` link, and `npx` — and that the module form still resolves
+when the console script is not on `PATH`.
 
 ## Next Steps
 

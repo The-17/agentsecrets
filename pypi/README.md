@@ -585,6 +585,13 @@ resolves via `POST /api/workloads/env/`, injects the secrets, and execs the chil
 (which never sees the token). `agentsecrets call --cloud` stays the single-request
 override.
 
+**Boot-path availability.** `pip install agentsecrets-cli` installs an
+`agentsecrets` console script on `PATH` when the install location is on `PATH`,
+but a `--user` install or a minimal container `PATH` can hide it. This package
+also ships `python -m agentsecrets`, which resolves the package from the active
+interpreter's `site-packages` and always works regardless of `PATH`. Use
+`python -m agentsecrets ...` in containers and CI; the deploy examples do.
+
 Run examples (Docker, docker-compose, Vercel, GitHub Actions) and the full boot
 walkthrough are in
 [../docs/QUICKSTART.md → Cloud mode in production](../docs/QUICKSTART.md#cloud-mode-in-production-zero-config)

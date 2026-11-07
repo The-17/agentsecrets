@@ -15,5 +15,8 @@ ENV AGENTSECRETS_MODE=cloud
 
 # `agentsecrets env --` resolves secrets via POST /api/workloads/env/, injects
 # them into the child, then execs it. The child never sees the token.
-ENTRYPOINT ["agentsecrets", "env", "--"]
+# `python -m agentsecrets` is used instead of the `agentsecrets` console script
+# so the command resolves regardless of where pip installed the launcher
+# (PATH-independent); the console script form works too when it is on PATH.
+ENTRYPOINT ["python", "-m", "agentsecrets", "env", "--"]
 CMD ["python", "app.py"]
