@@ -351,6 +351,14 @@ func classifyInitError(err error) recoveryKind {
 		return recoverNone
 	}
 
+	// A busy pipe means the daemon is up. Restarting it would drop live
+	// connections, so this one surfaces the accurate message instead of
+	// being repaired like a missing daemon.
+	var busy *keychainauth.DaemonBusyError
+	if errors.As(err, &busy) {
+		return recoverNone
+	}
+
 	var notRunning *keychainauth.DaemonNotRunningError
 	if errors.As(err, &notRunning) {
 		return recoverDaemon

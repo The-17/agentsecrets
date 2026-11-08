@@ -12,3 +12,9 @@ import (
 func dialCLOEXEC(sockPath string) (net.Conn, error) {
 	return net.Dial("unix", sockPath)
 }
+
+// isPipeBusy is always false off Windows. ERROR_PIPE_BUSY is a Windows named
+// pipe condition; a Unix socket dial failure is a genuinely unreachable daemon.
+func isPipeBusy(err error) bool {
+	return false
+}

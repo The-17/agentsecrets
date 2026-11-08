@@ -70,6 +70,9 @@ func initLocked() error {
 	// file descriptor leakage to child processes (agentsecrets env/exec).
 	c, err := dialCLOEXEC(sockPath)
 	if err != nil {
+		if isPipeBusy(err) {
+			return &DaemonBusyError{SocketPath: sockPath, Cause: err}
+		}
 		return &DaemonNotRunningError{SocketPath: sockPath, Cause: err}
 	}
 
