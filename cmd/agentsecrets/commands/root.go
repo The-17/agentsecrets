@@ -19,7 +19,7 @@ import (
 )
 
 // Version is set at build time via ldflags
-var Version = "3.3.6"
+var Version = "3.3.7"
 
 // rootCmd is the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -263,6 +263,14 @@ const (
 // the condition without a typed error.
 func classifyInitError(err error) recoveryKind {
 	if err == nil {
+		return recoverNone
+	}
+
+	// A busy pipe means the daemon is up. Restarting it would drop live
+	// connections, so this one surfaces the accurate message instead of
+	// being repaired like a missing daemon.
+	var busy *keychainauth.DaemonBusyError
+	if errors.As(err, &busy) {
 		return recoverNone
 	}
 

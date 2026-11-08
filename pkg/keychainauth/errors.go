@@ -42,6 +42,23 @@ func (e *DaemonNotRunningError) Unwrap() error {
 	return e.Cause
 }
 
+// DaemonBusyError is returned when the keychain-auth daemon is listening but has
+// no free connection slot. It is not a "daemon is not running" condition: the
+// daemon answered with ERROR_PIPE_BUSY, and restarting a healthy daemon in
+// response to it makes availability worse, not better.
+type DaemonBusyError struct {
+	SocketPath string
+	Cause      error
+}
+
+func (e *DaemonBusyError) Error() string {
+	return "keychain-auth daemon is busy"
+}
+
+func (e *DaemonBusyError) Unwrap() error {
+	return e.Cause
+}
+
 // UserMessage returns the full user-facing error text for keychain-auth errors.
 // These messages should explain what happened and what to do next.
 func UserMessage(err error) string {
@@ -57,6 +74,8 @@ func UserMessage(err error) string {
 				"Or restart your terminal session."
 		}
 		return daemonNotRunningMessage(e.SocketPath)
+	case *DaemonBusyError:
+		return daemonBusyMessage(e.SocketPath)
 	default:
 		return err.Error()
 	}
@@ -145,4 +164,14 @@ Fix it automatically:
   agentsecrets doctor
 
 Socket expected at: %s`, socketPath)
+}
+
+func daemonBusyMessage(socketPath string) string {
+	return fmt.Sprintf(`keychain-auth daemon is busy.
+
+The daemon is running on %s but had no free connection slot. It was not
+restarted, because restarting a healthy daemon would make this worse.
+
+Wait a moment and retry. If it keeps happening, run:
+  agentsecrets doctor`, socketPath)
 }

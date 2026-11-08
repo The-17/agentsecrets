@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -195,25 +196,37 @@ func ensureKeychainAuthForEnv() error {
 		return nil
 	}
 
-	if !keychainauth.IsAvailable() {
-		fmt.Println()
-		ui.Info("Setting up keychain-auth — this secures your secrets with process-level verification.")
-		ui.Info("This is a one-time setup that runs automatically.")
-		fmt.Println()
-
-		if err := ui.Spinner("Installing and configuring keychain-auth...", func() error {
-			return keychainauth.AutoSetup()
-		}); err != nil {
-			return fmt.Errorf("keychain-auth is required for secret operations: %w", err)
+	// Init is the one and only dial. An earlier IsAvailable() probe used to
+	// run first; on Windows that probe consumes the daemon's only pending
+	// named-pipe instance, so the very next dial lost a race with the daemon
+	// recycling that instance and was reported as "daemon is not running".
+	// Setup is attempted only when Init says the daemon is genuinely absent.
+	if err := keychainauth.Init(); err == nil {
+		return nil
+	} else {
+		var notRunning *keychainauth.DaemonNotRunningError
+		if !errors.As(err, &notRunning) {
+			return fmt.Errorf("%s", keychainauth.UserMessage(err))
 		}
+	}
 
-		ui.Success("keychain-auth configured successfully.")
-		fmt.Println()
+	fmt.Println()
+	ui.Info("Setting up keychain-auth — this secures your secrets with process-level verification.")
+	ui.Info("This is a one-time setup that runs automatically.")
+	fmt.Println()
+
+	if err := ui.Spinner("Installing and configuring keychain-auth...", func() error {
+		return keychainauth.AutoSetup()
+	}); err != nil {
+		return fmt.Errorf("keychain-auth is required for secret operations: %w", err)
 	}
 
 	if err := keychainauth.Init(); err != nil {
 		return fmt.Errorf("%s", keychainauth.UserMessage(err))
 	}
+
+	ui.Success("keychain-auth configured successfully.")
+	fmt.Println()
 	return nil
 }
 

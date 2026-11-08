@@ -86,3 +86,22 @@ func TestUserMessage_DaemonNotRunning(t *testing.T) {
 		t.Errorf("Expected message to point at 'agentsecrets doctor', got: %s", got)
 	}
 }
+
+func TestUserMessage_DaemonBusyIsNotDaemonNotRunning(t *testing.T) {
+	cause := errors.New("All pipe instances are busy")
+	err := &DaemonBusyError{SocketPath: `\\.\pipe\keychain-auth`, Cause: cause}
+	got := UserMessage(err)
+
+	if strings.Contains(strings.ToLower(got), "daemon is not running") {
+		t.Errorf("a busy daemon must never be reported as not running, got: %s", got)
+	}
+	if !strings.Contains(got, "busy") {
+		t.Errorf("expected the busy condition to be named, got: %s", got)
+	}
+	if !strings.Contains(got, `\\.\pipe\keychain-auth`) {
+		t.Errorf("expected the socket path, got: %s", got)
+	}
+	if err.Unwrap() != cause {
+		t.Error("DaemonBusyError must keep the underlying Windows error")
+	}
+}
