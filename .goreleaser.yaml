@@ -84,12 +84,7 @@ release:
   header: |
     ## Fixed in v{{ .Version }}
 
-    Two bugs blocked any API that needs a lowercase JSON field or a Content-Type.
-
-    - **Injection targets are no longer rewritten.** `--query`, `--body-field`, `--form-field` and `--header` put the target in a proxy control header name, which Go canonicalises on both sides of the wire, so `channel` arrived as `Channel` and `x-request-id` as `X.Request.Id`. Targets now travel in the header value (`X-AS-Inject-Body: channel=SLACK_CHANNEL_ID`) and are repeatable.
-    - **JSON bodies get a Content-Type.** A plain `--body` went upstream untyped. It now defaults to `application/json`, and `--set-header Name=Value` sets any plain header explicitly.
-
-    The legacy header-name form still parses, so existing scripts keep working. After upgrading, restart a running proxy with `agentsecrets proxy restart`.
+    - **Windows `env`/`exec` no longer report a healthy daemon as missing.** `agentsecrets env` and `agentsecrets exec` open the keychain-auth named pipe twice in quick succession. keychain-auth serves one pipe instance at a time, so the second open can arrive while the daemon is setting up the next instance and Windows returns `ERROR_PIPE_BUSY`. Earlier releases mapped every connection failure to "daemon is not running", so `agentsecrets doctor` reported a healthy installation while `env` failed with `[ERR-999] keychain-auth daemon is not running`. The Windows client now waits for a free instance with `WaitNamedPipe` (bounded at 2 s), reports a busy daemon accurately without restarting it, and dials once instead of twice. No keychain-auth upgrade or re-authorization is required.
 
     **Full release notes:** https://docs.agentsecrets.tech/changelog/v3-x
 
