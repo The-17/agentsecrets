@@ -1,6 +1,9 @@
 package gateway
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/nacl/box"
 
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/proxy"
@@ -68,6 +73,44 @@ func useTestResolver(t *testing.T, url string) {
 	old := resolverBaseURL
 	resolverBaseURL = url
 	t.Cleanup(func() { resolverBaseURL = old })
+}
+
+// sealedEnvServer is a mock cloud resolver implementing the Phase 3 sealed
+// /v1/workloads/env endpoint. It reads the client's ephemeral public key from the
+// request, seals the given secret map to it (box.SealAnonymous), and returns the
+// ciphertext. If captureEnv is non-nil it records the forwarded environment. This
+// lets cloud-env tests run against a faithful resolver without the real service
+// or the Django control plane.
+func sealedEnvServer(t *testing.T, secrets map[string]string, captureEnv *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/workloads/env" {
+			t.Errorf("resolver env path = %q, want /v1/workloads/env", r.URL.Path)
+		}
+		var req struct {
+			ClientPublicKey string `json:"client_public_key"`
+			Environment     string `json:"environment"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if captureEnv != nil {
+			*captureEnv = req.Environment
+		}
+		var clientPub [32]byte
+		if b, err := hex.DecodeString(req.ClientPublicKey); err == nil && len(b) == 32 {
+			copy(clientPub[:], b)
+		}
+		payload, _ := json.Marshal(secrets)
+		sealed, err := box.SealAnonymous(nil, payload, &clientPub, rand.Reader)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"sealed": base64.StdEncoding.EncodeToString(sealed),
+			"nonce":  "deadbeefdeadbeef",
+		})
+	}))
 }
 
 func TestSelectPrecedence(t *testing.T) {
@@ -188,23 +231,15 @@ func TestPhase2CloudZeroConfig(t *testing.T) {
 	}
 
 	// The cloud env path must not require a local project config: pass nil local.
+	// Phase 3: the CLI now talks to the Go resolver's sealed /v1/workloads/env
+	// endpoint, so the mock resolver returns a sealed response.
 	var gotEnv string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/workloads/env/" {
-			t.Errorf("cloud env path = %q, want /api/workloads/env/", r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer workload-token" {
-			t.Errorf("authorization = %q, want the workload token bearer", r.Header.Get("Authorization"))
-		}
-		var payload struct {
-			Env string `json:"env"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&payload)
-		gotEnv = payload.Env
-		_, _ = w.Write([]byte(`{"data":{"secrets":{"DATABASE_URL":"postgres://x","API_KEY":"secret"}}}`))
-	}))
+	srv := sealedEnvServer(t, map[string]string{
+		"DATABASE_URL": "postgres://x",
+		"API_KEY":      "secret",
+	}, &gotEnv)
 	defer srv.Close()
-	t.Setenv(envServerURL, srv.URL)
+	useTestResolver(t, srv.URL)
 
 	secrets, err := SecretsForEnv(sel, nil, "qa")
 	if err != nil {
@@ -544,22 +579,11 @@ func TestSecretsForEnvCloudFetchesWorkloadEnv(t *testing.T) {
 	t.Setenv(envServerURL, "")
 
 	var gotEnv string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/workloads/env/" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer workload-token" {
-			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
-		}
-		var payload struct {
-			Env string `json:"env"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&payload)
-		gotEnv = payload.Env
-		_, _ = w.Write([]byte(`{"data":{"secrets":{"DATABASE_URL":"postgres://x"}}}`))
-	}))
+	srv := sealedEnvServer(t, map[string]string{
+		"DATABASE_URL": "postgres://x",
+	}, &gotEnv)
 	defer srv.Close()
-	t.Setenv(envServerURL, srv.URL)
+	useTestResolver(t, srv.URL)
 
 	got, err := SecretsForEnv(Selection{Mode: ModeCloud}, nil, "qa")
 	if err != nil {

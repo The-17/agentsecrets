@@ -67,8 +67,8 @@ arbitrarily large 2xx body. Every client reads through a 12 MiB cap and refuses
 anything larger. An incomplete envelope (missing `status_code` for the resolver,
 missing `{data}` for workload env) is an error, not a status-0 or empty success.
 
-- Go: `io.LimitReader` in `gateway.callCloud` and `api.FetchWorkloadEnv`, plus
-  `status_code` / `data`-envelope validation.
+- Go: `io.LimitReader` in `gateway.callCloud` and `api.FetchWorkloadEnvSealed` (the
+  sealed resolver env path), plus `status_code` / sealed-envelope validation.
 - MCP TS: `readCapped` in `client.ts`, `status_code` validation in `cloudResolve`.
 - Plugin TS / Python: `readCapped` / `_read_capped` in their transports.
 

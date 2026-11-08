@@ -8,6 +8,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/nacl/box"
 
 	"github.com/The-17/agentsecrets/pkg/errors"
 )
@@ -607,8 +612,130 @@ func decodeDetail(resp *http.Response) string {
 	return strings.TrimSpace(string(raw))
 }
 
+// WorkloadEnvSealedResponse is the resolver's sealed env-delivery envelope. The
+// secrets map is never present in clear; `Sealed` is a NaCl anonymous sealed box
+// (box.SealAnonymous) of the JSON {key: value} map, sealed to the client's
+// ephemeral public key supplied in the request.
+type WorkloadEnvSealedResponse struct {
+	Sealed string `json:"sealed"`
+	Nonce  string `json:"nonce"`
+}
+
+// FetchWorkloadEnvSealed retrieves scoped project secrets from the Go resolver via
+// POST /v1/workloads/env. Unlike FetchWorkloadEnv (which talks to the Django
+// control plane in clear), this path is zero-knowledge on the wire: the caller
+// generates an ephemeral X25519 keypair, sends only the public key, and the
+// resolver seals the decrypted environment to it. Plaintext secret values never
+// cross the network. This is the boot-path endpoint moved off the control plane
+// (v4 plan Phase 3) so a control-plane outage no longer stops container restarts.
+func FetchWorkloadEnvSealed(ctx context.Context, resolverURL, token, environment, projectID string) (map[string]string, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("invalid workload token: token is empty")
+	}
+
+	// Ephemeral keypair lives only for this single request. box.GenerateKey
+	// returns the public and private key; the private key is wiped before return.
+	clientPub, clientPriv, err := box.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate ephemeral key: %w", err)
+	}
+	defer func() {
+		for i := range clientPriv {
+			clientPriv[i] = 0
+		}
+		for i := range clientPub {
+			clientPub[i] = 0
+		}
+	}()
+
+	reqBody, err := json.Marshal(map[string]string{
+		"client_public_key": hex.EncodeToString(clientPub[:]),
+		"environment":       environment,
+		"project_id":       projectID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode workload request: %w", err)
+	}
+
+	targetURL := strings.TrimRight(resolverURL, "/") + "/v1/workloads/env"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create workload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		// A redirect is data from an untrusted peer, not an instruction to fetch
+		// another location. Following one lets a hostile resolver point the client at
+		// an internal or metadata endpoint (client-side SSRF).
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("network error contacting cloud resolver: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("resolver returned a redirect (%d); refusing to follow it", resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if detail := decodeDetail(resp); detail != "" {
+			return nil, fmt.Errorf("%s", detail)
+		}
+		return nil, fmt.Errorf("authentication failed: invalid, expired, or revoked workload token, or missing can_env_read capability")
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, decodeDetail(resp))
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxWorkloadResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read workload response: %w", err)
+	}
+	if int64(len(raw)) > maxWorkloadResponseBytes {
+		return nil, fmt.Errorf("workload response exceeds %d bytes; refusing to buffer it", maxWorkloadResponseBytes)
+	}
+
+	var envelope WorkloadEnvSealedResponse
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse sealed workload response: %w", err)
+	}
+	if envelope.Sealed == "" {
+		return nil, fmt.Errorf("workload response is missing the sealed envelope")
+	}
+
+	sealed, err := base64.StdEncoding.DecodeString(envelope.Sealed)
+	if err != nil {
+		return nil, fmt.Errorf("workload response sealed field is not valid base64: %w", err)
+	}
+
+	// Open the anonymous sealed box to our ephemeral keypair. Only the holder of
+	// clientPriv can recover the plaintext; a captured response is useless without
+	// it. box.OpenAnonymous returns (plaintext, ok) — ok=false means the ciphertext
+	// was not sealed to this keypair (or was tampered with).
+	opened, ok := box.OpenAnonymous(nil, sealed, clientPub, clientPriv)
+	if !ok {
+		return nil, fmt.Errorf("failed to open sealed environment: the response was not sealed to this request's key")
+	}
+
+	var env map[string]string
+	if err := json.Unmarshal(opened, &env); err != nil {
+		return nil, fmt.Errorf("failed to decode sealed environment: %w", err)
+	}
+	return env, nil
+}
+
 // FetchWorkloadEnv retrieves scoped project secrets over TLS using an agent workload token.
 // environment selects a non-default environment; empty means the token's own.
+//
+// Deprecated: cloud env delivery moved to the Go resolver with a sealed response
+// (FetchWorkloadEnvSealed). This control-plane path remains only as a fallback and
+// is slated for retirement once all clients use the resolver endpoint.
 func FetchWorkloadEnv(ctx context.Context, serverURL, token, environment string) (map[string]string, error) {
 	// Workload tokens are opaque `secrets.token_urlsafe(32)` values (43 chars,
 	// no prefix) issued by the control plane and verified server-side by

@@ -109,7 +109,9 @@ func TestAdversarialCloudOutageNeverFallsBackToLocal(t *testing.T) {
 	deadURL := dead.URL
 	dead.Close()
 
-	t.Setenv(envServerURL, deadURL)
+	// Cloud env delivery now uses the resolver (ResolverURL), not the control
+	// plane, so the outage simulation must point the resolver at a dead host.
+	useTestResolver(t, deadURL)
 	t.Setenv(envToken, "workload-token")
 
 	localUsed := false

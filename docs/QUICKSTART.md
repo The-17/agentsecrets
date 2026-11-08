@@ -208,7 +208,7 @@ Both reach the binary because the wrapper inherits the environment:
 
 1. **No GitHub fetch, no writable home.** The Go binary ships inside the wheel/package (Phase 1), so it is already on disk. Nothing is downloaded and nothing is written to `~/.agentsecrets` at startup.
 2. **Mode is selected from the environment.** `agentsecrets` reads `AGENTSECRETS_MODE=cloud` (highest env precedence) and resolves through the cloud resolver. No `mode` command and no config file are required.
-3. **Secrets are injected, the token is not.** `agentsecrets env -- <cmd>` resolves secrets via `POST /api/workloads/env/`, injects them into the child process, and execs it. The child receives the secrets; it never receives `AGENTSECRETS_TOKEN`.
+3. **Secrets are injected, the token is not.** `agentsecrets env -- <cmd>` resolves secrets via `POST /v1/workloads/env` on the Go resolver. The CLI generates an ephemeral X25519 keypair, sends only the public key, and the resolver seals the environment to it, so plaintext secret values never cross the wire; the child receives the decrypted secrets and never receives `AGENTSECRETS_TOKEN`. This endpoint lives on the resolver (not the Django control plane) so a control-plane outage no longer stops container restarts.
 4. **Single-request override still works.** `agentsecrets call --cloud` forces cloud for one call on a local machine.
 
 ### Run examples

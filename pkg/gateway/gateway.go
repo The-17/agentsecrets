@@ -639,7 +639,10 @@ func SecretsForEnv(sel Selection, local func() (map[string]string, error), envir
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		secrets, err := api.FetchWorkloadEnv(ctx, config.GetServerURL(), token, environment)
+		// Phase 3: env delivery now hits the Go resolver with a sealed response
+		// (FetchWorkloadEnvSealed) instead of the Django control plane. This removes
+		// the per-restart control-plane dependency and keeps plaintext off the wire.
+		secrets, err := api.FetchWorkloadEnvSealed(ctx, ResolverURL(), token, environment, "")
 		if err != nil {
 			return nil, &ResolveError{Mode: ModeCloud, Msg: "cloud resolution failed", Err: err}
 		}
