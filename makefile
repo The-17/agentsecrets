@@ -2,7 +2,7 @@
 
 # Variables
 BINARY_NAME=agentsecrets
-VERSION?=3.1.5
+VERSION?=3.3.7
 BUILD_DIR=bin
 GO=go
 GOFMT=gofmt
