@@ -19,6 +19,10 @@ import (
 var (
 	agentPolicyAllow []string
 	agentPolicyDeny  []string
+
+	// agentCreateStoreSecret defaults to storing the minted token as the
+	// project secret AGENTSECRETS_TOKEN so workloads pick it up automatically.
+	agentCreateStoreSecret bool
 )
 
 var agentCmd = &cobra.Command{
@@ -29,36 +33,15 @@ var agentCmd = &cobra.Command{
 }
 
 var agentRegisterCmd = &cobra.Command{
-	Use:   "register <name>",
-	Short: "Register a new agent and issue its first token",
-	Args:  cobra.ExactArgs(1),
+	Use:        "register <name>",
+	Short:      "Register a new agent and issue its first token (alias of 'create')",
+	Deprecated: "use 'agent create' instead, which stores the token as a project secret for you",
+	Args:       cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := verifyPasswordLocally(); err != nil {
-			return err
-		}
-		name := args[0]
 		projectFlag, _ := cmd.Flags().GetString("project")
 		label, _ := cmd.Flags().GetString("label")
 		expires, _ := cmd.Flags().GetString("expires")
 		environment, _ := cmd.Flags().GetString("env")
-
-		if environment == "" {
-			environment = config.ResolveEnvironment()
-		}
-		environment, err := config.ParseEnvironment(environment)
-		if err != nil {
-			return err
-		}
-
-		workspaceID, err := requireWorkspace()
-		if err != nil {
-			return err
-		}
-
-		projectID, err := resolveProjectID(workspaceID, projectFlag)
-		if err != nil {
-			return err
-		}
 
 		caps := &capabilities.AgentCapabilities{}
 		hasCaps := false
@@ -77,75 +60,226 @@ var agentRegisterCmd = &cobra.Command{
 			capsReq = caps
 		}
 
-		expiresDays, err := agents.ParseExpiresInDays(expires)
-		if err != nil {
-			return fmt.Errorf("invalid --expires: %w", err)
+		in := agentCreateInput{
+			Name:        args[0],
+			ProjectFlag: projectFlag,
+			Label:       label,
+			Expires:     expires,
+			Environment: environment,
+			Caps:        capsReq,
+		}
+		if cmd.Flags().Changed("save-token") {
+			v, _ := cmd.Flags().GetBool("save-token")
+			in.SaveToken = &v
+		}
+		return runAgentCreate(cmd, in)
+	},
+}
+
+// agentCreateCmd is the v4 one-command identity: bind an agent, mint its first
+// token, grant capability scopes, and (by default) store that token as the
+// project secret AGENTSECRETS_TOKEN so downstream workloads pick it up with no
+// manual export.
+var agentCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a v4 agent identity and its first token (one command)",
+	Long: "Create a named agent bound to a workspace or project, mint its first token, " +
+		"and (by default) store that token as the project secret AGENTSECRETS_TOKEN so downstream " +
+		"workloads pick it up with no further setup.\n\n" +
+		"Scopes are granted with --allow. The control plane can mint only secrets:env and " +
+		"secrets:proxy today; any other scope fails closed rather than being silently dropped.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		scope, _ := cmd.Flags().GetString("scope")
+		scope = strings.ToLower(strings.TrimSpace(scope))
+		switch scope {
+		case "project", "workspace":
+		default:
+			return fmt.Errorf("invalid --scope %q; use 'project' or 'workspace'", scope)
 		}
 
-		resp, err := app.Agents().Register(agents.RegisterRequest{
-			Name:          name,
-			WorkspaceID:   workspaceID,
-			ProjectID:     projectID,
-			Environment:   environment,
-			Label:         label,
-			ExpiresInDays: expiresDays,
-			Capabilities:  capsReq,
-		})
-		if err != nil {
-			return fmt.Errorf("agent registration failed: %w", err)
+		projectFlag, _ := cmd.Flags().GetString("project")
+		if scope == "workspace" {
+			if projectFlag != "" {
+				return fmt.Errorf("--scope workspace cannot be combined with --project; a workspace-wide token has no project binding")
+			}
+		} else if projectFlag == "" {
+			return fmt.Errorf("--scope project requires --project <name>")
 		}
 
-		cfg, _ := config.LoadGlobalConfig()
-		_ = proxy.LogManagementEvent("CREATE", "agent", fmt.Sprintf("Registered agent %s", resp.Agent.Name), cfg.Email, workspaceID, projectID, environment)
+		allow, _ := cmd.Flags().GetStringSlice("allow")
+		caps, err := capabilities.ParseScopes(allow)
+		if err != nil {
+			return err
+		}
 
-		scope := "workspace"
-		if projectID != "" {
-			projService := app.Projects()
-			projectsList, err := projService.List()
-			if err == nil {
+		in := agentCreateInput{
+			Name:        args[0],
+			Scope:       scope,
+			ProjectFlag: projectFlag,
+			Label:       cmd.Flag("label").Value.String(),
+			Expires:     cmd.Flag("expires").Value.String(),
+			Environment: cmd.Flag("env").Value.String(),
+			Caps:        caps,
+			StoreSecret: agentCreateStoreSecret,
+		}
+		if cmd.Flags().Changed("save-token") {
+			v, _ := cmd.Flags().GetBool("save-token")
+			in.SaveToken = &v
+		}
+		return runAgentCreate(cmd, in)
+	},
+}
+
+// agentCreateInput is the resolved request shared by `register` and `create`.
+type agentCreateInput struct {
+	Name        string
+	Scope       string // "project" | "workspace" (informational; resolution uses ProjectFlag)
+	ProjectFlag string
+	Label       string
+	Expires     string
+	Environment string
+	Caps        *capabilities.AgentCapabilities
+	SaveToken   *bool // nil => prompt the user
+	StoreSecret bool  // store token as project secret AGENTSECRETS_TOKEN
+}
+
+// runAgentCreate is the single implementation behind both `register` and
+// `create`, so the two commands cannot drift.
+func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
+	if err := verifyPasswordLocally(); err != nil {
+		return err
+	}
+
+	environment := in.Environment
+	if environment == "" {
+		environment = config.ResolveEnvironment()
+	}
+	environment, err := config.ParseEnvironment(environment)
+	if err != nil {
+		return err
+	}
+
+	workspaceID, err := requireWorkspace()
+	if err != nil {
+		return err
+	}
+
+	projectID, err := resolveProjectID(workspaceID, in.ProjectFlag)
+	if err != nil {
+		return err
+	}
+
+	expiresDays, err := agents.ParseExpiresInDays(in.Expires)
+	if err != nil {
+		return fmt.Errorf("invalid --expires: %w", err)
+	}
+
+	resp, err := app.Agents().Register(agents.RegisterRequest{
+		Name:          in.Name,
+		WorkspaceID:   workspaceID,
+		ProjectID:     projectID,
+		Environment:   environment,
+		Label:         in.Label,
+		ExpiresInDays: expiresDays,
+		Capabilities:  in.Caps,
+	})
+	if err != nil {
+		return fmt.Errorf("agent creation failed: %w", err)
+	}
+
+	cfg, _ := config.LoadGlobalConfig()
+	_ = proxy.LogManagementEvent("CREATE", "agent", fmt.Sprintf("Created agent %s", resp.Agent.Name), cfg.Email, workspaceID, projectID, environment)
+
+	scopeName := "workspace"
+	if projectID != "" {
+		scopeName = in.ProjectFlag
+		if scopeName == "" {
+			if projectsList, e := app.Projects().List(); e == nil {
 				for _, p := range projectsList {
 					if p.ID == projectID {
-						scope = p.Name
+						scopeName = p.Name
 						break
 					}
 				}
-			} else {
-				scope = projectID
+			}
+			if scopeName == "" {
+				scopeName = projectID
 			}
 		}
+	}
 
-		fmt.Println("\n" + ui.SuccessStyle.Render("Agent registered"))
-		fmt.Printf("  Name     %s\n", resp.Agent.Name)
-		fmt.Printf("  Scope    %s\n", scope)
-		fmt.Printf("  Token    %s\n", resp.Token)
-		if resp.ExpiresAt != nil {
-			fmt.Printf("  Expires  %s\n", resp.ExpiresAt.Format("2006-01-02"))
+	fmt.Println("\n" + ui.SuccessStyle.Render("Agent created"))
+	fmt.Printf("  Name   %s\n", resp.Agent.Name)
+	fmt.Printf("  Scope  %s\n", scopeName)
+	fmt.Printf("  Env    %s\n", environment)
+	if resp.ExpiresAt != nil {
+		fmt.Printf("  Expires %s\n", resp.ExpiresAt.Format("2006-01-02"))
+	}
+	if in.Caps != nil {
+		granted := []string{}
+		if in.Caps.CanEnvRead != nil && *in.Caps.CanEnvRead {
+			granted = append(granted, capabilities.ScopeEnvRead)
 		}
+		if in.Caps.CanProxyResolve != nil && *in.Caps.CanProxyResolve {
+			granted = append(granted, capabilities.ScopeProxyResolve)
+		}
+		fmt.Printf("  Scopes %s\n", strings.Join(granted, ", "))
+	}
 
-		fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
-		fmt.Printf("To use it: export %s=%s\n", gateway.WorkloadTokenEnv, resp.Token)
-
-		var storeInKeychain bool
-		if cmd.Flags().Changed("save-token") {
-			storeInKeychain, _ = cmd.Flags().GetBool("save-token")
+	// Chicken-and-egg closer: store the token as the project secret so the next
+	// workload picks it up with no manual export. Fail soft — the token is
+	// already minted and unrecoverable, so a store failure must warn, never
+	// abort (the user can always copy the export line below).
+	if in.StoreSecret {
+		if err := storeProjectToken(projectID, resp.Token); err != nil {
+			ui.Warning(fmt.Sprintf("Token not stored as project secret: %s", err))
 		} else {
-			storeInKeychain = confirmHuh(
-				"Would you like to store this agent token in your local OS Keychain?",
-				fmt.Sprintf("This allows referencing it in your code via %s_TOKEN", strings.ToUpper(resp.Agent.Name)),
-			)
+			fmt.Println()
+			ui.Success(fmt.Sprintf("Stored token as project secret %s — workloads will pick it up automatically", gateway.WorkloadTokenEnv))
 		}
+	}
 
-		if storeInKeychain {
-			if err := keyring.SetAgentToken(resp.Agent.Name, resp.Token); err != nil {
-				ui.Error(fmt.Sprintf("Failed to store agent token in keychain: %v", err))
-			} else {
-				fmt.Println()
-				ui.Success(fmt.Sprintf("Stored agent token in keychain! You can now reference it via: %s_TOKEN", strings.ToUpper(resp.Agent.Name)))
-			}
+	fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
+	fmt.Printf("To use it: export %s=%s\n", gateway.WorkloadTokenEnv, resp.Token)
+
+	var storeInKeychain bool
+	if in.SaveToken != nil {
+		storeInKeychain = *in.SaveToken
+	} else {
+		storeInKeychain = confirmHuh(
+			"Would you like to store this agent token in your local OS Keychain?",
+			fmt.Sprintf("This allows referencing it in your code via %s_TOKEN", strings.ToUpper(resp.Agent.Name)),
+		)
+	}
+	if storeInKeychain {
+		if err := keyring.SetAgentToken(resp.Agent.Name, resp.Token); err != nil {
+			ui.Error(fmt.Sprintf("Failed to store agent token in keychain: %v", err))
+		} else {
+			fmt.Println()
+			ui.Success(fmt.Sprintf("Stored agent token in keychain! You can now reference it via: %s_TOKEN", strings.ToUpper(resp.Agent.Name)))
 		}
-		fmt.Println()
-		return nil
-	},
+	}
+	fmt.Println()
+	return nil
+}
+
+// storeProjectToken writes the minted token as the project secret
+// AGENTSECRETS_TOKEN in the current project. It refuses to write to a project
+// other than the one the agent was bound to, and returns an actionable error
+// (not a failure) when there is no project context in the current directory.
+func storeProjectToken(projectID, token string) error {
+	pc, err := config.LoadProjectConfig()
+	if err != nil || pc == nil || pc.ProjectID == "" {
+		return fmt.Errorf("no project in the current directory; set it yourself: export %s=%s", gateway.WorkloadTokenEnv, token)
+	}
+	if projectID != "" && pc.ProjectID != projectID {
+		return fmt.Errorf("current directory is project %s, not the target %s; not writing the token there", pc.ProjectID, projectID)
+	}
+	if err := app.Secrets().Set(gateway.WorkloadTokenEnv, token); err != nil {
+		return fmt.Errorf("could not write project secret: %w", err)
+	}
+	return nil
 }
 
 var agentListCmd = &cobra.Command{
@@ -616,6 +750,7 @@ func init() {
 	agentPolicySetCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve); use --proxy-resolve=false to revoke")
 
 	agentCmd.AddCommand(agentRegisterCmd)
+	agentCmd.AddCommand(agentCreateCmd)
 	agentCmd.AddCommand(agentListCmd)
 	agentCmd.AddCommand(agentTokenCmd)
 	agentCmd.AddCommand(agentDeleteCmd)
@@ -636,6 +771,16 @@ func init() {
 	agentRegisterCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
 	agentRegisterCmd.Flags().Bool("env-read", false, "grant headless environment delivery scope (can_env_read) at creation")
 	agentRegisterCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve) at creation")
+
+	// Flags for create (the v4 command)
+	agentCreateCmd.Flags().String("scope", "project", "binding scope: 'project' (default) or 'workspace'")
+	agentCreateCmd.Flags().StringP("project", "p", "", "project to bind the agent to (required when --scope project)")
+	agentCreateCmd.Flags().StringP("label", "l", "", "human label for the first token")
+	agentCreateCmd.Flags().StringP("expires", "e", "", "token expiry (e.g. 30d, 90d)")
+	agentCreateCmd.Flags().String("env", "", "environment for the token (development, staging, production, or a custom name)")
+	agentCreateCmd.Flags().StringSlice("allow", nil, "capability scopes to grant: secrets:env, secrets:proxy (comma- or space-separated, repeatable)")
+	agentCreateCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
+	agentCreateCmd.Flags().BoolVar(&agentCreateStoreSecret, "store-secret", true, "store the token as project secret AGENTSECRETS_TOKEN so workloads pick it up automatically")
 
 	// Flags for list
 	agentListCmd.Flags().StringP("project", "p", "", "filter to a specific project")
