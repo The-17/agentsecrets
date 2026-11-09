@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/The-17/agentsecrets/pkg/pop"
 )
 
 // maxIdentityResponseBytes caps how much of an identity response the client will
@@ -52,6 +54,9 @@ func FetchWorkloadIdentity(ctx context.Context, resolverURL, token string) (*Wor
 		return nil, fmt.Errorf("failed to create identity request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	// Resolver request: attach a proof when a signer is installed. No-op for
+	// every token minted today (the resolver skips PoP without a confirmation key).
+	pop.AttachProof(req)
 
 	client := &http.Client{
 		Timeout: 15 * time.Second,

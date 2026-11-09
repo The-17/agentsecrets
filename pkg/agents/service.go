@@ -41,16 +41,23 @@ type Token struct {
 
 // RegisterRequest holds data to register a new agent.
 type RegisterRequest struct {
-	Name        string `json:"name"`
-	WorkspaceID string `json:"-"` // used for routing, not sent in body
-	ProjectID   string `json:"project_id,omitempty"`
-	Environment string `json:"environment,omitempty"` // development, staging, production
+	Name          string `json:"name"`
+	WorkspaceID   string `json:"-"` // used for routing, not sent in body
+	ProjectID     string `json:"project_id,omitempty"`
+	Environment   string `json:"environment,omitempty"` // development, staging, production
 	Label         string `json:"label,omitempty"`
 	ExpiresInDays int    `json:"expires_in_days,omitempty"` // whole days; 0 = no expiry
 	// Optional capability scopes granted at creation (e.g. can_env_read for
 	// headless env delivery, can_proxy_resolve for proxy credential resolution).
 	// When nil, the server defaults to proxy-only (env-read denied).
 	Capabilities *capabilities.AgentCapabilities `json:"capabilities,omitempty"`
+	// ConfirmationKey is the DPoP-style proof-of-possession public key (cnf/jkt)
+	// to bind to the minted token. It is an inert hook for the (still-open) key
+	// transport ADR: no caller populates it yet, so `omitempty` keeps it off the
+	// wire and every existing registration is byte-for-byte unchanged. Once the
+	// control plane stores the key and a private-key transport is decided, the
+	// resolver requires a signed proof per request.
+	ConfirmationKey []byte `json:"cnf_key,omitempty"`
 }
 
 // RegisterResponse is returned when registering a new agent (contains the cleartext token).

@@ -31,6 +31,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/api"
 	"github.com/The-17/agentsecrets/pkg/config"
 	clierrors "github.com/The-17/agentsecrets/pkg/errors"
+	"github.com/The-17/agentsecrets/pkg/pop"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 )
 
@@ -378,6 +379,9 @@ func callCloud(req CallRequest) (*CallResult, error) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
+	// Resolver request: attach a proof when a signer is installed. No-op for
+	// every token minted today (the resolver skips PoP without a confirmation key).
+	pop.AttachProof(httpReq)
 
 	client := &http.Client{
 		Timeout: cloudTimeout,

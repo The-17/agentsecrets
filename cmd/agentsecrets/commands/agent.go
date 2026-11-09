@@ -175,6 +175,11 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 		return fmt.Errorf("invalid --expires: %w", err)
 	}
 
+	// Proof-of-possession (cnf/jkt) activation is intentionally deferred. Private
+	// key transport to the workload that later uses this token is an open ADR
+	// decision; minting an ephemeral, process-local key here would silently guess
+	// it and brick the token once the control plane starts honoring cnf_key. The
+	// cnf_key wire field on RegisterRequest stays as an inert hook for that step.
 	resp, err := app.Agents().Register(agents.RegisterRequest{
 		Name:          in.Name,
 		WorkspaceID:   workspaceID,
