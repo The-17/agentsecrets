@@ -30,6 +30,20 @@ const (
 	TimestampHeader = "X-AS-PoP-TS"
 )
 
+// Cross-repo golden vector. These bytes are duplicated verbatim in the cloud
+// resolver's internal/server/pop_test.go. Ed25519 signing is deterministic, so
+// one fixed seed + method + path + timestamp yields one signature. If either
+// side changes the signed message or header names, its own test fails against
+// these constants and the drift cannot ship silently.
+const (
+	goldenSeed      = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+	goldenPublicKey = "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+	goldenTimestamp = "1700000000"
+	goldenMethod    = "POST"
+	goldenPath      = "/v1/identity"
+	goldenSignature = "wEmglnn7tt0fp0q6ZKGgDmsNIYA5V5qrTnUrzxcHy/rEQ/wLmfvbd5MxzzlMxI63ihuW4liDO6FJ6z4uR1UXBQ=="
+)
+
 // ProofSigner holds the private half of a proof-of-possession keypair. The
 // matching public key is bound to a workload token at mint time; the private
 // key never leaves this process.
@@ -65,7 +79,13 @@ func (s *ProofSigner) PublicKey() []byte {
 // proof headers. The message format MUST match the resolver's verification
 // (server.popMessage): "METHOD\nPATH\nTIMESTAMP".
 func (s *ProofSigner) Attach(req *http.Request) {
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	s.attachAt(req, strconv.FormatInt(time.Now().Unix(), 10))
+}
+
+// attachAt is the deterministic seam used by the cross-repo golden-vector test.
+// The wire contract is duplicated between this package and the cloud resolver,
+// so a fixed vector pinned in both test suites is the only proof they agree.
+func (s *ProofSigner) attachAt(req *http.Request, ts string) {
 	msg := []byte(req.Method + "\n" + req.URL.Path + "\n" + ts)
 	sig := ed25519.Sign(s.priv, msg)
 	req.Header.Set(ProofHeader, base64.StdEncoding.EncodeToString(sig))

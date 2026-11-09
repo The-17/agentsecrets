@@ -92,3 +92,36 @@ func TestNewProofSignerFromSeed_RoundTrip(t *testing.T) {
 		t.Fatal("a truncated seed must be rejected")
 	}
 }
+
+// TestGoldenWireVector pins the exact bytes the CLI puts on the wire. The cloud
+// resolver's pop_test.go verifies this same signature against its own
+// popMessage construction, so the two halves cannot drift apart unnoticed.
+func TestGoldenWireVector(t *testing.T) {
+	seed, err := base64.StdEncoding.DecodeString(goldenSeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := NewProofSignerFromSeed(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base64.StdEncoding.EncodeToString(signer.PublicKey()); got != goldenPublicKey {
+		t.Fatalf("public key drifted: got %s, want %s", got, goldenPublicKey)
+	}
+
+	req := httptest.NewRequest(goldenMethod, goldenPath, nil)
+	signer.attachAt(req, goldenTimestamp)
+
+	if got := req.Header.Get(ProofHeader); got != goldenSignature {
+		t.Fatalf("signature drifted from the cross-repo golden vector:\n got %s\nwant %s", got, goldenSignature)
+	}
+	if got := req.Header.Get(TimestampHeader); got != goldenTimestamp {
+		t.Fatalf("timestamp header = %q, want %q", got, goldenTimestamp)
+	}
+	// Independently confirm the signature is valid over the documented message.
+	sig, _ := base64.StdEncoding.DecodeString(goldenSignature)
+	msg := []byte(goldenMethod + "\n" + goldenPath + "\n" + goldenTimestamp)
+	if !ed25519.Verify(signer.PublicKey(), msg, sig) {
+		t.Fatal("golden signature does not verify over METHOD\\nPATH\\nTIMESTAMP")
+	}
+}
