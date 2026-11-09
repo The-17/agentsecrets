@@ -163,26 +163,46 @@ func Select(flag string) (Selection, error) {
 	return Selection{Mode: ModeLocal, Source: "default"}, nil
 }
 
-// TokenFromEnv returns the workload token supplied by the environment: the
-// canonical AGENTSECRETS_TOKEN, then the file named by AGENTSECRETS_TOKEN_FILE,
-// then the legacy aliases (AS_AGENT_TOKEN, AGENTSECRETS_AGENT_TOKEN, and the
-// file named by AGENTSECRETS_AGENT_TOKEN_FILE). The alias order mirrors the MCP
-// bridge's workload-credential chain. The file indirection exists so a token
-// never has to sit in a process listing or a client config.
-func TokenFromEnv() string {
+// tokenFromEnvWithSource returns the workload token AND the name of the source
+// that supplied it. This is the single source of truth for the precedence chain:
+// TokenFromEnv and DescribeTokenSource both call it, so they cannot drift.
+//
+// Order: the canonical AGENTSECRETS_TOKEN, then the file named by
+// AGENTSECRETS_TOKEN_FILE, then the legacy aliases (AS_AGENT_TOKEN,
+// AGENTSECRETS_AGENT_TOKEN, and the file named by AGENTSECRETS_AGENT_TOKEN_FILE).
+// The alias order mirrors the MCP bridge's workload-credential chain. The file
+// indirection exists so a token never has to sit in a process listing or config.
+func tokenFromEnvWithSource() (token, source string) {
 	if tok := strings.TrimSpace(os.Getenv(envToken)); tok != "" {
-		return tok
+		return tok, envToken
 	}
 	if tok := tokenFromFile(envTokenFile); tok != "" {
-		return tok
+		return tok, envTokenFile + " (file)"
 	}
 	if tok := strings.TrimSpace(os.Getenv(envAgentToken)); tok != "" {
-		return tok
+		return tok, envAgentToken + " (legacy alias)"
 	}
 	if tok := strings.TrimSpace(os.Getenv(envAgentTokenAlt)); tok != "" {
-		return tok
+		return tok, envAgentTokenAlt + " (legacy alias)"
 	}
-	return tokenFromFile(envAgentTokenFile)
+	if tok := tokenFromFile(envAgentTokenFile); tok != "" {
+		return tok, envAgentTokenFile + " (file, legacy alias)"
+	}
+	return "", "none"
+}
+
+// TokenFromEnv returns the workload token supplied by the environment.
+func TokenFromEnv() string {
+	tok, _ := tokenFromEnvWithSource()
+	return tok
+}
+
+// DescribeTokenSource reports WHERE the workload credential came from, without
+// ever returning the credential itself. It answers "where did my token come
+// from" for `agentsecrets doctor`. Returns "none" when no token is present.
+func DescribeTokenSource() string {
+	_, src := tokenFromEnvWithSource()
+	return src
 }
 
 // tokenFromFile trims the contents of the file the variable names. Empty on a

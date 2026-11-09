@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/The-17/agentsecrets/pkg/api"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -65,11 +66,17 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// re-runs Diagnose() and would otherwise discard them.
 	appendSystemChecks(report)
 
+	// v4 Phase 4: answer "who am I, where did my token come from, what can I do"
+	// in the same output. This is a bounded, non-fatal probe: an unreachable
+	// resolver degrades to a warning rather than failing the whole diagnostic.
+	identity := collectDoctorIdentity(api.FetchWorkloadIdentity)
+	appendIdentityFinding(report, identity)
+
 	if doctorJSON {
-		return emitDoctorJSON(report)
+		return emitDoctorJSON(report, identity)
 	}
 
-	renderDoctorReport(report)
+	renderDoctorReport(report, identity)
 
 	if !report.Healthy() {
 		// Non-zero exit so scripts and CI can gate on a broken installation.
@@ -78,7 +85,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func renderDoctorReport(report *keychainauth.Report) {
+func renderDoctorReport(report *keychainauth.Report, identity doctorIdentity) {
 	fmt.Println()
 	ui.Banner("AgentSecrets Doctor")
 	ui.Divider()
@@ -100,6 +107,8 @@ func renderDoctorReport(report *keychainauth.Report) {
 	if report.SelfPath != "" {
 		ui.StatusRow("This binary", report.SelfPath)
 	}
+
+	renderIdentitySection(identity)
 
 	fmt.Println()
 	for _, f := range report.Findings {
@@ -154,7 +163,7 @@ func doctorStatusGlyph(s keychainauth.Status) string {
 }
 
 // emitDoctorJSON writes a machine-readable report for scripts and support triage.
-func emitDoctorJSON(report *keychainauth.Report) error {
+func emitDoctorJSON(report *keychainauth.Report, identity doctorIdentity) error {
 	type findingJSON struct {
 		ID      string `json:"id"`
 		Title   string `json:"title"`
@@ -164,16 +173,17 @@ func emitDoctorJSON(report *keychainauth.Report) error {
 		Fixable bool   `json:"fixable"`
 	}
 	out := struct {
-		Healthy          bool          `json:"healthy"`
-		OS               string        `json:"os"`
-		IsWSL            bool          `json:"is_wsl"`
-		HasSystemd       bool          `json:"has_systemd"`
-		KeychainAuthPath string        `json:"keychain_auth_path,omitempty"`
-		DaemonVersion    string        `json:"daemon_version,omitempty"`
-		DaemonMode       string        `json:"daemon_mode,omitempty"`
-		SocketPath       string        `json:"socket_path,omitempty"`
-		SelfPath         string        `json:"self_path,omitempty"`
-		Findings         []findingJSON `json:"findings"`
+		Healthy          bool           `json:"healthy"`
+		OS               string         `json:"os"`
+		IsWSL            bool           `json:"is_wsl"`
+		HasSystemd       bool           `json:"has_systemd"`
+		KeychainAuthPath string         `json:"keychain_auth_path,omitempty"`
+		DaemonVersion    string         `json:"daemon_version,omitempty"`
+		DaemonMode       string         `json:"daemon_mode,omitempty"`
+		SocketPath       string         `json:"socket_path,omitempty"`
+		SelfPath         string         `json:"self_path,omitempty"`
+		Findings         []findingJSON  `json:"findings"`
+		Identity         doctorIdentity `json:"identity"`
 	}{
 		Healthy:          report.Healthy(),
 		OS:               report.Platform.OS,
@@ -184,6 +194,7 @@ func emitDoctorJSON(report *keychainauth.Report) error {
 		DaemonMode:       report.DaemonMode,
 		SocketPath:       report.SocketPath,
 		SelfPath:         report.SelfPath,
+		Identity:         identity,
 	}
 	for _, f := range report.Findings {
 		out.Findings = append(out.Findings, findingJSON{
