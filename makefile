@@ -2,7 +2,11 @@
 
 # Variables
 BINARY_NAME=agentsecrets
-VERSION?=3.1.5
+# Version is the canonical project version, read from pypi/pyproject.toml — the
+# same file the verify scripts and the release pipeline already read. It used to
+# be hardcoded here as a stale "3.1.5", so every local and VM `make build`
+# stamped 3.1.5 while the code was already v4. Deriving it removes the drift.
+VERSION?=$(or $(shell grep -m1 '^version = ' pypi/pyproject.toml 2>/dev/null | sed 's/.*"\(.*\)"/\1/'),4.0.0-dev)
 BUILD_DIR=bin
 GO=go
 GOFMT=gofmt
