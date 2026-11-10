@@ -43,12 +43,15 @@ func (s *Service) EnsureAuth(cmd *cobra.Command, args []string) error {
 	if config.IsTokenExpired() {
 		tokens, err := config.LoadTokens()
 		if err != nil || tokens == nil || tokens.RefreshToken == "" {
-			return errors.New(errors.ErrUnauthorized, "session expired, please run 'agentsecrets login' again", nil)
+			// No refresh token can renew this session, so login is required.
+			return errors.New(errors.ErrUnauthorized, "your session expired and no refresh token is stored to renew it automatically. Run 'agentsecrets login' to sign in again.", nil)
 		}
+		// A refresh token exists: renew silently. Only if the server rejects it
+		// is a fresh login actually required, and then we say exactly that.
 		if err := ui.Spinner("Refreshing expired session token...", func() error {
 			return s.RefreshSession(tokens.RefreshToken)
 		}); err != nil {
-			return errors.New(errors.ErrUnauthorized, "session refresh failed, you may need to log in again", err)
+			return errors.New(errors.ErrUnauthorized, "your session expired and the stored refresh token was rejected. Run 'agentsecrets login' to sign in again.", err)
 		}
 	}
 

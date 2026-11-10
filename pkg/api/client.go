@@ -302,9 +302,9 @@ func (c *Client) CallCtx(ctx context.Context, endpointKey, method string, data i
 	// Public endpoints (auth.login, auth.refresh, telemetry.sync) are excluded
 	// to prevent infinite refresh loops since auth.refresh is itself public.
 	if resp.StatusCode == 401 && !publicEndpoints[endpointKey] && c.refreshFn != nil {
-		// Buffer the first 401 body so we can return it if refresh fails,
-		// instead of replaying a potentially non-idempotent request.
-		bodyBytes, readErr := io.ReadAll(resp.Body)
+		// The access token was rejected. Drain the 401 body (the refresh outcome
+		// below is the real answer) and attempt the automatic refresh once.
+		_, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		// Thread-safe token refresh execution
@@ -316,10 +316,17 @@ func (c *Client) CallCtx(ctx context.Context, endpointKey, method string, data i
 			if readErr != nil {
 				return nil, fmt.Errorf("token refresh failed: %w (and failed to read 401 body: %v)", refreshErr, readErr)
 			}
-			// Return the buffered 401 response so the caller gets the real error body.
-			resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			resp.ContentLength = int64(len(bodyBytes))
-			return resp, nil
+			// The session expired and the automatic refresh could not renew it.
+			// State the actual reason definitively instead of a vague "session may
+			// have expired": a missing refresh token is a different situation from
+			// one the server rejected, but both mean a fresh login is required.
+			reason := "the stored refresh token is expired or no longer valid"
+			if strings.Contains(refreshErr.Error(), "no refresh token") {
+				reason = "no refresh token is stored on this machine"
+			}
+			return nil, errors.New(errors.ErrUnauthorized,
+				fmt.Sprintf("your session expired and could not be renewed automatically because %s. Run 'agentsecrets login' to sign in again.", reason),
+				refreshErr)
 		}
 
 		// Retry with the freshly minted token
@@ -481,7 +488,10 @@ func (c *Client) DecodeError(resp *http.Response) error {
 		if isLoginOrSignup {
 			return errors.New(errors.ErrInvalidCredentials, baseErr.Error(), baseErr)
 		}
-		return errors.New(errors.ErrUnauthorized, fmt.Sprintf("%v. Your session may have expired. Please run 'agentsecrets login' to authenticate again.", baseErr), baseErr)
+		// Reached only when no automatic refresh was attempted (no refresh
+		// callback is wired, or this is a public endpoint), so it cannot renew
+		// itself. Be definitive rather than asking the user to guess.
+		return errors.New(errors.ErrUnauthorized, fmt.Sprintf("%v. Your session expired. Run 'agentsecrets login' to sign in again.", baseErr), baseErr)
 	case 409:
 		// Email change is refused while OPAQUE is enrolled (the email is the
 		// credential identifier). Surface it as a distinct code so the email

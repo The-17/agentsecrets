@@ -57,12 +57,16 @@ func appendSystemChecks(report *keychainauth.Report) {
 	wsList, wsErr := app.Workspaces().List()
 	switch kind, detail := classifyAPICall(wsErr); kind {
 	case "auth":
+		// A 401 only reaches here after the client already tried to renew the
+		// session from the stored refresh token and the server rejected it (or no
+		// refresh token exists). That is definitive: this session cannot recover
+		// itself, so login is the real fix. Say so instead of advising a re-run.
 		report.Findings = append(report.Findings, keychainauth.Finding{
 			ID:     "session",
-			Title:  "Your session is no longer accepted by the server",
+			Title:  "Your session expired and could not be renewed automatically",
 			Status: keychainauth.StatusBroken,
 			Detail: detail,
-			Remedy: "Run 'agentsecrets login' to refresh your session.",
+			Remedy: "Run 'agentsecrets login' to sign in again.",
 		})
 		return
 	case "network":
