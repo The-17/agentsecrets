@@ -34,6 +34,13 @@ type AgentCapabilities struct {
 	// nil = leave unchanged; &true = grant; &false = revoke.
 	CanEnvRead      *bool `json:"can_env_read,omitempty"`
 	CanProxyResolve *bool `json:"can_proxy_resolve,omitempty"`
+	// ConfirmationKey is the DPoP-style proof-of-possession public key (cnf/jkt)
+	// bound at agent creation. []byte marshals to a base64 string, which is what
+	// the resolver's ParseConfirmationKey expects. It is CREATE-ONLY: the server's
+	// capability-update schema rejects unknown keys, so the binding cannot be
+	// changed after mint. It must live inside capabilities because the control
+	// plane's AgentCreateSchema forbids extra top-level request fields.
+	ConfirmationKey []byte `json:"cnf_key,omitempty"`
 }
 
 // EvaluateSecret checks if a secret can be used for the given domain+method.

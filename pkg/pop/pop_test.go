@@ -125,3 +125,58 @@ func TestGoldenWireVector(t *testing.T) {
 		t.Fatal("golden signature does not verify over METHOD\\nPATH\\nTIMESTAMP")
 	}
 }
+
+// TestLoadSignerFromEnvironment_AbsentIsNoOp proves a token minted without PoP
+// keeps working: no seed in the environment means no signer is installed, and
+// AttachProof stays a no-op. This guards the backward-compatibility contract.
+func TestLoadSignerFromEnvironment_AbsentIsNoOp(t *testing.T) {
+	t.Setenv(SeedEnv, "")
+	t.Cleanup(func() { SetProofSigner(nil) })
+	if err := LoadSignerFromEnvironment(); err != nil {
+		t.Fatalf("absent seed must not error: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/identity", nil)
+	AttachProof(req)
+	if req.Header.Get(ProofHeader) != "" {
+		t.Fatal("absent seed must leave AttachProof a no-op")
+	}
+}
+
+// TestLoadSignerFromEnvironment_InstallsSigner proves the workload path: a valid
+// seed in the environment installs a signer that produces verifiable proofs.
+func TestLoadSignerFromEnvironment_InstallsSigner(t *testing.T) {
+	signer, _ := NewProofSigner()
+	seedB64 := base64.StdEncoding.EncodeToString(signer.Seed())
+	t.Setenv(SeedEnv, seedB64)
+	t.Cleanup(func() { SetProofSigner(nil) })
+
+	if err := LoadSignerFromEnvironment(); err != nil {
+		t.Fatalf("valid seed must install signer: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/workloads/env", nil)
+	AttachProof(req)
+	if req.Header.Get(ProofHeader) == "" {
+		t.Fatal("installed signer must attach a proof")
+	}
+	verifyAttach(t, req, signer.PublicKey())
+}
+
+// TestLoadSignerFromEnvironment_FailsClosed proves the resolver's 401 is
+// preferable to signing with the wrong key. A malformed seed aborts startup
+// rather than shipping proofs that will be rejected anyway.
+func TestLoadSignerFromEnvironment_FailsClosed(t *testing.T) {
+	t.Setenv(SeedEnv, "!!!not-base64!!!")
+	t.Cleanup(func() { SetProofSigner(nil) })
+	if err := LoadSignerFromEnvironment(); err == nil {
+		t.Fatal("malformed seed must fail closed")
+	}
+	if active != nil {
+		t.Fatal("no signer must be installed on a malformed seed")
+	}
+
+	// A present but wrong-length seed must also fail closed.
+	t.Setenv(SeedEnv, base64.StdEncoding.EncodeToString([]byte("tooshort")))
+	if err := LoadSignerFromEnvironment(); err == nil {
+		t.Fatal("wrong-length seed must fail closed")
+	}
+}

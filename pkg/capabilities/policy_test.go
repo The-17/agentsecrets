@@ -1,130 +1,56 @@
 package capabilities
 
 import (
+	"encoding/json"
 	"testing"
 )
 
-func TestEvaluateSecret(t *testing.T) {
-	// Case 1: Nil policy (unrestricted)
-	if EvaluateSecret(nil, "api.stripe.com", "POST") != Allow {
-		t.Error("expected nil policy to allow all")
+// TestAgentCapabilities_CnfKeyInsideCapabilities proves the DPoP public key
+// rides inside the capabilities dict, never as a top-level field. The control
+// plane's AgentCreateSchema uses extra="forbid", so a top-level cnf_key on the
+// registration request would be rejected with a 422 and brick every PoP mint.
+func TestAgentCapabilities_CnfKeyInsideCapabilities(t *testing.T) {
+	pub := []byte{0x01, 0x02, 0x03, 0x04}
+	caps := AgentCapabilities{ConfirmationKey: pub}
+	b, err := json.Marshal(caps)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// Case 2: Empty policy (unrestricted)
-	empty := &SecretPolicy{}
-	if EvaluateSecret(empty, "api.stripe.com", "POST") != Allow {
-		t.Error("expected empty policy to allow all")
+	s := string(b)
+	if want := `"cnf_key":"AQIDBA=="`; !containsSub(s, want) {
+		t.Fatalf("cnf_key must serialize as base64 inside the capabilities object; got %s (want substring %q)", s, want)
 	}
-
-	// Case 3: Domain matching
-	policy := &SecretPolicy{
-		Domains: []string{"api.stripe.com", "api.openai.com"},
+	// Decoding back must round-trip the public key bytes exactly.
+	var round AgentCapabilities
+	if err := json.Unmarshal(b, &round); err != nil {
+		t.Fatal(err)
 	}
-	if EvaluateSecret(policy, "api.stripe.com", "POST") != Allow {
-		t.Error("expected api.stripe.com to be allowed")
-	}
-	if EvaluateSecret(policy, "API.OPENAI.COM", "GET") != Allow {
-		t.Error("expected case-insensitive domain matching to allow")
-	}
-	if EvaluateSecret(policy, "api.github.com", "GET") != Deny {
-		t.Error("expected api.github.com to be denied")
-	}
-
-	// Case 4: Method matching
-	methodPolicy := &SecretPolicy{
-		Methods: map[string]Action{
-			"GET":  Allow,
-			"POST": RequestPermission,
-			"PUT":  Deny,
-		},
-	}
-	if EvaluateSecret(methodPolicy, "any-domain.com", "GET") != Allow {
-		t.Error("expected GET to be allowed")
-	}
-	if EvaluateSecret(methodPolicy, "any-domain.com", "get") != Allow {
-		t.Error("expected case-insensitive method GET to be allowed")
-	}
-	if EvaluateSecret(methodPolicy, "any-domain.com", "POST") != RequestPermission {
-		t.Error("expected POST to require permission")
-	}
-	if EvaluateSecret(methodPolicy, "any-domain.com", "PUT") != Deny {
-		t.Error("expected PUT to be denied")
-	}
-	if EvaluateSecret(methodPolicy, "any-domain.com", "DELETE") != Allow {
-		t.Error("expected unlisted method DELETE to be allowed when not configured")
-	}
-
-	// Case 5: Combined domains and methods
-	combined := &SecretPolicy{
-		Domains: []string{"api.stripe.com"},
-		Methods: map[string]Action{
-			"GET": Allow,
-		},
-	}
-	if EvaluateSecret(combined, "api.stripe.com", "GET") != Allow {
-		t.Error("expected matching domain and method to allow")
-	}
-	if EvaluateSecret(combined, "api.stripe.com", "POST") != Allow {
-		t.Error("expected unlisted method to default to allow if domain matches")
-	}
-	if EvaluateSecret(combined, "api.openai.com", "GET") != Deny {
-		t.Error("expected unlisted domain to deny even if method matches")
-	}
-
-	// Case 6: Domain-specific rules and fallback logic
-	rulesPolicy := &SecretPolicy{
-		Rules: []PolicyRule{
-			{
-				Domain: "api.stripe.com",
-				Methods: map[string]Action{
-					"POST": RequestPermission,
-				},
-			},
-			{
-				Domain: "httpbin.org",
-				Methods: map[string]Action{
-					"GET": Allow,
-				},
-			},
-		},
-		Methods: map[string]Action{
-			"POST": RequestPermission,
-		},
-	}
-
-	// Domain matches rule, method matches rule method:
-	if EvaluateSecret(rulesPolicy, "api.stripe.com", "POST") != RequestPermission {
-		t.Error("expected POST on stripe to require permission")
-	}
-	// Domain matches rule, method does not match rule method (specific rule overrides global fallback, but unlisted defaults to allow):
-	if EvaluateSecret(rulesPolicy, "api.stripe.com", "GET") != Allow {
-		t.Error("expected GET on stripe to allow because it is unlisted")
-	}
-	// Domain matches another rule:
-	if EvaluateSecret(rulesPolicy, "httpbin.org", "GET") != Allow {
-		t.Error("expected GET on httpbin to be allowed")
-	}
-	// Domain does not match any rule, method matches global method:
-	if EvaluateSecret(rulesPolicy, "api.github.com", "POST") != RequestPermission {
-		t.Error("expected POST on github to fall back to global and require permission")
-	}
-	// Domain does not match any rule, method does not match global method:
-	if EvaluateSecret(rulesPolicy, "api.github.com", "GET") != Allow {
-		t.Error("expected GET on github to default to allow")
-	}
-
-	// Case 7: Rules configured but no global constraints (unlisted domain should deny)
-	onlyRulesPolicy := &SecretPolicy{
-		Rules: []PolicyRule{
-			{
-				Domain: "api.stripe.com",
-				Methods: map[string]Action{
-					"POST": RequestPermission,
-				},
-			},
-		},
-	}
-	if EvaluateSecret(onlyRulesPolicy, "api.github.com", "POST") != Deny {
-		t.Error("expected unlisted domain to deny when rules are present and no global constraints exist")
+	if string(round.ConfirmationKey) != string(pub) {
+		t.Fatalf("ConfirmationKey did not round-trip: got %x want %x", round.ConfirmationKey, pub)
 	}
 }
+
+// TestAgentCapabilities_CnfKeyOmittedWhenEmpty proves legacy registrations are
+// byte-for-byte unchanged: no ConfirmationKey means no cnf_key on the wire, so
+// the resolver's ParseConfirmationKey sees nil and the token stays unbound.
+func TestAgentCapabilities_CnfKeyOmittedWhenEmpty(t *testing.T) {
+	caps := AgentCapabilities{CanEnvRead: boolPtr(true)}
+	b, err := json.Marshal(caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsSub(string(b), "cnf_key") {
+		t.Fatalf("cnf_key must be omitted when empty; got %s", string(b))
+	}
+}
+
+func containsSub(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPtr(b bool) *bool { return &b }

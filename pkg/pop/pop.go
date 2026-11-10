@@ -17,7 +17,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -28,6 +30,11 @@ const (
 	// TimestampHeader carries the Unix-second timestamp the proof was signed
 	// over. Must match the resolver's server.popTimestampHeader.
 	TimestampHeader = "X-AS-PoP-TS"
+	// SeedEnv carries the base64-encoded 32-byte Ed25519 private seed. It is a
+	// SEPARATE secret from the workload token: a token leaked from a log is
+	// useless without this value. Never derive it from the token, because a
+	// self-sufficient token makes proof-of-possession theatre.
+	SeedEnv = "AGENTSECRETS_POP_SEED"
 )
 
 // Cross-repo golden vector. These bytes are duplicated verbatim in the cloud
@@ -61,8 +68,9 @@ func NewProofSigner() (*ProofSigner, error) {
 }
 
 // NewProofSignerFromSeed rebuilds a signer from a persisted 32-byte Ed25519
-// seed. This is the seam the (still-undecided) key-transport ADR will use: the
-// seed's storage and delivery are deliberately out of scope here.
+// seed. This is the key-transport seam: the seed is generated once at agent
+// create, shown once, and injected into the workload as SeedEnv. It is never
+// embedded in the token, so a token leaked from a log is useless alone.
 func NewProofSignerFromSeed(seed []byte) (*ProofSigner, error) {
 	if len(seed) != ed25519.SeedSize {
 		return nil, fmt.Errorf("proof seed must be %d bytes, got %d", ed25519.SeedSize, len(seed))
@@ -73,6 +81,16 @@ func NewProofSignerFromSeed(seed []byte) (*ProofSigner, error) {
 // PublicKey returns the raw public key bytes to register as the token's cnf/jkt.
 func (s *ProofSigner) PublicKey() []byte {
 	return s.priv.Public().(ed25519.PublicKey)
+}
+
+// Seed returns a copy of the 32-byte private seed. This is the value shown once
+// at agent creation and injected into the workload as SeedEnv. It never travels
+// inside the token.
+func (s *ProofSigner) Seed() []byte {
+	seed := s.priv.Seed()
+	out := make([]byte, len(seed))
+	copy(out, seed)
+	return out
 }
 
 // Attach signs the request (METHOD + URL.Path + current timestamp) and sets the
@@ -95,8 +113,9 @@ func (s *ProofSigner) attachAt(req *http.Request, ts string) {
 var active *ProofSigner
 
 // SetProofSigner installs the process-wide signer used by AttachProof. Pass nil
-// to clear it. This is the activation point for the key-transport decision; it
-// is not called by any production path yet, so proofs are currently dormant.
+// to clear it. It is called from commands.Execute via LoadSignerFromEnvironment,
+// which reads SeedEnv before any resolver call, so proofs are active whenever the
+// seed is present.
 func SetProofSigner(s *ProofSigner) {
 	active = s
 }
@@ -107,4 +126,26 @@ func AttachProof(req *http.Request) {
 	if active != nil {
 		active.Attach(req)
 	}
+}
+
+// LoadSignerFromEnvironment installs the process-wide proof signer from SeedEnv.
+// An absent variable is a legitimate no-PoP state: every pre-PoP token keeps
+// working. A present but malformed value fails closed. Signing with the wrong
+// key would only produce proofs the resolver rejects, so refusing to start is
+// louder and cheaper than a string of opaque 401s.
+func LoadSignerFromEnvironment() error {
+	raw := strings.TrimSpace(os.Getenv(SeedEnv))
+	if raw == "" {
+		return nil
+	}
+	seed, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return fmt.Errorf("%s is not valid base64: %w", SeedEnv, err)
+	}
+	signer, err := NewProofSignerFromSeed(seed)
+	if err != nil {
+		return fmt.Errorf("%s: %w", SeedEnv, err)
+	}
+	SetProofSigner(signer)
+	return nil
 }

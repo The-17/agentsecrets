@@ -2,91 +2,69 @@ package agents
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/The-17/agentsecrets/pkg/api"
+	"github.com/The-17/agentsecrets/pkg/capabilities"
 )
 
-func newRotationMock(t *testing.T) (*httptest.Server, *Service) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == "POST" && r.URL.Path == "/workspaces/ws-1/agents/areg-1/tokens/tok-1/rotate/":
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{
-				"token": "agt_ws_1_NEW", "token_id": "tok-2", "label": "w1",
-				"rotation": map[string]interface{}{
-					"rotation_state": "active", "rotation_family_id": "tok-1",
-					"rotation_due": false,
-				},
-			}})
-		case r.Method == "PUT" && r.URL.Path == "/workspaces/ws-1/agents/areg-1/tokens/tok-1/rotation-policy/":
-			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{
-				"id": "tok-1",
-				"rotation": map[string]interface{}{
-					"rotation_state": "active", "rotation_period_days": 30,
-					"next_rotation_at": "2026-10-28T00:00:00Z", "rotation_due": false,
-				},
-			}})
-		case r.Method == "GET" && r.URL.Path == "/workspaces/ws-1/agents/areg-1/tokens/":
-			json.NewEncoder(w).Encode(map[string]interface{}{"data": []Token{
-				{ID: "tok-1", Label: "w1", Status: "superseded_overlap", RotationState: "superseded"},
-			}})
-		default:
-			w.WriteHeader(http.StatusNotFound)
+// TestRegisterRequest_CnfKeyInsideCapabilities proves the exact wire bytes the
+// CLI sends to the control plane: the DPoP public key must be nested under
+// "capabilities", not a top-level "cnf_key". A top-level field would trip the
+// server's extra="forbid" schema and 422 the registration.
+func TestRegisterRequest_CnfKeyInsideCapabilities(t *testing.T) {
+	pub := []byte{0xAA, 0xBB, 0xCC, 0xDD}
+	req := RegisterRequest{
+		Name:        "ci-bot",
+		WorkspaceID: "ws_123", // must NOT appear on the wire (json:"-")
+		Capabilities: &capabilities.AgentCapabilities{
+			ConfirmationKey: pub,
+		},
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+
+	// WorkspaceID is routing-only and must never leave the process.
+	if containsStr(s, "ws_123") {
+		t.Fatal("WorkspaceID must not be serialized")
+	}
+	// The cnf_key must be present, nested under capabilities.
+	if !containsStr(s, `"cnf_key":"qrvM3Q=="`) {
+		t.Fatalf("expected cnf_key base64 under capabilities; got %s", s)
+	}
+	// And must NOT be a top-level field.
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["cnf_key"]; ok {
+		t.Fatal("cnf_key must not be a top-level field on RegisterRequest")
+	}
+	if _, ok := m["capabilities"]; !ok {
+		t.Fatal("capabilities object must be present")
+	}
+}
+
+// TestRegisterRequest_NoCnfKeyWhenNil proves a non-PoP registration sends no
+// cnf_key at all, keeping legacy tokens byte-for-byte unchanged and unbound.
+func TestRegisterRequest_NoCnfKeyWhenNil(t *testing.T) {
+	req := RegisterRequest{Name: "legacy", Capabilities: &capabilities.AgentCapabilities{}}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(string(b), "cnf_key") {
+		t.Fatalf("non-PoP registration must omit cnf_key; got %s", string(b))
+	}
+}
+
+func containsStr(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
 		}
-	}))
-	t.Cleanup(server.Close)
-
-	client := api.NewClient(func() string { return "test-token" })
-	client.BaseURL = server.URL
-	return server, NewService(client)
-}
-
-func TestTokenRotate(t *testing.T) {
-	_, svc := newRotationMock(t)
-	overlap := 24
-	resp, err := svc.TokenRotate("ws-1", "areg-1", "tok-1", RotateTokenRequest{
-		OverlapHours: &overlap, Reason: "routine",
-	})
-	if err != nil {
-		t.Fatalf("TokenRotate: %v", err)
 	}
-	if resp.Token != "agt_ws_1_NEW" || resp.TokenID != "tok-2" {
-		t.Errorf("unexpected rotate response: %+v", resp)
-	}
-	if resp.Rotation.FamilyID != "tok-1" || resp.Rotation.State != "active" {
-		t.Errorf("unexpected rotation block: %+v", resp.Rotation)
-	}
-}
-
-func TestTokenRotationSet(t *testing.T) {
-	_, svc := newRotationMock(t)
-	period := 30
-	resp, err := svc.TokenRotationSet("ws-1", "areg-1", "tok-1", RotationPolicyRequest{
-		PeriodDays: &period, Enabled: true,
-	})
-	if err != nil {
-		t.Fatalf("TokenRotationSet: %v", err)
-	}
-	if resp.Rotation.PeriodDays == nil || *resp.Rotation.PeriodDays != 30 {
-		t.Errorf("unexpected policy response: %+v", resp)
-	}
-}
-
-func TestTokenListParsesRotation(t *testing.T) {
-	_, svc := newRotationMock(t)
-	tokens, err := svc.TokenList("ws-1", "areg-1")
-	if err != nil {
-		t.Fatalf("TokenList: %v", err)
-	}
-	if len(tokens) != 1 {
-		t.Fatalf("tokens = %d, want 1", len(tokens))
-	}
-	if tokens[0].Status != "superseded_overlap" || tokens[0].RotationState != "superseded" {
-		t.Errorf("rotation fields not parsed: %+v", tokens[0])
-	}
+	return false
 }

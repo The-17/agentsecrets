@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keyring"
+	"github.com/The-17/agentsecrets/pkg/pop"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -113,6 +115,8 @@ var agentCreateCmd = &cobra.Command{
 			return err
 		}
 
+		popFlag, _ := cmd.Flags().GetBool("dpop")
+
 		in := agentCreateInput{
 			Name:        args[0],
 			Scope:       scope,
@@ -122,6 +126,7 @@ var agentCreateCmd = &cobra.Command{
 			Environment: cmd.Flag("env").Value.String(),
 			Caps:        caps,
 			StoreSecret: agentCreateStoreSecret,
+			PoP:         popFlag,
 		}
 		if cmd.Flags().Changed("save-token") {
 			v, _ := cmd.Flags().GetBool("save-token")
@@ -142,6 +147,7 @@ type agentCreateInput struct {
 	Caps        *capabilities.AgentCapabilities
 	SaveToken   *bool // nil => prompt the user
 	StoreSecret bool  // store token as project secret AGENTSECRETS_TOKEN
+	PoP         bool  // bind the token to a proof-of-possession key
 }
 
 // runAgentCreate is the single implementation behind both `register` and
@@ -175,11 +181,23 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 		return fmt.Errorf("invalid --expires: %w", err)
 	}
 
-	// Proof-of-possession (cnf/jkt) activation is intentionally deferred. Private
-	// key transport to the workload that later uses this token is an open ADR
-	// decision; minting an ephemeral, process-local key here would silently guess
-	// it and brick the token once the control plane starts honoring cnf_key. The
-	// cnf_key wire field on RegisterRequest stays as an inert hook for that step.
+	// Proof-of-possession is opt-in. The public key travels inside capabilities
+	// (the control plane forbids extra top-level request fields). The private
+	// seed is shown once and injected into the workload as its own env var. It is
+	// never embedded in the token, so a token leaked from a log is useless alone.
+	var popSeedB64 string
+	if in.PoP {
+		signer, err := pop.NewProofSigner()
+		if err != nil {
+			return fmt.Errorf("failed to generate proof-of-possession key: %w", err)
+		}
+		if in.Caps == nil {
+			in.Caps = &capabilities.AgentCapabilities{}
+		}
+		in.Caps.ConfirmationKey = signer.PublicKey()
+		popSeedB64 = base64.StdEncoding.EncodeToString(signer.Seed())
+	}
+
 	resp, err := app.Agents().Register(agents.RegisterRequest{
 		Name:          in.Name,
 		WorkspaceID:   workspaceID,
@@ -218,6 +236,9 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 	fmt.Printf("  Name   %s\n", resp.Agent.Name)
 	fmt.Printf("  Scope  %s\n", scopeName)
 	fmt.Printf("  Env    %s\n", environment)
+	if in.PoP {
+		fmt.Printf("  PoP    enabled (cnf/jkt bound)\n")
+	}
 	if resp.ExpiresAt != nil {
 		fmt.Printf("  Expires %s\n", resp.ExpiresAt.Format("2006-01-02"))
 	}
@@ -245,8 +266,17 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 		}
 	}
 
-	fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
+	fmt.Println("\n" + ui.WarningStyle.Render("Store these values securely. They will not be shown again."))
 	fmt.Printf("To use it: export %s=%s\n", gateway.WorkloadTokenEnv, resp.Token)
+	if in.PoP {
+		fmt.Printf("           export %s=%s\n", pop.SeedEnv, popSeedB64)
+		fmt.Println()
+		ui.Warning("This agent is proof-of-possession bound. The token alone is rejected by the resolver.")
+		ui.Warning(fmt.Sprintf("Inject %s into the workload BEFORE it calls the resolver (env --cloud, doctor, call).", pop.SeedEnv))
+		if in.StoreSecret {
+			ui.Warning(fmt.Sprintf("The project secret %s holds only the token. The seed cannot be fetched through the resolver, because fetching it already needs a proof.", gateway.WorkloadTokenEnv))
+		}
+	}
 
 	var storeInKeychain bool
 	if in.SaveToken != nil {
@@ -263,6 +293,9 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 		} else {
 			fmt.Println()
 			ui.Success(fmt.Sprintf("Stored agent token in keychain! You can now reference it via: %s_TOKEN", strings.ToUpper(resp.Agent.Name)))
+			if in.PoP {
+				ui.Warning(fmt.Sprintf("The keychain holds the token only. %s must still be injected into the workload environment.", pop.SeedEnv))
+			}
 		}
 	}
 	fmt.Println()
@@ -785,6 +818,7 @@ func init() {
 	agentCreateCmd.Flags().String("env", "", "environment for the token (development, staging, production, or a custom name)")
 	agentCreateCmd.Flags().StringSlice("allow", nil, "capability scopes to grant: secrets:env, secrets:proxy (comma- or space-separated, repeatable)")
 	agentCreateCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
+	agentCreateCmd.Flags().Bool("dpop", false, "bind the token to a proof-of-possession key; prints a second secret (AGENTSECRETS_POP_SEED) that must be injected alongside the token")
 	agentCreateCmd.Flags().BoolVar(&agentCreateStoreSecret, "store-secret", true, "store the token as project secret AGENTSECRETS_TOKEN so workloads pick it up automatically")
 
 	// Flags for list

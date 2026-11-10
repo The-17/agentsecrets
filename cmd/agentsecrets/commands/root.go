@@ -14,6 +14,7 @@ import (
 	clierrors "github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
+	"github.com/The-17/agentsecrets/pkg/pop"
 	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
 	"github.com/charmbracelet/lipgloss"
@@ -50,6 +51,15 @@ func Execute() error {
 	ui.CLIVersion = Version
 	// Wire dynamic server URL resolution
 	api.ResolveBaseURLFunc = config.GetServerURL
+
+	// Install the proof-of-possession signer before any command runs. This is
+	// outside skipPreamble() because exec and mcp also call the resolver. An
+	// absent seed is a legitimate no-PoP state; a malformed one fails closed
+	// here rather than producing a chain of opaque 401s.
+	if err := pop.LoadSignerFromEnvironment(); err != nil {
+		ui.Error(err.Error())
+		return err
+	}
 
 	// Ensure keychain-auth socket is closed on exit
 	defer keychainauth.Close()
