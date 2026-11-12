@@ -23,7 +23,7 @@ import (
 )
 
 // The audit event data types now live in pkg/audit so that consumers (pkg/log,
-// pkg/mcp, CLI exporters) can share them without importing pkg/proxy. These
+// CLI exporters) can share them without importing pkg/proxy. These
 // aliases keep every existing proxy.AuditEvent / proxy.ForensicAuditEvent (etc.)
 // reference valid with zero churn — they are the SAME types, not copies.
 type (

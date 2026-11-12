@@ -6,10 +6,10 @@
  * durable token, and none of that needs the plaintext. Value-blindness does not
  * help, because the damage does not depend on seeing a value.
  *
- * This mirrors the Go side (`pkg/mcp/tiers.go` and `cmd/agentsecrets/commands/
- * mcp_bridge.go`) so the guarantee holds in both transports. The Go gate covers
- * local mode; this file covers cloud mode, which talks to the control plane and
- * resolver directly and never passes through the CLI.
+ * This mirrors the Go side (`cmd/agentsecrets/commands/mcp_bridge.go`) so the
+ * guarantee holds in both transports. The Go gate covers local mode; this file
+ * covers cloud mode, which talks to the control plane and resolver directly and
+ * never passes through the CLI.
  *
  *   read         always available
  *   write        refused unless a human set AGENTSECRETS_MCP_ALLOW_WRITES=true

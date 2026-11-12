@@ -31,14 +31,14 @@ Both paths share the same core engine that resolves secrets from your OS keychai
    {
      "mcpServers": {
        "agentsecrets": {
-         "command": "/path/to/agentsecrets",
-         "args": ["mcp", "serve"]
+         "command": "npx",
+         "args": ["-y", "@the-17/agentsecrets-mcp@latest"]
        }
      }
    }
    ```
 
-3. Restart Claude Desktop. You'll see two new tools: `api_call` and `list_secrets`.
+3. Restart Claude Desktop. You'll see the AgentSecrets tools.
 
 ### Available Tools
 

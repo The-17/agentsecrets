@@ -287,13 +287,13 @@ var codeGatedGuarantees = []struct {
 	claim string
 	guard string
 }{
-	{"Tools return key names and metadata only; responses redact echoed credential values.", "pkg/mcp/tools_read.go"},
+	{"Tools return key names and metadata only; responses redact echoed credential values.", "pkg/proxy/redaction_test.go"},
 	{"A cloud outage fails closed with no silent local downgrade to the keychain path.", "pkg/gateway/adversarial_test.go"},
 	{"The egress allowlist fails closed when domain rules exist.", "pkg/capabilities/policy.go"},
 	{"Redirects are refused to prevent client-side SSRF.", "pkg/gateway/gateway.go"},
 	{"There is exactly one resolver host and it cannot be self-hosted.", "pkg/gateway/gateway.go"},
 	{"A workload token has one lookup across every surface.", "pkg/gateway/gateway.go"},
-	{"An unclassified MCP tool crashes at boot rather than bypassing the tier gate.", "pkg/mcp/tiers.go"},
+	{"A bridge verb that mutates state must be classified as a write, and an unknown verb is refused rather than run.", "cmd/agentsecrets/commands/mcp_bridge_tiers_test.go"},
 }
 
 // enforcedInCodeSection renders the guarantee table as markdown. It is generated

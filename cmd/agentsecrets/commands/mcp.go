@@ -10,18 +10,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/config"
-	"github.com/The-17/agentsecrets/pkg/keychainauth"
-	agentmcp "github.com/The-17/agentsecrets/pkg/mcp"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp [verb] [json-args]",
-	Short: "MCP server and machine-readable interface for AI agent integration",
+	Short: "MCP configuration and the machine-readable interface for AI agent integration",
 	Long: `Connect AI clients to AgentSecrets over the Model Context Protocol.
 
-	` + mcpBridgePackage + ` is the published bridge (npx). This binary also
-	speaks MCP itself via "mcp serve".
+	The MCP server is the published TypeScript bridge, ` + mcpBridgePackage + `,
+	run through npx. This command writes that configuration for your clients
+	("mcp install") and is the machine-readable JSON interface the bridge calls.
 
 	Without a subcommand, this command is the machine-readable JSON interface
 	the bridge calls: one privileged local operation, one JSON envelope on
@@ -50,23 +49,6 @@ var mcpCmd = &cobra.Command{
 // upgrades by restarting their AI tool.
 const mcpBridgePackage = "@the-17/agentsecrets-mcp"
 
-var mcpServeCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start the MCP server on stdio",
-	Long: `Start the MCP server using stdio transport. This is designed to be launched by
-	AI clients like Claude Desktop, Cursor, or Windsurf.
-
-	Instead of configuring this manually, run:
-	agentsecrets mcp install
-
-	AI clients start the server from their own working directory, which is
-	usually NOT your repo — so by default the server cannot find your project.
-	Pass --project-dir (or set AGENTSECRETS_PROJECT_DIR) to pin it:`,
-	RunE: runMCPServe,
-}
-
-var mcpProjectDir string
-
 var mcpInstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Auto-configure Claude Desktop, Cursor, and OpenClaw to use AgentSecrets",
@@ -79,8 +61,7 @@ var mcpInstallCmd = &cobra.Command{
 	  "args": ["-y", "` + mcpBridgePackage + `@latest"]
 
 	That entry carries no version pin and no absolute path, so a new release
-	needs no config edit. Use --local to run this binary's "mcp serve" instead,
-	for machines without Node.
+	needs no config edit.
 
 	For OpenClaw, this installs the AgentSecrets skill into your skills directory.
 
@@ -92,78 +73,21 @@ var mcpInstallCmd = &cobra.Command{
 }
 
 func init() {
-	mcpServeCmd.Flags().StringVar(&mcpProjectDir, "project-dir", "", "Project directory holding .agentsecrets/project.json (AI clients launch from their own cwd; without this the server cannot find your project)")
-	mcpCmd.AddCommand(mcpServeCmd)
 	mcpCmd.AddCommand(mcpInstallCmd)
-	mcpInstallCmd.Flags().Bool("local", false, "Run this binary's `mcp serve` instead of the published npx bridge")
-}
-
-// Deprecated: the bridge used to be its own subcommand at "mcp bridge <verb>".
-// It is now the parent command's default action, so the supported spelling is
-// "agentsecrets mcp <verb>". Kept only so old client configs keep working;
-// remove after the next major version.
-
-func runMCPServe(cmd *cobra.Command, args []string) error {
-	// Pin project resolution before anything reads config: the client's cwd
-	// is not our repo. Flag beats AGENTSECRETS_PROJECT_DIR beats cwd walk.
-	if mcpProjectDir != "" {
-		if err := config.SetProjectDirOverride(mcpProjectDir); err != nil {
-			return err
-		}
-	}
-	// Connect to the keychain-auth daemon to resolve local OS keychain secrets
-	if err := keychainauth.Init(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: keychain-auth initialization failed: %v\n", err)
-	}
-
-	// MCP uses stdio — only JSON-RPC messages should go to stdout.
-	// Share the CLI-initialized services with the MCP server to avoid
-	// code/state duplication (DRY).
-	deps := agentmcp.Deps{
-		API:        app.API(),
-		Workspaces: app.Workspaces(),
-		Secrets:    app.Secrets(),
-	}
-	if err := agentmcp.Serve(Version, deps); err != nil {
-		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
-		return err
-	}
-	return nil
 }
 
 // mcpServerEntry returns the mcpServers entry for the AgentSecrets server.
-// By default it runs the published bridge through npx, so client config holds
-// neither a version pin nor an absolute path. With useLocal it runs this
-// binary's `mcp serve` instead, for machines without Node.
-func mcpServerEntry(useLocal bool) (map[string]interface{}, error) {
-	if !useLocal {
-		return map[string]interface{}{
-			"command": "npx",
-			"args":    []string{"-y", mcpBridgePackage + "@latest"},
-		}, nil
-	}
-
-	binPath, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("could not determine binary path: %w", err)
-	}
-	binPath, err = filepath.EvalSymlinks(binPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not resolve binary path: %w", err)
-	}
+// It names the published bridge through npx, so client config holds neither a
+// version pin nor an absolute path, and a release needs no config edit.
+func mcpServerEntry() map[string]interface{} {
 	return map[string]interface{}{
-		"command": binPath,
-		"args":    []string{"mcp", "serve"},
-	}, nil
+		"command": "npx",
+		"args":    []string{"-y", mcpBridgePackage + "@latest"},
+	}
 }
 
 func runMCPInstall(cmd *cobra.Command, args []string) error {
-	useLocal, _ := cmd.Flags().GetBool("local")
-
-	entry, err := mcpServerEntry(useLocal)
-	if err != nil {
-		return err
-	}
+	entry := mcpServerEntry()
 	if projRoot, err := config.GetProjectRoot(); err == nil && projRoot != "" {
 		entry["env"] = map[string]string{config.ProjectDirEnv: projRoot}
 	}

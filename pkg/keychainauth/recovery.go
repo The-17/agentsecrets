@@ -72,7 +72,7 @@ var (
 	AutoRepairNotice func(reason string, repair func() error) error
 
 	// DisableAutoRepair turns off request-time self-healing. Set for machine-facing
-	// paths (`mcp serve`, `exec`) where an interactive sudo prompt is never wanted.
+	// paths (`mcp <verb>`, `exec`) where an interactive sudo prompt is never wanted.
 	DisableAutoRepair bool
 )
 

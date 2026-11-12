@@ -38,34 +38,13 @@ var (
 
 	cachedWorkspaceKeysMu sync.RWMutex
 	cachedWorkspaceKeys   = make(map[string][]byte)
-
-	// projectDirOverride pins project resolution to an explicit directory
-	// (mcp serve --project-dir, or AGENTSECRETS_PROJECT_DIR). MCP servers are
-	// launched by AI clients from arbitrary working directories, so cwd-walk
-	// resolution cannot find the project. Flag beats env beats cwd walk.
-	projectDirOverrideMu sync.RWMutex
-	projectDirOverride   string
 )
 
-// ProjectDirEnv is read by GetProjectRoot when no flag override is set.
+// ProjectDirEnv pins project resolution to one directory. MCP servers are
+// launched by AI clients from arbitrary working directories, so cwd-walk
+// resolution cannot find the project; `mcp install` writes this into the MCP
+// entry. It beats the cwd walk.
 const ProjectDirEnv = "AGENTSECRETS_PROJECT_DIR"
-
-// SetProjectDirOverride pins project resolution to dir (must contain
-// .agentsecrets/project.json). Used by `mcp serve --project-dir`.
-func SetProjectDirOverride(dir string) error {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return fmt.Errorf("invalid project directory: %w", err)
-	}
-	marker := filepath.Join(abs, ".agentsecrets", "project.json")
-	if fi, err := os.Stat(marker); err != nil || fi.IsDir() {
-		return fmt.Errorf("not an AgentSecrets project directory (no .agentsecrets/project.json under %s)", abs)
-	}
-	projectDirOverrideMu.Lock()
-	projectDirOverride = abs
-	projectDirOverrideMu.Unlock()
-	return nil
-}
 
 // DefaultServerURL is the default AgentSecrets Server endpoint.
 const DefaultServerURL = "https://api.agentsecrets.tech/api"
@@ -514,14 +493,7 @@ func SaveTokens(tokens *TokenConfig) error {
 // '.agentsecrets/project.json'.
 // If none is found before reaching the filesystem root, it returns an empty string.
 func GetProjectRoot() (string, error) {
-	// 1. Explicit flag override (mcp serve --project-dir).
-	projectDirOverrideMu.RLock()
-	override := projectDirOverride
-	projectDirOverrideMu.RUnlock()
-	if override != "" {
-		return override, nil
-	}
-	// 2. Environment (MCP server entries written by `mcp install`).
+	// 1. Environment (MCP server entries written by `mcp install`).
 	if envDir := strings.TrimSpace(os.Getenv(ProjectDirEnv)); envDir != "" {
 		abs, err := filepath.Abs(envDir)
 		if err != nil {
@@ -532,7 +504,7 @@ func GetProjectRoot() (string, error) {
 		}
 		return abs, nil
 	}
-	// 3. Cwd walk (interactive CLI use).
+	// 2. Cwd walk (interactive CLI use).
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err

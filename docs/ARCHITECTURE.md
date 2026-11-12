@@ -282,7 +282,6 @@ This file lives in the project directory (alongside your code). It links the dir
 | `pkg/crypto/` | All encryption/decryption: X25519, AES-256-GCM, Argon2id |
 | `pkg/keychainauth/` | keychain-auth daemon integration: session lifecycle, auto-setup, binary registration |
 | `pkg/keyring/` | OS keychain read/write for secrets and auth tokens |
-| `pkg/mcp/` | MCP server implementation (tools: api_call, list_secrets) |
 | `pkg/projects/` | Project API wrappers |
 | `pkg/proxy/` | HTTP proxy engine, injector, allowlist enforcement, redaction, audit |
 | `pkg/secrets/` | Secret management, dotenv parsing, diff computation |

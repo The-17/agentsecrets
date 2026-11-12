@@ -270,13 +270,13 @@ Examples: `STRIPE_KEY`, `OPENAI_KEY`, `GITHUB_TOKEN`,
 
 The guarantees below are enforced in the binary, not by this text. Each is pinned to the file that proves it; if that file is renamed or deleted, the skill tests fail so this prompt cannot over-claim a guard that no longer exists. The rules above that are not listed here are your discipline, not the engine's.
 
-- Tools return key names and metadata only; responses redact echoed credential values. (pkg/mcp/tools_read.go)
+- Tools return key names and metadata only; responses redact echoed credential values. (pkg/proxy/redaction_test.go)
 - A cloud outage fails closed with no silent local downgrade to the keychain path. (pkg/gateway/adversarial_test.go)
 - The egress allowlist fails closed when domain rules exist. (pkg/capabilities/policy.go)
 - Redirects are refused to prevent client-side SSRF. (pkg/gateway/gateway.go)
 - There is exactly one resolver host and it cannot be self-hosted. (pkg/gateway/gateway.go)
 - A workload token has one lookup across every surface. (pkg/gateway/gateway.go)
-- An unclassified MCP tool crashes at boot rather than bypassing the tier gate. (pkg/mcp/tiers.go)
+- A bridge verb that mutates state must be classified as a write, and an unknown verb is refused rather than run. (cmd/agentsecrets/commands/mcp_bridge_tiers_test.go)
 
 
 ## OPENCLAW: THE EXEC PROVIDER (how credentials reach your agent)

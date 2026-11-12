@@ -1,13 +1,15 @@
 # agentsecrets mcp
 
-> Model Context Protocol server and the machine-readable bridge for Claude Desktop, Cursor, Claude Code, Codex, and OpenClaw.
+> Model Context Protocol configuration and the machine-readable bridge for Claude Desktop, Cursor, Claude Code, Codex, and OpenClaw.
+
+The MCP server itself is the published TypeScript bridge
+(`@the-17/agentsecrets-mcp`), run through `npx` by your AI client. This command
+writes that standard MCP configuration and provides the local interface the
+bridge calls.
 
 ## Usage
 
 ```bash
-# Start the MCP server over stdio (launched by an AI client)
-agentsecrets mcp serve
-
 # Configure every detected AI client and install the agent skill
 agentsecrets mcp install
 

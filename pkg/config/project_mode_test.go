@@ -8,9 +8,9 @@ import (
 )
 
 // withProjectDir pins project resolution to a temporary project for the test
-// and resets the shared override and cache afterwards. Mode reads must be
-// deterministic: a developer's own .agentsecrets/project.json must not decide
-// the outcome of a package test.
+// and invalidates the cache afterwards. Mode reads must be deterministic: a
+// developer's own .agentsecrets/project.json must not decide the outcome of a
+// package test.
 func withProjectDir(t *testing.T, projectJSON string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -20,16 +20,9 @@ func withProjectDir(t *testing.T, projectJSON string) string {
 	if err := os.WriteFile(filepath.Join(dir, ".agentsecrets", "project.json"), []byte(projectJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	projectDirOverrideMu.Lock()
-	projectDirOverride = dir
-	projectDirOverrideMu.Unlock()
+	t.Setenv(ProjectDirEnv, dir)
 	InvalidateProjectCache()
-	t.Cleanup(func() {
-		projectDirOverrideMu.Lock()
-		projectDirOverride = ""
-		projectDirOverrideMu.Unlock()
-		InvalidateProjectCache()
-	})
+	t.Cleanup(InvalidateProjectCache)
 	return dir
 }
 
@@ -87,9 +80,6 @@ func TestProjectModeNoProjectFailsLoudly(t *testing.T) {
 	// choice), but SetProjectMode must refuse rather than create a stray file.
 	empty := t.TempDir()
 	t.Setenv(ProjectDirEnv, empty)
-	projectDirOverrideMu.Lock()
-	projectDirOverride = ""
-	projectDirOverrideMu.Unlock()
 	InvalidateProjectCache()
 	t.Cleanup(InvalidateProjectCache)
 

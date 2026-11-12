@@ -6,8 +6,8 @@ import (
 )
 
 // TestBridgeWriteVerbsAreRefusedByDefault proves a model-facing bridge call
-// cannot mutate state unless a human enabled it. This is the bridge half of the
-// permission model; pkg/mcp covers the Go server half.
+// cannot mutate state unless a human enabled it. The bridge is the only MCP
+// transport, so this is the whole permission model.
 func TestBridgeWriteVerbsAreRefusedByDefault(t *testing.T) {
 	t.Setenv(EnvBridgeAllowWrites, "")
 

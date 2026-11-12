@@ -13,10 +13,7 @@ import (
 // published npx package. A version pin or an absolute binary path in this entry
 // is the bug that forced every user to edit config on each release.
 func TestMCPServerEntryUsesPublishedBridge(t *testing.T) {
-	entry, err := mcpServerEntry(false)
-	if err != nil {
-		t.Fatalf("mcpServerEntry: %v", err)
-	}
+	entry := mcpServerEntry()
 
 	if got := entry["command"]; got != "npx" {
 		t.Errorf("command = %v, want npx", got)
@@ -35,32 +32,6 @@ func TestMCPServerEntryUsesPublishedBridge(t *testing.T) {
 	}
 }
 
-// TestMCPServerEntryLocalUsesThisBinary keeps the --local escape hatch honest:
-// it must point at the running binary and use its `mcp serve` subcommand.
-func TestMCPServerEntryLocalUsesThisBinary(t *testing.T) {
-	entry, err := mcpServerEntry(true)
-	if err != nil {
-		t.Fatalf("mcpServerEntry: %v", err)
-	}
-
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
-	resolved, err := filepath.EvalSymlinks(self)
-	if err != nil {
-		t.Fatalf("EvalSymlinks: %v", err)
-	}
-
-	if got := entry["command"]; got != resolved {
-		t.Errorf("command = %v, want %v", got, resolved)
-	}
-	wantArgs := []string{"mcp", "serve"}
-	if got, ok := entry["args"].([]string); !ok || !reflect.DeepEqual(got, wantArgs) {
-		t.Errorf("args = %v, want %v", entry["args"], wantArgs)
-	}
-}
-
 // TestWriteMCPConfigReplacesOwnEntryAndKeepsOthers proves the installer is
 // idempotent and does not clobber other MCP servers in the user's file.
 func TestWriteMCPConfigReplacesOwnEntryAndKeepsOthers(t *testing.T) {
@@ -76,10 +47,7 @@ func TestWriteMCPConfigReplacesOwnEntryAndKeepsOthers(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	entry, err := mcpServerEntry(false)
-	if err != nil {
-		t.Fatalf("mcpServerEntry: %v", err)
-	}
+	entry := mcpServerEntry()
 	if err := writeMCPConfig(path, "agentsecrets", entry); err != nil {
 		t.Fatalf("writeMCPConfig: %v", err)
 	}

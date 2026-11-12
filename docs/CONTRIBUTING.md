@@ -87,7 +87,7 @@ agentsecrets/
 │       ├── proxy.go               # HTTP proxy + audit logs
 │       ├── call.go                # One-shot authenticated calls
 │       ├── env.go                 # Env var injection into child processes
-│       ├── mcp.go                 # MCP server + install
+│       ├── mcp.go                 # MCP install + CLI bridge verbs
 │       └── exec.go                # OpenClaw exec provider
 ├── pkg/
 │   ├── api/                       # HTTP API client
@@ -96,7 +96,6 @@ agentsecrets/
 │   ├── crypto/                    # X25519 + AES-256-GCM + Argon2id
 │   ├── keychainauth/              # keychain-auth daemon integration
 │   ├── keyring/                   # OS keychain integration
-│   ├── mcp/                       # MCP server implementation
 │   ├── projects/                  # Project API wrappers
 │   ├── proxy/                     # Proxy engine, injector, audit logger
 │   ├── secrets/                   # Secret management + dotenv

@@ -44,7 +44,6 @@ agentsecrets/
 │   ├── crypto/                    # X25519 + AES-256-GCM + Argon2id
 │   ├── keychainauth/              # keychain-auth daemon integration
 │   ├── keyring/                   # OS keychain integration
-│   ├── mcp/                       # MCP server implementation
 │   ├── projects/                  # Project API wrappers
 │   ├── proxy/                     # HTTP proxy + audit logging
 │   ├── secrets/                   # Secret management + dotenv
@@ -264,7 +263,6 @@ agentsecrets proxy sync
 agentsecrets proxy stop
 agentsecrets proxy logs [--last N] [--watch] [--secret KEY]
 agentsecrets exec
-agentsecrets mcp serve
 agentsecrets mcp install
 ```
 

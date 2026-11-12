@@ -194,7 +194,7 @@ func TestProjectConfig(t *testing.T) {
 	}
 }
 
-func TestProjectDirOverride(t *testing.T) {
+func TestProjectDirEnv(t *testing.T) {
 	// Fixture project, resolved from a directory that has no project.
 	projDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(projDir, ".agentsecrets"), 0o755); err != nil {
@@ -207,16 +207,7 @@ func TestProjectDirOverride(t *testing.T) {
 	emptyDir := t.TempDir()
 	t.Chdir(emptyDir)
 	t.Setenv(ProjectDirEnv, "")
-
-	projectDirOverrideMu.Lock()
-	projectDirOverride = ""
-	projectDirOverrideMu.Unlock()
-	t.Cleanup(func() {
-		projectDirOverrideMu.Lock()
-		projectDirOverride = ""
-		projectDirOverrideMu.Unlock()
-		os.Unsetenv(ProjectDirEnv)
-	})
+	t.Cleanup(func() { os.Unsetenv(ProjectDirEnv) })
 
 	// 1. No override, empty cwd: not found (root "", nil error by contract).
 	if root, _ := GetProjectRoot(); root != "" {
@@ -228,26 +219,13 @@ func TestProjectDirOverride(t *testing.T) {
 	if err != nil || root != projDir {
 		t.Fatalf("env override: root=%q err=%v", root, err)
 	}
-	// 3. Explicit flag override beats env (point it nowhere-valid would fail,
-	// so point it at the fixture too and confirm precedence by value).
-	os.Unsetenv(ProjectDirEnv)
-	if err := SetProjectDirOverride(projDir); err != nil {
-		t.Fatalf("SetProjectDirOverride: %v", err)
-	}
+	// 3. An env var that is not a project fails loudly, never silently.
 	t.Setenv(ProjectDirEnv, emptyDir)
-	root, err = GetProjectRoot()
-	if err != nil || root != projDir {
-		t.Fatalf("flag override must beat env: root=%q err=%v", root, err)
-	}
-	// 4. Invalid dirs fail fast, never silently.
-	if err := SetProjectDirOverride(emptyDir); err == nil {
+	if _, err := GetProjectRoot(); err == nil {
 		t.Error("expected error for non-project dir")
 	}
 	os.Unsetenv(ProjectDirEnv)
-	projectDirOverrideMu.Lock()
-	projectDirOverride = ""
-	projectDirOverrideMu.Unlock()
 	if root, _ := GetProjectRoot(); root != "" {
-		t.Errorf("expected empty root after clearing override in empty cwd, got %q", root)
+		t.Errorf("expected empty root after clearing env in empty cwd, got %q", root)
 	}
 }

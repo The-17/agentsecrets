@@ -40,8 +40,8 @@
    {
      "mcpServers": {
        "agentsecrets": {
-         "command": "/home/theapiartist/work/agentsecrets/agentsecrets",
-         "args": ["mcp", "serve"]
+         "command": "npx",
+         "args": ["-y", "@the-17/agentsecrets-mcp@latest"]
        }
      }
    }

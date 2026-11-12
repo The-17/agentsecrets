@@ -453,7 +453,6 @@ agentsecrets proxy status                     # Check proxy status & revocation 
 agentsecrets proxy sync                       # Force background revocation sync
 agentsecrets proxy logs [--last N] [--watch]  # View or stream local audit trail
 agentsecrets exec                             # OpenClaw exec provider (reads stdin)
-agentsecrets mcp serve                        # Start MCP server
 agentsecrets mcp install                      # Auto-configure AI tools
 ```
 
