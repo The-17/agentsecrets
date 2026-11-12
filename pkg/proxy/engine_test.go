@@ -281,7 +281,10 @@ func TestAuditNeverLogsSecretValues(t *testing.T) {
 		t.Fatalf("Execute() error: %v", err)
 	}
 
-	// Read the audit log
+	// Read the audit log. Log() only enqueues onto the background writer, so a
+	// read here is a race the fast CI runner loses: Flush is the barrier that
+	// makes this event visible before we inspect the file.
+	audit.Flush()
 	logBytes, err := os.ReadFile(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("failed to read audit log: %v", err)
