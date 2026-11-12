@@ -255,6 +255,18 @@ func printWorkspaces(cfg *config.GlobalConfig) {
 	fmt.Println()
 }
 
+// runWorkspaceSwitch mutates the SHARED global config (~/.agentsecrets/config.json),
+// which every other process and session on the machine reads for its selection.
+//
+// Blast radius (item 4): this is a global, not per-process, change. If two
+// sessions on one codebase run concurrently — e.g. one serving an org workspace
+// and another a personal one — a switch here changes BOTH, so a second session
+// can suddenly address the wrong workspace. For per-process isolation prefer the
+// stateless scoped handle: set AGENTSECRETS_WORKSPACE (or AGENTSECRETS_PROJECT)
+// in the environment of the single process that needs a non-default selection.
+// Those overrides are honored by config.GetSelectedWorkspaceID /
+// GetSelectedProjectID and never touch the shared file, so concurrent sessions
+// stay isolated.
 func runWorkspaceSwitch(_ *cobra.Command, args []string) error {
 	cfg, err := requireConfig()
 	if err != nil || cfg == nil {

@@ -154,6 +154,11 @@ type CallRequest struct {
 	IdentityLevel string            // "anonymous", "declared", "issued"
 	TokenID       string            // optional token ID if issued
 	Capabilities  *capabilities.AgentCapabilities // agent's secret access restrictions (nil = unrestricted)
+	// Expected is an optional caller-declared context. When set, the engine
+	// asserts the resolved context matches it and fails the call closed on any
+	// mismatch, before any secret is resolved or injected. This is the Tier-2
+	// hard guarantee over the agent-token scope check. See scope.go.
+	Expected *ExpectedContext
 }
 
 // Injection describes one credential to inject.
@@ -416,6 +421,24 @@ type identityResult struct {
 // AND arrive without pre-resolved capabilities are validated here (the server
 // pre-validates and hands the engine a non-nil Capabilities, which short-circuits
 // a second validation — preserved by the caller checking req.Capabilities).
+//
+// Workload-identity pinning vs cross-workspace calls (item 5):
+//   - A workload token is PINNED to the workspace/project/environment it was
+//     issued for (the cached record under TokenCache). The engine REJECTS a call
+//     whose resolved context does not match that pinning. The token does NOT
+//     re-scope the call: naming a different workspace does not move the secret
+//     there. proxy_call.environment "does not re-scope the token".
+//   - A session that needs both an org workspace and the caller's personal
+//     workspace needs a token pinned to each (two issued tokens), OR an identity
+//     that is a MEMBER of the target workspace resolved with explicit audit
+//     attribution — never a silent re-scope. Cross-workspace calls therefore
+//     require either (a) a token issued for the target workspace, or (b) a
+//     membership-backed resolution where every injected secret is attributed to
+//     the caller in the audit log.
+//   - The caller-declared Expected context (pkg/proxy/scope.go) is the
+//     fail-closed counterpart to this pinning: the token pins what the identity
+//     MAY access; Expected asserts what the CALLER expects to be accessing, and a
+//     mismatch refuses the call before any secret is injected.
 func (e *Engine) resolveIdentity(req CallRequest) identityResult {
 	token := req.AgentToken
 	if token == "" {
@@ -550,6 +573,17 @@ func (e *Engine) ExecuteCtx(ctx context.Context, req CallRequest) (*CallResult, 
 	// header or body. Refuse only when there is genuinely nothing to send.
 	if len(req.Injections) == 0 && len(req.Headers) == 0 && len(req.Body) == 0 {
 		return nil, fmt.Errorf("at least one of: an injection flag (--bearer/--header/--query/--basic/--body-field/--form-field), --set-header, or --body is required")
+	}
+
+	// 0. Caller-declared context assertion (fail-closed, pre-injection).
+	// If the caller declares an Expected context, assert the context this call
+	// actually resolves to matches it. This is the Tier-2 hard guarantee over
+	// the agent-token scope check: a mismatch means the secret would land in a
+	// workspace/project/environment the caller did not intend, so we refuse
+	// before any secret is resolved or injected. "personal" resolves to the
+	// caller's personal workspace (see scope.go).
+	if err := AssertExpectedContext(req.Expected, e.WorkspaceID, e.ProjectID, resolveEnvForAudit()); err != nil {
+		return nil, err
 	}
 
 	method := strings.ToUpper(req.Method)

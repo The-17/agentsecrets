@@ -258,6 +258,20 @@ func CallViaProxy(req CallRequest) (*CallResult, error) {
 	// Add injections
 	applyInjections(httpReq.Header, req.Injections)
 
+	// Forward the caller-declared Expected context (item 1) so the daemon-enforced
+	// assertion inside ExecuteCtx can fail the call closed on a context mismatch.
+	if req.Expected != nil {
+		if req.Expected.Workspace != "" {
+			httpReq.Header.Set("X-AS-Expected-Workspace", req.Expected.Workspace)
+		}
+		if req.Expected.Project != "" {
+			httpReq.Header.Set("X-AS-Expected-Project", req.Expected.Project)
+		}
+		if req.Expected.Environment != "" {
+			httpReq.Header.Set("X-AS-Expected-Env", req.Expected.Environment)
+		}
+	}
+
 	// Add other non-AS headers
 	for k, v := range req.Headers {
 		if !strings.HasPrefix(strings.ToLower(k), "x-as-") {

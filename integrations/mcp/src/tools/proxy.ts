@@ -105,6 +105,11 @@ async function callLocalProxy(
   const agentId = args.agent_id ?? call.creds.agentId ?? 'mcp-bridge';
   if (agentId) headers['X-AS-Agent-ID'] = agentId;
   if (call.creds.agentToken) headers['X-AS-Agent-Token'] = call.creds.agentToken;
+  // Forward the caller-declared context so the daemon enforces it fail-closed
+  // where the secret is injected (the engine's Expected assertion).
+  if (args.workspace) headers['X-AS-Expected-Workspace'] = args.workspace;
+  if (args.project) headers['X-AS-Expected-Project'] = args.project;
+  if (args.environment) headers['X-AS-Expected-Env'] = args.environment;
   for (const [spec, key] of Object.entries(args.injections)) {
     const [style, ...rest] = spec.split(':');
     const target = rest.join(':');

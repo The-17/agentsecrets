@@ -90,8 +90,8 @@ var bridgeVerbs = []string{
 }
 
 // EnvBridgeAllowWrites is the human-controlled switch for bridge mutations.
-// Same rule as the Go MCP server (pkg/mcp): a model cannot set its own
-// environment, so this cannot be flipped by an injected instruction.
+// A model cannot set its own environment, so this cannot be flipped by an
+// injected instruction.
 const EnvBridgeAllowWrites = "AGENTSECRETS_MCP_ALLOW_WRITES"
 
 // bridgeWrites are the verbs that mutate state. They are refused unless a human
@@ -146,6 +146,13 @@ func runMCPBridge(cmd *cobra.Command, args []string) error {
 	// the supported form is "agentsecrets mcp <verb>".
 	if len(args) > 1 && args[0] == "bridge" {
 		args = args[1:]
+	}
+
+	if len(args) == 0 {
+		// A bare `agentsecrets mcp` must not panic. The contract is one JSON
+		// envelope on stdout, so fail the way an unknown verb does.
+		bridgeErr("no verb given (verbs: %s)", strings.Join(bridgeVerbs, ", "))
+		return nil
 	}
 
 	verb := args[0]
@@ -355,6 +362,9 @@ func expectBindingWorkspace(a map[string]interface{}) error {
 	if expect == "" {
 		return nil
 	}
+	// Resolve "personal" (and names) to the concrete workspace id before matching,
+	// so the portable per-call address works here too.
+	expect = resolveBridgeWorkspaceRef(expect)
 	b := loadBindingScope()
 	if b == nil || b.workspaceID == "" {
 		return nil
@@ -369,6 +379,21 @@ func expectBindingWorkspace(a map[string]interface{}) error {
 	return nil
 }
 
+// expectBindingEnv fails when the caller named an environment that is not the
+// active environment. The engine re-asserts this where the secret is injected;
+// this pre-check surfaces the mismatch early with a clear message.
+func expectBindingEnv(a map[string]interface{}) error {
+	expect := argStr(a, "expect_env")
+	if expect == "" {
+		return nil
+	}
+	active := config.ResolveEnvironment()
+	if !strings.EqualFold(expect, active) {
+		return fmt.Errorf("scope mismatch: caller expects environment %q but the active environment is %q", expect, active)
+	}
+	return nil
+}
+
 // withExpectWorkspace honors an explicit workspace for verbs routed via the
 // selected workspace: temporarily select it for fn, then restore.
 func withExpectWorkspace(a map[string]interface{}, fn func() error) error {
@@ -376,15 +401,8 @@ func withExpectWorkspace(a map[string]interface{}, fn func() error) error {
 	if expect == "" {
 		return fn()
 	}
-	wsID := expect
-	if cfg, err := config.LoadGlobalConfig(); err == nil && cfg != nil {
-		for id, ws := range cfg.Workspaces {
-			if id == expect || ws.Name == expect {
-				wsID = id
-				break
-			}
-		}
-	}
+	// Resolve "personal" (and names) to the concrete workspace id.
+	wsID := resolveBridgeWorkspaceRef(expect)
 	prev := config.GetSelectedWorkspaceID()
 	if wsID == prev {
 		return fn()
@@ -461,7 +479,7 @@ func bridgeProject() (*config.ProjectConfig, error) {
 
 func bridgeWorkspaceID(a map[string]interface{}, pc *config.ProjectConfig) string {
 	if v := argStr(a, "workspace"); v != "" {
-		return v
+		return resolveBridgeWorkspaceRef(v)
 	}
 	if pc != nil && pc.WorkspaceID != "" {
 		return pc.WorkspaceID
@@ -885,8 +903,8 @@ func bridgeSecretsRotate(a map[string]interface{}) error {
 
 // proxy ---------------------------------------------------------------------------
 
-// parseBridgeInjections mirrors pkg/mcp parseInjections: map entries of
-// "style" or "style:target" to proxy.Injection structs.
+// parseBridgeInjections turns map entries of "style" or "style:target" into
+// proxy.Injection structs.
 func parseBridgeInjections(raw map[string]interface{}) ([]proxy.Injection, error) {
 	var injections []proxy.Injection
 	for spec, val := range raw {
@@ -921,6 +939,9 @@ func bridgeProxyCall(a map[string]interface{}) error {
 	if err := expectBindingWorkspace(a); err != nil {
 		return err
 	}
+	if err := expectBindingEnv(a); err != nil {
+		return err
+	}
 	// A running daemon serves ITS start project, not this directory: verify.
 	if err := checkDaemonProject(); err != nil {
 		return err
@@ -953,6 +974,18 @@ func bridgeProxyCall(a map[string]interface{}) error {
 	if bodyStr := argStr(a, "body"); bodyStr != "" {
 		body = []byte(bodyStr)
 	}
+	// Optional caller-declared context assertion (item 1). The TypeScript MCP
+	// bridge forwards the model's requested scope as expect_workspace /
+	// expect_project / expect_env; hand it to the daemon so the ENGINE enforces it
+	// fail-closed where the secret is injected (not merely as a cwd pre-check).
+	// The expectBinding* guards above remain as defense in depth.
+	expWS := argStr(a, "expect_workspace")
+	expProj := argStr(a, "expect_project")
+	expEnv := argStr(a, "expect_env")
+	var expected *proxy.ExpectedContext
+	if expWS != "" || expProj != "" || expEnv != "" {
+		expected = &proxy.ExpectedContext{Workspace: expWS, Project: expProj, Environment: expEnv}
+	}
 	agentID := argStr(a, "agent_id")
 	if agentID == "" {
 		// Parity with the Go MCP server: unattributed MCP calls log as "mcp",
@@ -966,6 +999,7 @@ func bridgeProxyCall(a map[string]interface{}) error {
 		Body:       body,
 		Injections: injections,
 		AgentID:    agentID,
+		Expected:   expected,
 	})
 	if err != nil {
 		return fmt.Errorf("API call failed: %w", err)
@@ -1354,10 +1388,12 @@ func bridgeSecretsRotationStatus(a map[string]interface{}) error {
 
 // resolveBridgeWorkspaceRef maps a workspace id-or-name to its id via the
 // local cache, passing unknown values through for the server to reject.
+// "personal" resolves to the caller's personal workspace so it is a portable
+// per-call address that does not require the workspace's display name baked in.
 func resolveBridgeWorkspaceRef(ref string) string {
 	if cfg, err := config.LoadGlobalConfig(); err == nil && cfg != nil {
 		for id, ws := range cfg.Workspaces {
-			if id == ref || ws.Name == ref {
+			if id == ref || ws.Name == ref || (strings.EqualFold(ref, "personal") && strings.EqualFold(ws.Type, "personal")) {
 				return id
 			}
 		}

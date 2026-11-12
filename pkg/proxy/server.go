@@ -243,6 +243,18 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	agentID := r.Header.Get("X-AS-Agent-ID")
 	agentToken := r.Header.Get("X-AS-Agent-Token")
 
+	// Reconstruct the caller-declared Expected context (item 1). The CLI forwards
+	// it over the wire (X-AS-Expected-*) so the daemon-enforced assertion inside
+	// ExecuteCtx sees it; without this, the assertion would silently no-op when a
+	// daemon is running and a mismatched call would leak a secret.
+	var expected *ExpectedContext
+	expWS := r.Header.Get("X-AS-Expected-Workspace")
+	expProj := r.Header.Get("X-AS-Expected-Project")
+	expEnv := r.Header.Get("X-AS-Expected-Env")
+	if expWS != "" || expProj != "" || expEnv != "" {
+		expected = &ExpectedContext{Workspace: expWS, Project: expProj, Environment: expEnv}
+	}
+
 	injections, err := parseInjections(r.Header)
 	if err != nil {
 		writeError(w, 400, err.Error())
@@ -350,6 +362,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		IdentityLevel: identityLevel,
 		TokenID:       tokenID,
 		Capabilities:  callReqCaps,
+		Expected:      expected,
 	})
 
 	if err != nil {

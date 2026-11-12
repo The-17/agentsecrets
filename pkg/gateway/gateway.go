@@ -272,6 +272,12 @@ type CallRequest struct {
 	Body       []byte
 	Injections []proxy.Injection
 	AgentToken string
+	// Expected is an optional caller-declared context. In local mode the proxy
+	// engine asserts it fail-closed before injecting. In cloud mode it is sent
+	// to the resolver, which enforces it against the token's binding before
+	// injecting (the value is injected server-side in cloud mode, so that is
+	// where the guarantee must live). See pkg/proxy/scope.go.
+	Expected *proxy.ExpectedContext
 }
 
 // CallResult is the sanitized upstream response. Body and headers are already
@@ -296,6 +302,7 @@ func Call(req CallRequest, sel Selection) (*CallResult, error) {
 			Body:       req.Body,
 			Injections: req.Injections,
 			AgentToken: req.AgentToken,
+			Expected:   req.Expected,
 		})
 		if err != nil {
 			return nil, err
@@ -321,6 +328,10 @@ type resolveRequest struct {
 	Headers   map[string]string `json:"headers"`
 	Body      string            `json:"body,omitempty"`
 	Scope     *resolveScope     `json:"scope,omitempty"`
+	// Expected is forwarded to the resolver so it can fail the call closed when
+	// the token's binding does not match the caller's declared context. Injection
+	// happens server-side in cloud mode, so that is where the guarantee lives.
+	Expected *proxy.ExpectedContext `json:"expected,omitempty"`
 }
 
 type resolveScope struct {
@@ -538,6 +549,7 @@ func buildResolveRequest(req CallRequest) (*resolveRequest, error) {
 		Method:    req.Method,
 		Headers:   headers,
 		Body:      body,
+		Expected:  req.Expected,
 	}, nil
 }
 

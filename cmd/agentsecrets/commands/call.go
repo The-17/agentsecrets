@@ -29,6 +29,11 @@ var (
 	callSetHeaders []string // "Name=Value" plain headers (non-secret)
 	callOutput     string   // "text" (default) or "json"
 	callMode       string   // "" (router decides), "cloud", or "local"
+	// Context-assertion flags: declare the context the call must resolve to.
+	// Any mismatch fails the call closed before a secret is injected.
+	callExpectWorkspace string
+	callExpectProject   string
+	callExpectEnv       string
 )
 
 var callCmd = &cobra.Command{
@@ -89,6 +94,9 @@ func init() {
 	callCmd.Flags().StringVar(&callMode, "mode", "", "Resolution mode: local or cloud (default: router decides)")
 	callCmd.Flags().Bool("cloud", false, "Resolve through the cloud resolver for this call (shorthand for --mode cloud)")
 	callCmd.Flags().Bool("local", false, "Resolve from the local keychain for this call (shorthand for --mode local)")
+	callCmd.Flags().StringVar(&callExpectWorkspace, "expect-workspace", "", "Context assertion: fail closed unless the call resolves to this workspace (name, ID, or 'personal')")
+	callCmd.Flags().StringVar(&callExpectProject, "expect-project", "", "Context assertion: fail closed unless the call is bound to this project ID")
+	callCmd.Flags().StringVar(&callExpectEnv, "expect-env", "", "Context assertion: fail closed unless the active environment matches this value")
 	_ = callCmd.MarkFlagRequired("url")
 
 	_ = callCmd.RegisterFlagCompletionFunc("bearer", autocompleteSecretKeys)
@@ -177,6 +185,17 @@ func runCall(cmd *cobra.Command, args []string) error {
 		body = []byte(callBody)
 	}
 
+	// Context assertion: only build an Expected when at least one field is set,
+	// so a nil Expected keeps the backward-compatible pass-through behavior.
+	var expected *proxy.ExpectedContext
+	if callExpectWorkspace != "" || callExpectProject != "" || callExpectEnv != "" {
+		expected = &proxy.ExpectedContext{
+			Workspace:   callExpectWorkspace,
+			Project:     callExpectProject,
+			Environment: callExpectEnv,
+		}
+	}
+
 	callStart := time.Now()
 	result, err := gateway.Call(gateway.CallRequest{
 		TargetURL:  callURL,
@@ -185,6 +204,7 @@ func runCall(cmd *cobra.Command, args []string) error {
 		Body:       body,
 		Injections: injections,
 		AgentToken: callToken,
+		Expected:   expected,
 	}, selection)
 	durationMs := time.Since(callStart).Milliseconds()
 	if err != nil {

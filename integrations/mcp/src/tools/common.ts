@@ -73,10 +73,12 @@ export async function dispatch(
   if (call.mode.mode === 'local') {
     if (!call.mode.binary) return fail('Local mode selected but no working binary (unexpected). Switch to cloud mode.');
     // Forward the model's requested scope for the helper's expect_* guard.
-    // The helper (not this bridge) enforces it against its binding.
+    // The helper (not this bridge) enforces it fail-closed where the secret is
+    // injected; this bridge only carries the declaration across the process line.
     const forwarded: Record<string, unknown> = { ...args };
     if (typeof args['project'] === 'string' && args['project']) forwarded['expect_project'] = args['project'];
     if (typeof args['workspace'] === 'string' && args['workspace']) forwarded['expect_workspace'] = args['workspace'];
+    if (typeof args['environment'] === 'string' && args['environment']) forwarded['expect_env'] = args['environment'];
     try {
       const env = bridgeExec(call.mode.binary, verb, forwarded, { cwd: call.dir });
       recordTool(verbToTool(verb));

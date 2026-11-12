@@ -749,12 +749,48 @@ func StoreTokens(accessToken, refreshToken, expiresAt string) error {
 }
 
 // GetSelectedWorkspaceID returns the selected workspace for new project creation.
+//
+// A process may override the persisted selection with AGENTSECRETS_WORKSPACE,
+// which is the stateless per-process scoped handle for workspace_switch: it lets
+// one concurrent session address a workspace without mutating the shared global
+// config that other sessions read. The value may be a workspace name, ID, or
+// "personal"; it is resolved to the concrete ID before being returned.
 func GetSelectedWorkspaceID() string {
+	if v := strings.TrimSpace(os.Getenv("AGENTSECRETS_WORKSPACE")); v != "" {
+		if id, err := ResolveWorkspaceRef(v); err == nil {
+			return id
+		}
+		// Fall back to the raw value so a caller that matches by name still works.
+		return v
+	}
 	config, err := LoadGlobalConfig()
 	if err != nil {
 		return ""
 	}
 	return config.SelectedWorkspaceID
+}
+
+// ResolveWorkspaceRef maps a workspace reference (a workspace name, ID, or the
+// literal "personal") to the caller's concrete workspace ID. It fails closed on
+// an unknown reference so a typo or stale name is rejected rather than silently
+// resolving to nothing. "personal" resolves to the account's personal workspace
+// (type "personal"), making it a portable per-call address that does not require
+// the workspace's display name to be baked into local config.
+func ResolveWorkspaceRef(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("empty workspace reference")
+	}
+	cfg, err := LoadGlobalConfig()
+	if err != nil || cfg == nil {
+		return "", fmt.Errorf("cannot resolve workspace %q: no account config loaded", ref)
+	}
+	for id, ws := range cfg.Workspaces {
+		if id == ref || ws.Name == ref || (strings.EqualFold(ref, "personal") && strings.EqualFold(ws.Type, "personal")) {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("workspace %q not found in this account", ref)
 }
 
 // SetSelectedWorkspaceID sets the selected workspace for new project creation.
@@ -783,7 +819,14 @@ func ResolveProjectContext() (projectID, workspaceID string) {
 }
 
 // GetSelectedProjectID returns the globally selected project ID.
+//
+// Like GetSelectedWorkspaceID, it honors AGENTSECRETS_PROJECT as a stateless
+// per-process override so concurrent sessions do not clobber each other's
+// selection through the shared global config.
 func GetSelectedProjectID() string {
+	if v := strings.TrimSpace(os.Getenv("AGENTSECRETS_PROJECT")); v != "" {
+		return v
+	}
 	config, err := LoadGlobalConfig()
 	if err != nil {
 		return ""
