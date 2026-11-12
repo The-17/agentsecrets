@@ -675,10 +675,10 @@ func FetchWorkloadEnvSealed(ctx context.Context, resolverURL, token, environment
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	// Proof-of-possession: this is a resolver request. When a signer is installed
-	// (post key-transport ADR) and the token carries a confirmation key, the
-	// resolver requires a signed proof. No-op for every token minted today.
-	pop.AttachProof(req)
+	// Proof-of-possession: this is a resolver request. When a key is available
+	// for this token, attach a signed proof; the resolver only requires one when
+	// the token carries a confirmation key.
+	pop.AttachProof(req, token)
 
 	client := &http.Client{
 		Timeout: 15 * time.Second,

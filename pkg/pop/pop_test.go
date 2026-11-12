@@ -62,8 +62,9 @@ func TestProofSigner_TamperedPathFails(t *testing.T) {
 
 func TestAttachProof_NoSignerIsNoOp(t *testing.T) {
 	SetProofSigner(nil)
+	SetSeedResolver(nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/workloads/env", nil)
-	AttachProof(req)
+	AttachProof(req, "any-token")
 	if req.Header.Get(ProofHeader) != "" {
 		t.Fatal("AttachProof with no signer must not set headers")
 	}
@@ -74,8 +75,64 @@ func TestSetProofSigner_ActivatesProof(t *testing.T) {
 	SetProofSigner(signer)
 	t.Cleanup(func() { SetProofSigner(nil) })
 	req := httptest.NewRequest(http.MethodPost, "/v1/identity", nil)
-	AttachProof(req)
+	AttachProof(req, "any-token")
 	verifyAttach(t, req, signer.PublicKey())
+}
+
+// TestAttachProof_SeedResolverSigns proves the CLI-managed path: no explicit
+// signer, but the token resolves to a stored seed, so AttachProof signs with it.
+func TestAttachProof_SeedResolverSigns(t *testing.T) {
+	SetProofSigner(nil)
+	t.Cleanup(func() { SetSeedResolver(nil) })
+	signer, _ := NewProofSigner()
+	SetSeedResolver(func(token string) ([]byte, bool) {
+		if token == "tok-bound" {
+			return signer.Seed(), true
+		}
+		return nil, false
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/resolve", nil)
+	AttachProof(req, "tok-bound")
+	verifyAttach(t, req, signer.PublicKey())
+}
+
+// TestAttachProof_SeedResolverUnknownTokenNoOp keeps legacy tokens working: a
+// token with no stored key attaches no proof, and the resolver only demands one
+// when the token itself carries a confirmation key.
+func TestAttachProof_SeedResolverUnknownTokenNoOp(t *testing.T) {
+	SetProofSigner(nil)
+	t.Cleanup(func() { SetSeedResolver(nil) })
+	signer, _ := NewProofSigner()
+	SetSeedResolver(func(token string) ([]byte, bool) { return signer.Seed(), true })
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/resolve", nil)
+	AttachProof(req, "")
+	if req.Header.Get(ProofHeader) != "" {
+		t.Fatal("an empty token must not look up or sign with any seed")
+	}
+	SetSeedResolver(func(string) ([]byte, bool) { return nil, false })
+	AttachProof(req, "unknown-token")
+	if req.Header.Get(ProofHeader) != "" {
+		t.Fatal("a token with no stored seed must be a no-op")
+	}
+}
+
+// TestAttachProof_EnvSignerTakesPrecedence pins the raw/remote-injection path:
+// when a workload carries its own seed, that signer wins over the keychain lookup.
+func TestAttachProof_EnvSignerTakesPrecedence(t *testing.T) {
+	envSigner, _ := NewProofSigner()
+	SetProofSigner(envSigner)
+	t.Cleanup(func() {
+		SetProofSigner(nil)
+		SetSeedResolver(nil)
+	})
+	other, _ := NewProofSigner()
+	SetSeedResolver(func(string) ([]byte, bool) { return other.Seed(), true })
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/identity", nil)
+	AttachProof(req, "tok")
+	verifyAttach(t, req, envSigner.PublicKey())
 }
 
 func TestNewProofSignerFromSeed_RoundTrip(t *testing.T) {
@@ -135,8 +192,9 @@ func TestLoadSignerFromEnvironment_AbsentIsNoOp(t *testing.T) {
 	if err := LoadSignerFromEnvironment(); err != nil {
 		t.Fatalf("absent seed must not error: %v", err)
 	}
+	SetSeedResolver(nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/identity", nil)
-	AttachProof(req)
+	AttachProof(req, "tok")
 	if req.Header.Get(ProofHeader) != "" {
 		t.Fatal("absent seed must leave AttachProof a no-op")
 	}
@@ -153,8 +211,9 @@ func TestLoadSignerFromEnvironment_InstallsSigner(t *testing.T) {
 	if err := LoadSignerFromEnvironment(); err != nil {
 		t.Fatalf("valid seed must install signer: %v", err)
 	}
+	SetSeedResolver(nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/workloads/env", nil)
-	AttachProof(req)
+	AttachProof(req, "tok")
 	if req.Header.Get(ProofHeader) == "" {
 		t.Fatal("installed signer must attach a proof")
 	}

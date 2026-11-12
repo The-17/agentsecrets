@@ -112,20 +112,54 @@ func (s *ProofSigner) attachAt(req *http.Request, ts string) {
 
 var active *ProofSigner
 
-// SetProofSigner installs the process-wide signer used by AttachProof. Pass nil
-// to clear it. It is called from commands.Execute via LoadSignerFromEnvironment,
-// which reads SeedEnv before any resolver call, so proofs are active whenever the
-// seed is present.
+// seedResolver looks up the proof seed for a workload token. It is injected from
+// the CLI (a keychain-backed lookup) so this package stays a stdlib-only leaf:
+// the CLI-managed seed never enters the token, and no transport package needs to
+// import the keychain. Returns ok=false when no seed is stored for that token.
+var seedResolver func(token string) (seed []byte, ok bool)
+
+// SetProofSigner installs the process-wide signer used for every resolver call.
+// Pass nil to clear it. It is populated by LoadSignerFromEnvironment from SeedEnv,
+// the raw/remote-injection path where the workload carries the seed itself.
 func SetProofSigner(s *ProofSigner) {
 	active = s
 }
 
-// AttachProof signs an outgoing resolver request when a signer is installed.
-// It is a no-op otherwise, which keeps every pre-PoP token working unchanged.
-func AttachProof(req *http.Request) {
+// SetSeedResolver installs the token-to-seed lookup used by AttachProof when no
+// explicit signer is installed. This is the CLI-managed path: the seed lives in
+// the OS keychain and is found by the workload token being sent.
+func SetSeedResolver(f func(token string) ([]byte, bool)) {
+	seedResolver = f
+}
+
+// AttachProof signs an outgoing resolver request for the given workload token.
+// Precedence:
+//  1. An explicitly installed signer (SeedEnv) wins. That is the raw/remote
+//     injection path, where a workload carries the seed itself.
+//  2. Otherwise the CLI-managed seed is looked up by token and signs.
+//
+// If neither yields a key it is a no-op, which keeps every pre-PoP token working:
+// the resolver only demands a proof when the token carries a confirmation key.
+func AttachProof(req *http.Request, token string) {
 	if active != nil {
 		active.Attach(req)
+		return
 	}
+	if seedResolver == nil || strings.TrimSpace(token) == "" {
+		return
+	}
+	seed, ok := seedResolver(token)
+	if !ok || len(seed) == 0 {
+		return
+	}
+	signer, err := NewProofSignerFromSeed(seed)
+	if err != nil {
+		// A stored seed of the wrong length is a corrupt keychain entry. Sending
+		// no proof leaves a PoP-bound token refused by the resolver, which is the
+		// loud, safe failure: never sign with a key that cannot be the right one.
+		return
+	}
+	signer.Attach(req)
 }
 
 // LoadSignerFromEnvironment installs the process-wide proof signer from SeedEnv.

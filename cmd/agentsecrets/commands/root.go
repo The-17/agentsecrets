@@ -14,6 +14,7 @@ import (
 	clierrors "github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
+	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/pop"
 	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -52,14 +53,15 @@ func Execute() error {
 	// Wire dynamic server URL resolution
 	api.ResolveBaseURLFunc = config.GetServerURL
 
-	// Install the proof-of-possession signer before any command runs. This is
-	// outside skipPreamble() because exec and mcp also call the resolver. An
-	// absent seed is a legitimate no-PoP state; a malformed one fails closed
-	// here rather than producing a chain of opaque 401s.
+	// Proof-of-possession is on by default for CLI-minted agents. The private key
+	// is stored in the OS keychain at mint time and looked up by the workload
+	// token on every resolver call, so the user never handles it. A seed in the
+	// environment (SeedEnv) is the raw/remote-injection path and takes precedence.
 	if err := pop.LoadSignerFromEnvironment(); err != nil {
 		ui.Error(err.Error())
 		return err
 	}
+	pop.SetSeedResolver(keyring.GetAgentProofSeed)
 
 	// Ensure keychain-auth socket is closed on exit
 	defer keychainauth.Close()

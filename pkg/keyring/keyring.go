@@ -7,7 +7,9 @@
 package keyring
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -148,6 +150,68 @@ func GetAgentToken(agentName string) (string, error) {
 func DeleteAgentToken(agentName string) error {
 	name := "agent_token_" + agentName
 	return keychainauth.Delete(serviceName, name)
+}
+
+// agentProofSeedKey names the proof-of-possession seed by a fingerprint of the
+// workload token rather than by the token itself: the token is the only identifier
+// a resolver call has in hand, and storing the raw token as a key name would leak
+// it into keychain listing/logs. SHA-256 is one-way, so the name reveals nothing.
+func agentProofSeedKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "agent_pop_seed_" + hex.EncodeToString(sum[:16])
+}
+
+// SetAgentProofSeed stores the base64 seed that proves possession of a workload
+// token, keyed by the token's fingerprint. The CLI calls this at mint time so a
+// later resolver call can find the key from the token alone.
+func SetAgentProofSeed(token string, seed []byte) error {
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("cannot store proof seed without a token")
+	}
+	return keychainauth.Write(serviceName, agentProofSeedKey(token), base64.StdEncoding.EncodeToString(seed))
+}
+
+// GetAgentProofSeed returns the proof seed for a workload token, if one is stored.
+// It implements pop's token-to-seed resolver.
+func GetAgentProofSeed(token string) ([]byte, bool) {
+	if strings.TrimSpace(token) == "" {
+		return nil, false
+	}
+	raw, err := keychainauth.Read(serviceName, agentProofSeedKey(token))
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	seed, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(seed) == 0 {
+		return nil, false
+	}
+	return seed, true
+}
+
+// SetAgentProofSeedByName stores the seed under the agent name as well, so a new
+// token issued for an existing agent can inherit the same key (cnf_key lives on
+// the agent, so every token for it is bound to the same public key).
+func SetAgentProofSeedByName(agentName string, seed []byte) error {
+	if strings.TrimSpace(agentName) == "" {
+		return fmt.Errorf("cannot store proof seed without an agent name")
+	}
+	return keychainauth.Write(serviceName, "agent_pop_seed_name_"+agentName, base64.StdEncoding.EncodeToString(seed))
+}
+
+// GetAgentProofSeedByName returns the seed stored for an agent, if any.
+func GetAgentProofSeedByName(agentName string) ([]byte, bool) {
+	if strings.TrimSpace(agentName) == "" {
+		return nil, false
+	}
+	raw, err := keychainauth.Read(serviceName, "agent_pop_seed_name_"+agentName)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	seed, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(seed) == 0 {
+		return nil, false
+	}
+	return seed, true
 }
 
 // SetWorkspaceKey stores the base64-encoded workspace key in the OS keychain via keychain-auth.

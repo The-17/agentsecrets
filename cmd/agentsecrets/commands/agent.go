@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -115,7 +114,7 @@ var agentCreateCmd = &cobra.Command{
 			return err
 		}
 
-		popFlag, _ := cmd.Flags().GetBool("dpop")
+		noPop, _ := cmd.Flags().GetBool("no-pop")
 
 		in := agentCreateInput{
 			Name:        args[0],
@@ -126,7 +125,7 @@ var agentCreateCmd = &cobra.Command{
 			Environment: cmd.Flag("env").Value.String(),
 			Caps:        caps,
 			StoreSecret: agentCreateStoreSecret,
-			PoP:         popFlag,
+			NoPop:       noPop,
 		}
 		if cmd.Flags().Changed("save-token") {
 			v, _ := cmd.Flags().GetBool("save-token")
@@ -147,7 +146,7 @@ type agentCreateInput struct {
 	Caps        *capabilities.AgentCapabilities
 	SaveToken   *bool // nil => prompt the user
 	StoreSecret bool  // store token as project secret AGENTSECRETS_TOKEN
-	PoP         bool  // bind the token to a proof-of-possession key
+	NoPop       bool  // legacy escape hatch: mint an unbound token
 }
 
 // runAgentCreate is the single implementation behind both `register` and
@@ -181,21 +180,23 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 		return fmt.Errorf("invalid --expires: %w", err)
 	}
 
-	// Proof-of-possession is opt-in. The public key travels inside capabilities
-	// (the control plane forbids extra top-level request fields). The private
-	// seed is shown once and injected into the workload as its own env var. It is
-	// never embedded in the token, so a token leaked from a log is useless alone.
-	var popSeedB64 string
-	if in.PoP {
+	// Proof-of-possession is on by default: the minted token is bound to a key
+	// only this machine holds. The public key travels inside capabilities (the
+	// control plane forbids extra top-level request fields); the private seed is
+	// stored in the OS keychain right after mint, keyed by the token, so the CLI
+	// finds and injects it automatically. It never enters the token, so a token
+	// leaked from a log is useless alone.
+	var popSigner *pop.ProofSigner
+	if !in.NoPop {
 		signer, err := pop.NewProofSigner()
 		if err != nil {
 			return fmt.Errorf("failed to generate proof-of-possession key: %w", err)
 		}
+		popSigner = signer
 		if in.Caps == nil {
 			in.Caps = &capabilities.AgentCapabilities{}
 		}
 		in.Caps.ConfirmationKey = signer.PublicKey()
-		popSeedB64 = base64.StdEncoding.EncodeToString(signer.Seed())
 	}
 
 	resp, err := app.Agents().Register(agents.RegisterRequest{
@@ -209,6 +210,19 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 	})
 	if err != nil {
 		return fmt.Errorf("agent creation failed: %w", err)
+	}
+
+	// Persist the proof key so the CLI can find it from the token on every later
+	// resolver call. Stored by token fingerprint (the only identifier a call has)
+	// and by agent name (so tokens issued for this agent inherit the same key).
+	// A failure here would leave a bound token that can never prove itself, so
+	// fail loudly instead of printing a token the resolver will reject.
+	if popSigner != nil {
+		seed := popSigner.Seed()
+		if err := keyring.SetAgentProofSeed(resp.Token, seed); err != nil {
+			return fmt.Errorf("the token was minted proof-of-possession bound, but its key could not be saved to the OS keychain, so it cannot be used. Fix keychain-auth and re-run 'agentsecrets agent create': %w", err)
+		}
+		_ = keyring.SetAgentProofSeedByName(resp.Agent.Name, seed)
 	}
 
 	cfg, _ := config.LoadGlobalConfig()
@@ -236,8 +250,8 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 	fmt.Printf("  Name   %s\n", resp.Agent.Name)
 	fmt.Printf("  Scope  %s\n", scopeName)
 	fmt.Printf("  Env    %s\n", environment)
-	if in.PoP {
-		fmt.Printf("  PoP    enabled (cnf/jkt bound)\n")
+	if popSigner != nil {
+		fmt.Printf("  PoP    enabled (proof key stored in your OS keychain)\n")
 	}
 	if resp.ExpiresAt != nil {
 		fmt.Printf("  Expires %s\n", resp.ExpiresAt.Format("2006-01-02"))
@@ -266,16 +280,14 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 		}
 	}
 
-	fmt.Println("\n" + ui.WarningStyle.Render("Store these values securely. They will not be shown again."))
+	fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
 	fmt.Printf("To use it: export %s=%s\n", gateway.WorkloadTokenEnv, resp.Token)
-	if in.PoP {
-		fmt.Printf("           export %s=%s\n", pop.SeedEnv, popSeedB64)
+	if popSigner != nil {
+		ui.Success("This token is proof-of-possession bound. The proof key is managed automatically from your OS keychain.")
+	} else {
 		fmt.Println()
-		ui.Warning("This agent is proof-of-possession bound. The token alone is rejected by the resolver.")
-		ui.Warning(fmt.Sprintf("Inject %s into the workload BEFORE it calls the resolver (env --cloud, doctor, call).", pop.SeedEnv))
-		if in.StoreSecret {
-			ui.Warning(fmt.Sprintf("The project secret %s holds only the token. The seed cannot be fetched through the resolver, because fetching it already needs a proof.", gateway.WorkloadTokenEnv))
-		}
+		ui.Warning("Proof-of-possession is DISABLED by --no-pop.")
+		ui.Warning("Anyone who obtains this token can use it, with no second factor. Use this only for a legacy integration that cannot carry a proof key.")
 	}
 
 	var storeInKeychain bool
@@ -293,9 +305,6 @@ func runAgentCreate(cmd *cobra.Command, in agentCreateInput) error {
 		} else {
 			fmt.Println()
 			ui.Success(fmt.Sprintf("Stored agent token in keychain! You can now reference it via: %s_TOKEN", strings.ToUpper(resp.Agent.Name)))
-			if in.PoP {
-				ui.Warning(fmt.Sprintf("The keychain holds the token only. %s must still be injected into the workload environment.", pop.SeedEnv))
-			}
 		}
 	}
 	fmt.Println()
@@ -462,6 +471,17 @@ var agentTokenIssueCmd = &cobra.Command{
 		}
 		if resp.ExpiresAt != nil {
 			fmt.Printf("  Expires  %s\n", resp.ExpiresAt.Format("2006-01-02"))
+		}
+		// The confirmation key lives on the agent, so a new token inherits the
+		// same binding. Store the existing seed under the new token's fingerprint
+		// so the CLI can still find it; without it the bound token is unusable.
+		if seed, ok := keyring.GetAgentProofSeedByName(name); ok {
+			if err := keyring.SetAgentProofSeed(resp.Token, seed); err != nil {
+				return fmt.Errorf("the token inherits this agent's proof-of-possession binding, but its key could not be saved to the OS keychain, so it cannot be used: %w", err)
+			}
+			fmt.Printf("  PoP      enabled (inherits the agent's proof key; stored in your OS keychain)\n")
+		} else {
+			ui.Warning("This agent has no proof key stored on this machine. If it was created proof-of-possession bound elsewhere, this token cannot prove itself here.")
 		}
 		fmt.Println("\n" + ui.WarningStyle.Render("Store this token securely. It will not be shown again."))
 
@@ -818,7 +838,7 @@ func init() {
 	agentCreateCmd.Flags().String("env", "", "environment for the token (development, staging, production, or a custom name)")
 	agentCreateCmd.Flags().StringSlice("allow", nil, "capability scopes to grant: secrets:env, secrets:proxy (comma- or space-separated, repeatable)")
 	agentCreateCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
-	agentCreateCmd.Flags().Bool("dpop", false, "bind the token to a proof-of-possession key; prints a second secret (AGENTSECRETS_POP_SEED) that must be injected alongside the token")
+	agentCreateCmd.Flags().Bool("no-pop", false, "ESCAPE HATCH: mint an unbound token that anyone holding it can use. Proof-of-possession is on by default; only use this for a legacy integration that cannot carry a proof key")
 	agentCreateCmd.Flags().BoolVar(&agentCreateStoreSecret, "store-secret", true, "store the token as project secret AGENTSECRETS_TOKEN so workloads pick it up automatically")
 
 	// Flags for list

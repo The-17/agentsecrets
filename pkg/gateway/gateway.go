@@ -379,9 +379,10 @@ func callCloud(req CallRequest) (*CallResult, error) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
-	// Resolver request: attach a proof when a signer is installed. No-op for
-	// every token minted today (the resolver skips PoP without a confirmation key).
-	pop.AttachProof(httpReq)
+	// Resolver request: attach a proof when a key is available for this token.
+	// The CLI-managed key is looked up by the token; the resolver only demands a
+	// proof when the token carries a confirmation key, so legacy tokens still work.
+	pop.AttachProof(httpReq, token)
 
 	client := &http.Client{
 		Timeout: cloudTimeout,

@@ -54,9 +54,9 @@ func FetchWorkloadIdentity(ctx context.Context, resolverURL, token string) (*Wor
 		return nil, fmt.Errorf("failed to create identity request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	// Resolver request: attach a proof when a signer is installed. No-op for
-	// every token minted today (the resolver skips PoP without a confirmation key).
-	pop.AttachProof(req)
+	// Resolver request: attach a proof when a key is available for this token.
+	// The resolver only demands one when the token carries a confirmation key.
+	pop.AttachProof(req, token)
 
 	client := &http.Client{
 		Timeout: 15 * time.Second,
