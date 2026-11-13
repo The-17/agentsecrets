@@ -43,6 +43,8 @@ var endpointMap = map[string]map[string]string{
 		"recover_password":  "auth/recover/password/",
 		"update_email":      "auth/update-email/",
 		"confirm_email":     "auth/update-email/confirm/",
+		"verify_email":      "auth/verify-email/",
+		"resend_otp":        "auth/resend-otp/",
 		"oauth_authorize":   "auth/oauth/{provider}/authorize/",
 		"oauth_exchange":    "auth/oauth/{provider}/exchange/",
 		"keys_initialize":        "auth/keys/initialize/",
@@ -93,6 +95,12 @@ var endpointMap = map[string]map[string]string{
 		"allowlist_remove": "workspaces/{workspace_id}/allowlist/{domain}/",
 		"allowlist_log":    "workspaces/{workspace_id}/allowlist/log/",
 		"billing_status":   "workspaces/{workspace_id}/billing/status/",
+	},
+	"invites": {
+		"pending":      "invites/pending/",
+		"accept":       "invites/accept/",
+		"preview":      "invites/preview/",
+		"awaiting_key": "invites/awaiting-key/",
 	},
 	"agents": {
 		"list":             "workspaces/{workspace_id}/agents/",

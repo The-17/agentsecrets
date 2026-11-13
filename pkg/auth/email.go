@@ -34,3 +34,28 @@ func (s *Service) ConfirmEmail(newEmail string, otp int) error {
 	}
 	return nil
 }
+
+// VerifyEmail proves control of the account address with the code sent at
+// signup. Verification is what unlocks cloud mode and lifts the free caps.
+func (s *Service) VerifyEmail(otp int) error {
+	if config.GetEmail() == "" {
+		return fmt.Errorf("verify email: not logged in")
+	}
+	body := map[string]interface{}{"email": config.GetEmail(), "otp": otp}
+	if err := s.API.CallNoContent("auth.verify_email", "POST", body, nil, nil, http.StatusOK); err != nil {
+		return fmt.Errorf("verify email: %w", err)
+	}
+	return nil
+}
+
+// ResendVerification sends a fresh code to the account address.
+func (s *Service) ResendVerification() error {
+	if config.GetEmail() == "" {
+		return fmt.Errorf("resend verification: not logged in")
+	}
+	body := map[string]interface{}{"email": config.GetEmail()}
+	if err := s.API.CallNoContent("auth.resend_otp", "POST", body, nil, nil, http.StatusOK); err != nil {
+		return fmt.Errorf("resend verification: %w", err)
+	}
+	return nil
+}

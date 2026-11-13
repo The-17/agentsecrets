@@ -10,12 +10,12 @@ import { sanitize } from '../src/tools/common.js';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 describe('server wiring', () => {
-  it('registers the full 30-tool surface without throwing', () => {
+  it('registers the full 34-tool surface without throwing', () => {
     const server = createBridgeServer();
     assert.ok(server);
-    assert.equal(TOOL_NAMES.length, 30);
-    assert.equal(new Set(TOOL_NAMES).size, 30);
-    for (const group of ['proxy_', 'secrets_', 'project_', 'workspace_', 'agent_', 'logs_', 'auth_']) {
+    assert.equal(TOOL_NAMES.length, 34);
+    assert.equal(new Set(TOOL_NAMES).size, 34);
+    for (const group of ['proxy_', 'secrets_', 'project_', 'workspace_', 'email_', 'agent_', 'logs_', 'auth_']) {
       assert.ok(TOOL_NAMES.some((n) => n.startsWith(group)), group);
     }
   });

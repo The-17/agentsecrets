@@ -3,8 +3,8 @@
  * always sees the full surface. Mode guards live inside handlers
  * (dispatch), which return actionable guidance as isError results.
  *
- * 30 tools: proxy(2) secrets(8) projects(5) workspaces(4) agents(4)
- * logs(3) auth(4).
+ * 34 tools: proxy(2) secrets(8) projects(5) workspaces(6) email(2)
+ * agents(4) logs(3) auth(4).
  *
  * SDK v2 note: registerTool takes the Zod RAW SHAPE (schema.shape), not a
  * ZodObject. Handlers receive (args, ctx); this bridge uses args only.
@@ -35,9 +35,15 @@ import {
 } from './tools/projects.js';
 import {
   workspaceList, workspaceCreate, workspaceSwitch, workspaceMembers,
+  workspacePendingInvites, workspaceAcceptInvite,
   workspaceListSchema, workspaceCreateSchema, workspaceSwitchSchema,
-  workspaceMembersSchema, workspaceDescriptions,
+  workspaceMembersSchema, workspacePendingInvitesSchema, workspaceAcceptInviteSchema,
+  workspaceDescriptions,
 } from './tools/workspaces.js';
+import {
+  emailVerify, emailResend,
+  emailVerifySchema, emailResendSchema, emailDescriptions,
+} from './tools/email.js';
 import {
   agentList, agentDelete, agentTokenIssue, agentTokenRotate,
   agentListSchema, agentDeleteSchema, agentTokenIssueSchema, agentTokenRotateSchema, agentDescriptions,
@@ -75,6 +81,8 @@ export const TOOL_NAMES = [
   'secrets_rotation_status', 'secrets_rotate',
   'project_list', 'project_create', 'project_use', 'project_update', 'project_delete',
   'workspace_list', 'workspace_create', 'workspace_switch', 'workspace_members',
+  'workspace_pending_invites', 'workspace_accept_invite',
+  'email_verify', 'email_resend',
   'agent_list', 'agent_delete', 'agent_token_issue', 'agent_token_rotate',
   'logs_list', 'logs_summary', 'logs_detail',
   'auth_status', 'auth_login', 'auth_logout', 'auth_use_identity',
@@ -171,6 +179,11 @@ const REGISTERED_TOOLS: ToolDef[] = [
     { name: 'workspace_create', description: workspaceDescriptions.workspace_create, shape: workspaceCreateSchema.shape, run: (c, a) => workspaceCreate(c, a as never) },
     { name: 'workspace_switch', description: workspaceDescriptions.workspace_switch, shape: workspaceSwitchSchema.shape, run: (c, a) => workspaceSwitch(c, a as never) },
     { name: 'workspace_members', description: workspaceDescriptions.workspace_members, shape: workspaceMembersSchema.shape, run: (c, a) => workspaceMembers(c, a as never) },
+    { name: 'workspace_pending_invites', description: workspaceDescriptions.workspace_pending_invites, shape: workspacePendingInvitesSchema.shape, run: (c, a) => workspacePendingInvites(c, a as never) },
+    { name: 'workspace_accept_invite', description: workspaceDescriptions.workspace_accept_invite, shape: workspaceAcceptInviteSchema.shape, run: (c, a) => workspaceAcceptInvite(c, a as never) },
+
+    { name: 'email_verify', description: emailDescriptions.email_verify, shape: emailVerifySchema.shape, run: (c, a) => emailVerify(c, a as never) },
+    { name: 'email_resend', description: emailDescriptions.email_resend, shape: emailResendSchema.shape, run: (c, a) => emailResend(c, a as never) },
 
     { name: 'agent_list', description: agentDescriptions.agent_list, shape: agentListSchema.shape, run: (c, a) => agentList(c, a as never) },
     { name: 'agent_delete', description: agentDescriptions.agent_delete, shape: agentDeleteSchema.shape, run: (c, a) => agentDelete(c, a as never) },

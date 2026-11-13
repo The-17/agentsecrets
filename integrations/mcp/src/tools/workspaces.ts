@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { CallCtx } from '../resolver/index.js';
 import { callControl } from '../resolver/index.js';
 import { fail, type ToolResult } from '../resolver/types.js';
-import { dispatch, withContext } from './common.js';
+import { dispatch, withContext, resolveWorkspaceId } from './common.js';
 import { needJwt } from '../resolver/guards.js';
 import { generateWorkspaceKey, sealForUser } from '../crypto.js';
 import { loadGlobalConfig, saveGlobalConfig } from '../auth/cliFiles.js';
@@ -151,6 +151,49 @@ export async function workspaceMembers(call: CallCtx, args: WorkspaceMembersArgs
   });
 }
 
+export const workspacePendingInvitesSchema = z.object({});
+export type WorkspacePendingInvitesArgs = z.infer<typeof workspacePendingInvitesSchema>;
+
+export const workspaceAcceptInviteSchema = z.object({
+  code: z.string().optional().describe('Six-digit code from the invitation email'),
+  token: z.string().optional().describe('Link token from the invitation URL'),
+  workspace: z.string().optional().describe('Workspace name or ID, when accepting by code'),
+});
+export type WorkspaceAcceptInviteArgs = z.infer<typeof workspaceAcceptInviteSchema>;
+
+/**
+ * Invitations addressed to the signed-in account. An invitation grants
+ * nothing until accepted, so this is the list of workspaces waiting on the
+ * human, not workspaces they belong to.
+ */
+export async function workspacePendingInvites(call: CallCtx, _args: WorkspacePendingInvitesArgs): Promise<ToolResult> {
+  return dispatch(call, 'workspace.pending_invites', {}, async () => {
+    needJwt(call.creds);
+    const invites = await callControl(call).get('invites.pending');
+    return withContext(call, { invites });
+  });
+}
+
+/**
+ * Accept an invitation. Proves control of the invited address; only that
+ * address can accept. The workspace appears immediately, and its key unlocks
+ * once an admin runs `agentsecrets workspace refresh`.
+ */
+export async function workspaceAcceptInvite(call: CallCtx, args: WorkspaceAcceptInviteArgs): Promise<ToolResult> {
+  if (!args.code && !args.token) {
+    return fail('Provide the invitation code (six digits) or the token from the link.');
+  }
+  return dispatch(call, 'workspace.accept_invite', { ...args }, async () => {
+    needJwt(call.creds);
+    const body: Record<string, unknown> = {};
+    if (args.code) body['code'] = args.code;
+    if (args.token) body['token'] = args.token;
+    if (args.workspace) body['workspace_id'] = await resolveWorkspaceId(call, args.workspace);
+    const result = await callControl(call).post('invites.accept', body);
+    return withContext(call, result as Record<string, unknown>);
+  });
+}
+
 export const workspaceDescriptions = {
   workspace_list:
     'See all workspaces (teams) you belong to, with the active one marked. ' +
@@ -164,4 +207,11 @@ export const workspaceDescriptions = {
   workspace_members:
     'See who belongs to a workspace (name, email, role, status). Metadata only. ' +
     'WHEN: the human asks who has access, or before sharing work with a team.',
+  workspace_pending_invites:
+    'List workspace invitations waiting for the signed-in address to accept. ' +
+    'WHEN: the human asks "did anyone invite me", or after they mention an invitation email.',
+  workspace_accept_invite:
+    'Accept a workspace invitation with the six-digit code or the link token. ' +
+    'Only the invited address can accept. Confirm in chat first: it grants access. ' +
+    'The workspace key unlocks after an admin runs `agentsecrets workspace refresh`.',
 };

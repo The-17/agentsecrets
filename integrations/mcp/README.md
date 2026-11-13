@@ -6,7 +6,7 @@
 
 AI assistants are useful with your APIs and dangerous with your API keys. Today people paste keys into chat, into MCP config files, into environment blocks — and from there keys leak into logs, transcripts, screenshots, and model context windows, where prompt injection can lift them.
 
-This bridge flips that around. Your assistant gets 30 tools, and every one of them works on **key names, never key values**. When the assistant needs to call your Stripe API, it says "use `STRIPE_KEY`" — the value is injected outside the assistant's reach, and only the API's response comes back. There is deliberately no tool that returns a secret, and no tool that returns a token.
+This bridge flips that around. Your assistant gets 34 tools, and every one of them works on **key names, never key values**. When the assistant needs to call your Stripe API, it says "use `STRIPE_KEY`" — the value is injected outside the assistant's reach, and only the API's response comes back. There is deliberately no tool that returns a secret, and no tool that returns a token.
 
 ## Why it matters
 
@@ -47,14 +47,14 @@ A workload token (an agent identity, `agt_...`) carries its exact scope — work
 
 **5. Make a call.** *"Check my Stripe balance using STRIPE_KEY."* The assistant calls `proxy_call` with the key name; the value is injected outside its reach; you get the balance. Then `logs_summary` shows you the audit trail.
 
-## The 30 tools
+## The 34 tools
 
 - **Credentialed calls** — `proxy_call` (call any HTTPS API by key name), `proxy_status` (what can serve calls right now)
 - **Secrets** — `secrets_list/set/delete/pull/push/diff` (names and sync state; values never returned — `pull` writes your local `.env`, `set` encrypts before transit), `secrets_rotation_status` (cadence and version history, metadata only), `secrets_rotate` (stage a new version value-blind: generate, capture a command, or inline)
-- **Projects & workspaces** — `project_list/create/use/update/delete`, `workspace_list/create/switch/members` (selecting here pins what later calls act on)
+- **Projects & workspaces** — `project_list/create/use/update/delete`, `workspace_list/create/switch/members/pending_invites/accept_invite` (selecting here pins what later calls act on; accepting an invitation proves you control the address it was sent to)
 - **Agent identities** — `agent_list/delete/token_issue/token_rotate` (token metadata only; issued values go straight to secure storage, never displayed)
 - **Audit** — `logs_list/summary/detail` (who called what, where, and whether it was allowed — the paper trail)
-- **Auth** — `auth_status/login/logout/use_identity` (the guided setup above)
+- **Auth & email** — `auth_status/login/logout/use_identity` (the guided setup above), `email_verify/resend` (prove control of your account address; verification unlocks cloud mode and the full limits)
 
 ## Writes are off unless you turn them on
 

@@ -134,5 +134,88 @@ func promptReenrollPassword() (string, bool) {
 }
 
 func init() {
-	emailCmd.AddCommand(emailUpdateCmd)
+	emailCmd.AddCommand(emailUpdateCmd, emailVerifyCmd, emailResendCmd)
+}
+
+var emailVerifyCmd = &cobra.Command{
+	Use:   "verify [code]",
+	Short: "Verify your email address with the code we sent",
+	Long: `Verify your email address with the six-digit code from signup.
+
+Verification unlocks cloud mode and lifts the limits on projects and secrets.
+Without it, an account still works locally, but the server refuses the
+actions that need a trusted address.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		code := ""
+		if len(args) == 1 {
+			code = args[0]
+		}
+		if code == "" {
+			var entered string
+			form := huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Verification code").
+						Description("The six-digit code sent to " + config.GetEmail()).
+						Value(&entered).
+						Validate(numericCode),
+				),
+			)
+			if err := form.Run(); err != nil {
+				return nil
+			}
+			code = entered
+		}
+		otp, err := strconv.Atoi(code)
+		if err != nil {
+			ui.ErrorWithSuggestions(
+				fmt.Errorf("invalid code: %w", err),
+				"The code is six digits, as sent in the email.",
+			)
+			return nil
+		}
+
+		if err := ui.Spinner("Verifying email...", func() error {
+			return app.Auth().VerifyEmail(otp)
+		}); err != nil {
+			ui.ErrorWithSuggestions(
+				fmt.Errorf("email verification failed: %w", err),
+				"The code may be wrong or expired. Run 'agentsecrets email resend' for a new one.",
+			)
+			return nil
+		}
+		ui.Success("Email verified. Cloud mode and the full feature set are unlocked.")
+		return nil
+	},
+}
+
+var emailResendCmd = &cobra.Command{
+	Use:   "resend",
+	Short: "Send a fresh verification code",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if err := ui.Spinner("Sending a new code...", func() error {
+			return app.Auth().ResendVerification()
+		}); err != nil {
+			ui.ErrorWithSuggestions(
+				fmt.Errorf("could not send a verification code: %w", err),
+				"If the server reports delivery is not configured, email verification is not enabled on this host yet.",
+			)
+			return nil
+		}
+		ui.Success("A new code is on its way to " + config.GetEmail() + ".")
+		return nil
+	},
+}
+
+// numericCode validates the six-digit verification code shared by signup
+// verification and email change.
+func numericCode(s string) error {
+	if s == "" {
+		return fmt.Errorf("code is required")
+	}
+	if _, err := strconv.Atoi(s); err != nil {
+		return fmt.Errorf("code must be numeric")
+	}
+	return nil
 }

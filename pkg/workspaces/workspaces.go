@@ -156,8 +156,16 @@ func (s *Service) InviteBatch(workspaceID string, emails []string, role string) 
 			}
 			defer pubKeyResp.Body.Close()
 
+			if pubKeyResp.StatusCode == http.StatusNotFound {
+				// No account yet. That is a supported invitation: the
+				// invitee signs up with this address, accepts, and the key is
+				// sealed on the admin's next refresh. Nothing is granted now.
+				ch <- keyResult{email: e, pubKey: nil}
+				return
+			}
+
 			if pubKeyResp.StatusCode != http.StatusOK {
-				ch <- keyResult{email: e, err: fmt.Errorf("user not found or no public key")}
+				ch <- keyResult{email: e, err: fmt.Errorf("failed to get public key (status %d)", pubKeyResp.StatusCode)}
 				return
 			}
 
@@ -195,6 +203,17 @@ func (s *Service) InviteBatch(workspaceID string, emails []string, role string) 
 		kr := <-ch
 		if kr.err != nil {
 			results = append(results, InviteResult{Email: kr.email, Error: kr.err.Error()})
+			continue
+		}
+
+		// No public key means no account yet: send the invitation without a
+		// sealed key. The server treats the key as optional and grants nothing
+		// until the address accepts.
+		if kr.pubKey == nil {
+			invites = append(invites, inviteEntry{
+				Email: kr.email,
+				Role:  role,
+			})
 			continue
 		}
 

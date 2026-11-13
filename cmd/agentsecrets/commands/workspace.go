@@ -58,6 +58,8 @@ func init() {
 			RunE:  runWorkspaceCreate,
 		},
 		workspaceInviteCmd,
+		workspacePendingCmd,
+		workspaceAcceptCmd,
 		&cobra.Command{
 			Use:   "members",
 			Short: "List members of the current workspace",
@@ -109,13 +111,16 @@ func requireConfig() (*config.GlobalConfig, error) {
 
 var workspaceInviteCmd = &cobra.Command{
 	Use:   "invite [email...]",
-	Short: "Invite one or more users to the current workspace",
-	Long: `Invite one or more users to the current workspace.
+	Short: "Invite one or more people to the current workspace",
+	Long: `Invite one or more people to the current workspace.
 
-The invitee receives an encrypted copy of the workspace key, so they can decrypt
-the workspace immediately after accepting. Invite from the CLI for that reason: an
-invitation created without a wrapped key leaves them with a workspace they can see
-and cannot read.
+The invitation is an email with a link and a six-digit code. It grants nothing
+until the invited address accepts: no membership, no seat, no key. Someone
+without an account can be invited too; they sign up with that address and
+accept.
+
+After they accept, run 'agentsecrets workspace refresh' to seal the workspace
+key for them. That is what unlocks the workspace on their machine.
 
   agentsecrets workspace invite alice@acme.com
   agentsecrets workspace invite alice@acme.com --role admin`,
@@ -125,6 +130,108 @@ and cannot read.
 
 func init() {
 	workspaceInviteCmd.Flags().String("role", "", "role for the invitees: member or admin (default member when there is no terminal)")
+}
+
+var workspacePendingCmd = &cobra.Command{
+	Use:   "pending",
+	Short: "List invitations waiting for you to accept",
+	Long: `List workspace invitations addressed to your account.
+
+An invitation grants nothing until you accept it. Accepting proves you control
+the address it was sent to; until then the workspace is not in your list.`,
+	RunE: runWorkspacePending,
+}
+
+var workspaceAcceptCmd = &cobra.Command{
+	Use:   "accept [token]",
+	Short: "Accept a workspace invitation",
+	Long: `Accept a workspace invitation by link token or by the six-digit code.
+
+  agentsecrets workspace accept --code 123456
+  agentsecrets workspace accept <token-from-the-link>
+
+Only the address the invitation was sent to can accept it. The workspace
+appears immediately, but its keys unlock after the admin who invited you runs
+'agentsecrets workspace refresh'.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runWorkspaceAccept,
+}
+
+func init() {
+	workspaceAcceptCmd.Flags().String("code", "", "six-digit code from the invitation email")
+	workspaceAcceptCmd.Flags().String("workspace", "", "workspace id or name, when accepting by code")
+}
+
+func runWorkspacePending(_ *cobra.Command, _ []string) error {
+	var invites []workspaces.PendingInvite
+	if err := ui.Spinner("Checking for invitations...", func() error {
+		var e error
+		invites, e = app.Workspaces().PendingInvites()
+		return e
+	}); err != nil {
+		return err
+	}
+
+	if len(invites) == 0 {
+		ui.Info("No pending invitations for " + config.GetEmail() + ".")
+		return nil
+	}
+
+	fmt.Println()
+	ui.Banner("Pending invitations")
+	ui.Divider()
+	for _, invite := range invites {
+		fmt.Printf("  %s  %s\n",
+			ui.ValStyle.Render(invite.WorkspaceName),
+			ui.DimStyle.Render("("+invite.Role+" from "+invite.InvitedBy+", expires "+invite.ExpiresAt+")"),
+		)
+	}
+	fmt.Println()
+	ui.Info("Accept with 'agentsecrets workspace accept --code <code>' or the link in the email.")
+	return nil
+}
+
+func runWorkspaceAccept(cmd *cobra.Command, args []string) error {
+	token := ""
+	if len(args) == 1 {
+		token = args[0]
+	}
+	code, _ := cmd.Flags().GetString("code")
+	workspaceRef, _ := cmd.Flags().GetString("workspace")
+
+	var workspaceID string
+	if workspaceRef != "" {
+		id, err := config.ResolveWorkspaceRef(workspaceRef)
+		if err != nil {
+			return err
+		}
+		workspaceID = id
+	}
+
+	var result *workspaces.AcceptResult
+	if err := ui.Spinner("Accepting invitation...", func() error {
+		var e error
+		result, e = app.Workspaces().AcceptInvite(token, code, workspaceID)
+		return e
+	}); err != nil {
+		ui.ErrorWithSuggestions(
+			fmt.Errorf("could not accept the invitation: %w", err),
+			"The link or code may be wrong, expired, or already used.",
+			"Check 'agentsecrets workspace pending' for invitations sent to this address.",
+		)
+		return nil
+	}
+
+	ui.Success("Joined " + result.WorkspaceName + " as " + result.Role + ".")
+	if result.KeyPending {
+		ui.Warning("The workspace key is not sealed yet, so secrets in it will not resolve. Ask an admin to run 'agentsecrets workspace refresh'.")
+	}
+
+	// Pick up the new membership without waiting for the background check.
+	if refreshed, err := app.Workspaces().Refresh(); err == nil {
+		reportWorkspaceChanges(refreshed)
+	}
+	return nil
 }
 
 var workspaceRefreshCmd = &cobra.Command{
@@ -154,12 +261,34 @@ func runWorkspaceRefresh(_ *cobra.Command, _ []string) error {
 		ui.Success("Workspaces are already up to date.")
 	}
 
+	// Finish the invitation handoff for anyone who accepted while this admin
+	// was away. The server cannot seal a workspace key it never holds, so this
+	// client does it here, where the key already is.
+	finalizeAcceptedInvites()
+
 	cfg, err := requireConfig()
 	if err != nil || cfg == nil {
 		return err
 	}
 	printWorkspaces(cfg)
 	return nil
+}
+
+// finalizeAcceptedInvites seals keys for accepted invitations this caller
+// administers. A failure is reported, never hidden: the member stays locked
+// until it succeeds.
+func finalizeAcceptedInvites() {
+	sealed, failures, err := app.Workspaces().FinalizeAcceptedInvites()
+	if err != nil {
+		ui.Warning("Could not check for accepted invitations: " + err.Error())
+		return
+	}
+	for _, line := range sealed {
+		ui.Success("Unlocked workspace for " + line)
+	}
+	for _, line := range failures {
+		ui.Warning("Could not unlock " + line)
+	}
 }
 
 // reportWorkspaceChanges prints one line per workspace that appeared, changed,
@@ -175,7 +304,7 @@ func reportWorkspaceChanges(result workspaces.RefreshResult) {
 		ui.Info("Removed: " + name)
 	}
 	for _, name := range result.Locked {
-		ui.Warning(name + ": visible, but its workspace key could not be unlocked, so nothing in it will resolve. Ask an admin to re-invite you with 'agentsecrets workspace invite <your email>'.")
+		ui.Warning(name + ": visible, but its workspace key could not be unlocked, so nothing in it will resolve. If you just accepted an invitation, an admin needs to run 'agentsecrets workspace refresh'.")
 	}
 }
 
@@ -443,7 +572,7 @@ func runWorkspaceInvite(cmd *cobra.Command, args []string) error {
 
 	if hasSuccess {
 		fmt.Println()
-		ui.Success("Invitation process completed!")
+		ui.Success("Invitation sent. The workspace unlocks for them after they accept and you run 'agentsecrets workspace refresh'.")
 	} else {
 		fmt.Println()
 	}

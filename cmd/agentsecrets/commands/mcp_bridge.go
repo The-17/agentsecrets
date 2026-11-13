@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +60,8 @@ Verbs: ping, status, auth.export,
   proxy.call, proxy.status,
   project.list, project.create, project.use, project.update, project.delete,
   workspace.list, workspace.create, workspace.switch, workspace.members,
+  workspace.pending_invites, workspace.accept_invite,
+  email.verify, email.resend,
   agent.list, agent.delete, agent.token_issue,
   logs.list, logs.summary, logs.detail
 
@@ -84,6 +87,8 @@ var bridgeVerbs = []string{
 	"proxy.call", "proxy.status",
 	"project.list", "project.create", "project.use", "project.update", "project.delete",
 	"workspace.list", "workspace.create", "workspace.switch", "workspace.members",
+	"workspace.pending_invites", "workspace.accept_invite",
+	"email.verify", "email.resend",
 	"agent.list", "agent.delete", "agent.token_issue", "agent.token_rotate",
 	"secrets.rotate", "secrets.rotation_status",
 	"logs.list", "logs.summary", "logs.detail",
@@ -113,6 +118,9 @@ var bridgeWrites = map[string]bool{
 	"project.delete":     true,
 	"workspace.create":   true,
 	"workspace.switch":   true,
+	"workspace.accept_invite": true,
+	"email.verify":            true,
+	"email.resend":            true,
 	"agent.delete":       true,
 	"agent.token_issue":  true,
 	"agent.token_rotate": true,
@@ -512,6 +520,10 @@ var bridgeDispatch = map[string]bridgeHandler{
 	"workspace.create":        bridgeWorkspaceCreate,
 	"workspace.switch":        bridgeWorkspaceSwitch,
 	"workspace.members":       bridgeWorkspaceMembers,
+	"workspace.pending_invites": bridgeWorkspacePendingInvites,
+	"workspace.accept_invite":   bridgeWorkspaceAcceptInvite,
+	"email.verify":              bridgeEmailVerify,
+	"email.resend":              bridgeEmailResend,
 	"agent.list":              bridgeAgentList,
 	"agent.delete":            bridgeAgentDelete,
 	"agent.token_issue":       bridgeAgentTokenIssue,
@@ -1186,6 +1198,61 @@ func bridgeWorkspaceMembers(a map[string]interface{}) error {
 		return err
 	}
 	bridgeOK(map[string]interface{}{"workspace_id": wsID, "members": members})
+	return nil
+}
+
+// invitations and email ---------------------------------------------------------
+
+func bridgeWorkspacePendingInvites(a map[string]interface{}) error {
+	invites, err := app.Workspaces().PendingInvites()
+	if err != nil {
+		return err
+	}
+	bridgeOK(map[string]interface{}{"invites": invites})
+	return nil
+}
+
+func bridgeWorkspaceAcceptInvite(a map[string]interface{}) error {
+	token := argStr(a, "token")
+	code := argStr(a, "code")
+	workspaceID := argStr(a, "workspace_id")
+	if workspaceID != "" {
+		workspaceID = resolveBridgeWorkspaceRef(workspaceID)
+	}
+	result, err := app.Workspaces().AcceptInvite(token, code, workspaceID)
+	if err != nil {
+		return err
+	}
+	bridgeOK(result)
+	return nil
+}
+
+func bridgeEmailVerify(a map[string]interface{}) error {
+	otp := argInt(a, "otp", 0)
+	if otp == 0 {
+		if raw := argStr(a, "code"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				return fmt.Errorf("invalid code: %w", err)
+			}
+			otp = n
+		}
+	}
+	if otp == 0 {
+		return fmt.Errorf("a verification code is required")
+	}
+	if err := app.Auth().VerifyEmail(otp); err != nil {
+		return err
+	}
+	bridgeOK(map[string]interface{}{"verified": true})
+	return nil
+}
+
+func bridgeEmailResend(a map[string]interface{}) error {
+	if err := app.Auth().ResendVerification(); err != nil {
+		return err
+	}
+	bridgeOK(map[string]interface{}{"sent": true})
 	return nil
 }
 

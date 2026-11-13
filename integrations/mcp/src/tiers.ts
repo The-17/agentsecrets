@@ -42,6 +42,7 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = {
   project_list: 'read',
   workspace_list: 'read',
   workspace_members: 'read',
+  workspace_pending_invites: 'read',
   agent_list: 'read',
   logs_list: 'read',
   logs_summary: 'read',
@@ -60,6 +61,9 @@ export const TOOL_TIERS: Readonly<Record<string, Tier>> = {
   workspace_switch: 'write',
   auth_login: 'write',
   auth_logout: 'write',
+  workspace_accept_invite: 'write',
+  email_verify: 'write',
+  email_resend: 'write',
 
   // Irreversible, access-widening, or mints a durable credential.
   secrets_set: 'destructive',

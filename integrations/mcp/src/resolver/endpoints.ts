@@ -15,6 +15,8 @@ export const ENDPOINTS: Record<string, Record<string, string>> = {
     login: 'auth/login/',
     logout: 'auth/logout/',
     refresh: 'auth/refresh/',
+    verify_email: 'auth/verify-email/',
+    resend_otp: 'auth/resend-otp/',
   },
   secrets: {
     list: 'secrets/{project_id}/',
@@ -78,6 +80,12 @@ export const ENDPOINTS: Record<string, Record<string, string>> = {
   },
   users: {
     public_key: 'users/{email}/public-key/',
+  },
+  invites: {
+    pending: 'invites/pending/',
+    accept: 'invites/accept/',
+    preview: 'invites/preview/',
+    awaiting_key: 'invites/awaiting-key/',
   },
 };
 

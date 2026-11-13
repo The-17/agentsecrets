@@ -15,6 +15,7 @@ func TestBridgeWriteVerbsAreRefusedByDefault(t *testing.T) {
 		"secrets.set", "secrets.delete", "secrets.pull", "secrets.push",
 		"project.create", "project.delete", "project.update", "project.use",
 		"workspace.create", "workspace.switch",
+		"workspace.accept_invite", "email.verify", "email.resend",
 		"agent.delete", "agent.token_issue",
 		"secrets.rotate", "agent.token_rotate",
 	}
@@ -33,6 +34,7 @@ func TestBridgeReadVerbsStayOpen(t *testing.T) {
 	for _, verb := range []string{
 		"ping", "status", "secrets.list", "secrets.diff", "secrets.rotation_status",
 		"project.list", "workspace.list", "workspace.members",
+		"workspace.pending_invites",
 		"agent.list", "logs.list", "logs.summary", "logs.detail",
 		"proxy.call", "proxy.status",
 	} {

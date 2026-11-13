@@ -32,6 +32,8 @@ var mcpCmd = &cobra.Command{
 	  proxy.call, proxy.status,
 	  project.list, project.create, project.use, project.update, project.delete,
 	  workspace.list, workspace.create, workspace.switch, workspace.members,
+	  workspace.pending_invites, workspace.accept_invite,
+	  email.verify, email.resend,
 	  agent.list, agent.delete, agent.token_issue, agent.token_rotate,
 	  logs.list, logs.summary, logs.detail
 
