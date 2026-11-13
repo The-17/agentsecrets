@@ -5,11 +5,14 @@
 //
 // The resolver requires a proof only when a token carries a confirmation key.
 // The CLI mints confirmation keys by default and stores each private seed in
-// the OS keychain, found by the token through SetSeedResolver. A raw workload
-// that holds only AGENTSECRETS_TOKEN has no seed and sends no proof, so a
-// default-minted token is refused there: use --no-pop for that deployment, or
-// carry the seed in SeedEnv. Key transport that avoids a static second secret
-// is still an open ADR decision. Tokens without a confirmation key are
+// the OS keychain, found by the token through SetSeedResolver. For a raw
+// workload with no keychain (CI, container, server), carry the seed in SeedEnv
+// (AGENTSECRETS_POP_SEED): agent create prints it next to the token, and the
+// host sets it as a secret beside the token. A workload holding only
+// AGENTSECRETS_TOKEN has no seed and sends no proof, so a default-minted token
+// is refused: that is the intended property. Key transport that avoids a static
+// second secret is still an open ADR decision. Tokens without a confirmation
+// key are
 // unaffected.
 package pop
 
