@@ -3,12 +3,14 @@
 // stdlib only, so every transport package (pkg/api, pkg/gateway) can import it
 // without creating an import cycle.
 //
-// This is a dormant foundation. The resolver requires a proof only when a token
-// carries a confirmation key, and the control plane does not mint one yet. Key
-// transport (how the private key reaches the workload that holds the token) is
-// an open ADR decision and is deliberately NOT decided here. AttachProof is a
-// no-op until a signer is installed with SetProofSigner, which happens only once
-// that decision is made. Tokens minted today are entirely unaffected.
+// The resolver requires a proof only when a token carries a confirmation key.
+// The CLI mints confirmation keys by default and stores each private seed in
+// the OS keychain, found by the token through SetSeedResolver. A raw workload
+// that holds only AGENTSECRETS_TOKEN has no seed and sends no proof, so a
+// default-minted token is refused there: use --no-pop for that deployment, or
+// carry the seed in SeedEnv. Key transport that avoids a static second secret
+// is still an open ADR decision. Tokens without a confirmation key are
+// unaffected.
 package pop
 
 import (
