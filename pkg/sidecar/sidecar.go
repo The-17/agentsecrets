@@ -338,7 +338,11 @@ func (s *Sidecar) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := server.LoginFinish(ke3, expected); err != nil {
-		writeErr(w, http.StatusUnauthorized, fmt.Errorf("authentication failed"))
+		// 403, not 401: the token was fine, the credential was not. 401 is
+		// reserved for a bad bearer token, so a caller can tell "wrong
+		// password" (reject the user) from "bad token or outage" (fail
+		// closed and page someone) without parsing bodies.
+		writeErr(w, http.StatusForbidden, fmt.Errorf("authentication failed"))
 		return
 	}
 	writeJSON(w, response{OK: true, SessionKey: state.SessionKey})

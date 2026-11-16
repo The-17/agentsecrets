@@ -199,6 +199,90 @@ func TestRegisterAndLogin(t *testing.T) {
 	}
 }
 
+// TestLoginFinishStatusCodesSplitCredentialFromToken pins the status-code
+// contract the server's OPAQUE client depends on: a rejected credential is 403
+// (reject the user), a bad bearer token is 401 (fail closed and page someone).
+// If these collapse into one code again, a typo is reported as an auth outage.
+func TestLoginFinishStatusCodesSplitCredentialFromToken(t *testing.T) {
+	ts := newTestSidecar(t, keyMaterial(t))
+	record, err := register(t, ts, user)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	conf := opaque.DefaultConfiguration()
+	dser, err := conf.Deserializer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := conf.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ke1, err := client.GenerateKE1([]byte(password))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, start := post(t, ts, "/v1/login/start", map[string]string{
+		"ke1":           testB64(ke1.Serialize()),
+		"record":        record,
+		"credential_id": user,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("login/start: %d %v", code, start)
+	}
+	ke2, err := dser.KE2(decodeB64(t, start["ke2"].(string)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ke3, _, _, err := client.GenerateKE3(ke2, []byte(user), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the expected client MAC. The KE3 stays well formed and the
+	// bearer token stays valid, which is exactly the wrong-password shape: the
+	// server's credential check fails while everything around it is healthy.
+	var state map[string]string
+	if err := json.Unmarshal(decodeB64(t, start["server_state"].(string)), &state); err != nil {
+		t.Fatal(err)
+	}
+	mac := state["client_mac"]
+	// Flip the first byte, never the padding: the encoding must stay valid so
+	// the server reaches the MAC comparison instead of rejecting the body.
+	if mac[0] == 'A' {
+		state["client_mac"] = "B" + mac[1:]
+	} else {
+		state["client_mac"] = "A" + mac[1:]
+	}
+	tamperedState, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, resp := post(t, ts, "/v1/login/finish", map[string]string{
+		"ke3":           testB64(ke3.Serialize()),
+		"server_state":  testB64(tamperedState),
+		"credential_id": user,
+	})
+	if code != http.StatusForbidden {
+		t.Fatalf("rejected credential: expected 403, got %d %v", code, resp)
+	}
+
+	// The same endpoint with no bearer token is a deployment problem, not a
+	// user problem, and must stay 401.
+	raw, _ := json.Marshal(map[string]string{"ke3": "AAAA", "server_state": "AAAA", "credential_id": user})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/login/finish", bytes.NewReader(raw))
+	respUnauth, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respUnauth.Body.Close()
+	if respUnauth.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing bearer token: expected 401, got %d", respUnauth.StatusCode)
+	}
+}
+
 func TestWrongPasswordRejected(t *testing.T) {
 	ts := newTestSidecar(t, keyMaterial(t))
 	record, err := register(t, ts, user)
@@ -211,9 +295,10 @@ func TestWrongPasswordRejected(t *testing.T) {
 	}
 	// A wrong password changes the OPRF output, so the masked response
 	// unmasks to garbage and the client refuses before reaching
-	// login/finish. Either the client-side rejection or a server-side 401
-	// proves the login failed; both are acceptable.
-	if !strings.Contains(err.Error(), "client finish") && !strings.Contains(err.Error(), "login/finish: 401") {
+	// login/finish. Either the client-side rejection or a server-side 403
+	// proves the login failed; both are acceptable. 403 rather than 401
+	// because the bearer token is valid and the credential is not.
+	if !strings.Contains(err.Error(), "client finish") && !strings.Contains(err.Error(), "login/finish: 403") {
 		t.Fatalf("unexpected failure mode: %v", err)
 	}
 }
