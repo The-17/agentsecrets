@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/config"
@@ -15,7 +16,18 @@ import (
 
 var profileCmd = &cobra.Command{
 	Use:   "profile",
-	Short: "Show your account card (identity, vault, key)",
+	Short: "View and manage your account",
+	Long: `View your account card and manage account-wide settings.
+
+Examples:
+  agentsecrets profile                  show the account card
+  agentsecrets profile update           change your display name
+  agentsecrets profile email update     change your email address
+  agentsecrets profile email verify     verify your email
+  agentsecrets profile email resend     send a fresh verification code
+  agentsecrets profile avatar <file>    set your profile photo
+  agentsecrets profile deactivate       sign out everywhere and stop logins
+  agentsecrets profile delete           permanently delete the account`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		email := config.GetEmail()
 		if email == "" {
@@ -92,4 +104,135 @@ func printAccountCard(email, host, fingerprint, vaultLine, recoveryLine string) 
 		fmt.Printf("│ %-*s  %-*s │\n", labelWidth, r.label, valueWidth, r.value)
 	}
 	fmt.Println("└" + rule + "┘")
+}
+
+func init() {
+	profileCmd.AddCommand(
+		profileEmailCmd,
+		profileUpdateCmd,
+		profileAvatarCmd,
+		profileDeactivateCmd,
+		profileDeleteCmd,
+	)
+	// The account email flow lives under `profile email`; its subcommands are
+	// attached in email.go. `email` remains a top-level alias in root.go.
+}
+
+var profileEmailCmd = &cobra.Command{
+	Use:   "email",
+	Short: "Manage your email address",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
+}
+
+var profileUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Change your display name",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var first, last string
+		form := huh.NewForm(huh.NewGroup(
+			huh.NewInput().Title("First name").Value(&first).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" { return fmt.Errorf("first name is required") }
+					return nil
+				}),
+			huh.NewInput().Title("Last name").Value(&last).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" { return fmt.Errorf("last name is required") }
+					return nil
+				}),
+		))
+		if err := form.Run(); err != nil {
+			return nil
+		}
+		if err := ui.Spinner("Saving profile...", func() error {
+			return app.Auth().UpdateProfile(strings.TrimSpace(first), strings.TrimSpace(last))
+		}); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+		ui.Success("Profile updated.")
+		return nil
+	},
+}
+
+var profileAvatarCmd = &cobra.Command{
+	Use:   "avatar <file>",
+	Short: "Set your profile photo (PNG, JPEG or WebP, up to 2 MB)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := ui.Spinner("Uploading avatar...", func() error {
+			return app.Auth().UploadAvatar(args[0])
+		}); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+		ui.Success("Profile photo updated.")
+		return nil
+	},
+}
+
+var profileDeactivateCmd = &cobra.Command{
+	Use:   "deactivate",
+	Short: "Sign out everywhere and stop new logins",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var confirmed bool
+		form := huh.NewForm(huh.NewGroup(
+			huh.NewConfirm().
+				Title("Deactivate your account?").
+				Description("You will be signed out and login blocked until you reactivate.").
+				Value(&confirmed),
+		))
+		if err := form.Run(); err != nil || !confirmed {
+			ui.Warning("Cancelled. Your account is unchanged.")
+			return nil
+		}
+		if err := ui.Spinner("Deactivating account...", func() error {
+			return app.Auth().DeactivateAccount()
+		}); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+		ui.Success("Account deactivated.")
+		_ = config.ClearSession()
+		return nil
+	},
+}
+
+var profileDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Permanently delete your account and all its data",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		email := config.GetEmail()
+		if email == "" {
+			ui.Error("not logged in; run 'agentsecrets login' first")
+			return nil
+		}
+		var typed string
+		form := huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Type your email to confirm deletion").
+				Description("This permanently removes your account, workspaces, and secrets.").
+				Value(&typed).
+				Validate(func(s string) error {
+					if strings.EqualFold(strings.TrimSpace(s), email) {
+						return nil
+					}
+					return fmt.Errorf("email does not match %s", email)
+				}),
+		))
+		if err := form.Run(); err != nil {
+			return nil
+		}
+		if err := ui.Spinner("Deleting account...", func() error {
+			return app.Auth().DeleteAccount(strings.TrimSpace(typed))
+		}); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+		ui.Success("Account deleted.")
+		_ = config.ClearSession()
+		return nil
+	},
 }

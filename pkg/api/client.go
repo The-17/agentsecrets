@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -45,6 +46,10 @@ var endpointMap = map[string]map[string]string{
 		"confirm_email":     "auth/update-email/confirm/",
 		"verify_email":      "auth/verify-email/",
 		"resend_otp":        "auth/resend-otp/",
+		"update_profile":    "auth/me/",
+		"upload_avatar":     "auth/me/avatar/",
+		"deactivate":        "auth/account/deactivate/",
+		"delete_account":    "auth/account/",
 		"oauth_authorize":   "auth/oauth/{provider}/authorize/",
 		"oauth_exchange":    "auth/oauth/{provider}/exchange/",
 		"keys_initialize":        "auth/keys/initialize/",
@@ -410,6 +415,54 @@ func (c *Client) CallNoContentCtx(ctx context.Context, endpointKey, method strin
 
 	// Drain so the connection can be reused by keep-alive.
 	if !okStatus(resp.StatusCode, okCodes) {
+		return c.DecodeError(resp)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// CallMultipart posts a single file as multipart/form-data under fieldName.
+// doRequest forces a JSON content type, so this builds the request directly.
+// The response body is drained and only the status is returned.
+func (c *Client) CallMultipart(endpointKey, fieldName, filename string, content []byte) error {
+	path, err := c.resolveEndpoint(endpointKey, nil)
+	if err != nil {
+		return err
+	}
+	base := strings.TrimRight(c.BaseURL, "/")
+	url := fmt.Sprintf("%s/%s", base, path)
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, err := writer.CreateFormFile(fieldName, filename)
+	if err != nil {
+		return fmt.Errorf("multipart: %w", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		return fmt.Errorf("multipart: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("multipart: %w", err)
+	}
+
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
+	if err != nil {
+		return fmt.Errorf("multipart: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.getToken != nil {
+		if token := c.getToken(); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if !okStatus(resp.StatusCode, []int{http.StatusOK}) {
 		return c.DecodeError(resp)
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
