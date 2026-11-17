@@ -342,9 +342,9 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 			adminRef, _ := cmd.Flags().GetString("admin-credential-ref")
 			targetUser, _ := cmd.Flags().GetString("target-user")
 			if adapterRef != "" {
-				id, _, ok := strings.Cut(adapterRef, "@")
-				if !ok || id == "" {
-					return fmt.Errorf("--adapter-ref must be <id>@<version>[#sha256:<hex>]")
+				id, err := adapterRefID(adapterRef)
+				if err != nil {
+					return err
 				}
 				if adapter != "" && adapter != id {
 					return fmt.Errorf("--adapter (%s) must match --adapter-ref id (%s)", adapter, id)
@@ -370,8 +370,7 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 			adminRef, _ := cmd.Flags().GetString("admin-credential-ref")
 			targetUser, _ := cmd.Flags().GetString("target-user")
 			if adapterRef != "" {
-				id, _, _ := strings.Cut(adapterRef, "@")
-				adapter = id // validated consistent above
+				adapter, _ = adapterRefID(adapterRef) // validated above
 			}
 			binding := map[string]any{
 				"adapter": adapter, "admin_credential_ref": adminRef, "target_user": targetUser,
