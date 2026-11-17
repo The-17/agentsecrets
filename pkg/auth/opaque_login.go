@@ -110,6 +110,64 @@ func (s *Service) OpaqueLogin(email, password string) (*LoginResult, error) {
 	return result, nil
 }
 
+// DeriveOpaqueExportKey runs the OPAQUE login exchange far enough to reproduce
+// the account's current export key, without writing a session, tokens, or any
+// config. It is needed before an email change: the credential id is derived from
+// the email, so once the address is swapped the old export key can never be
+// recomputed, and the v2 vault's opaque share is wrapped under it. The full
+// login finish is still sent so the server consumes the challenge it issued;
+// the tokens it returns are deliberately discarded.
+func (s *Service) DeriveOpaqueExportKey(email, password string) ([]byte, error) {
+	credID := opaqueCredentialID(email)
+
+	client, ke1, err := opaque.LoginStart(password)
+	if err != nil {
+		return nil, fmt.Errorf("derive export key: %w", err)
+	}
+
+	startResp, err := s.API.Call("auth.opaque_login_start", "POST", map[string]string{
+		"email":         email,
+		"ke1":           opaque.EncodeB64(ke1),
+		"credential_id": credID,
+	}, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("derive export key start: %w", err)
+	}
+	defer startResp.Body.Close()
+	if startResp.StatusCode != http.StatusOK {
+		return nil, s.API.DecodeError(startResp)
+	}
+	var startData struct {
+		Data struct {
+			KE2         string `json:"ke2"`
+			ServerState string `json:"server_state"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(startResp.Body).Decode(&startData); err != nil {
+		return nil, fmt.Errorf("derive export key start: parse: %w", err)
+	}
+
+	ke3, _, exportKey, err := opaque.LoginFinishWithExport(client, startData.Data.KE2, credID)
+	if err != nil {
+		return nil, fmt.Errorf("derive export key finish: %w", err)
+	}
+
+	finishResp, err := s.API.Call("auth.opaque_login_finish", "POST", map[string]string{
+		"email":         email,
+		"ke3":           opaque.EncodeB64(ke3),
+		"server_state":  startData.Data.ServerState,
+		"credential_id": credID,
+	}, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("derive export key finish request: %w", err)
+	}
+	defer finishResp.Body.Close()
+	if finishResp.StatusCode != http.StatusOK {
+		return nil, s.API.DecodeError(finishResp)
+	}
+	return exportKey, nil
+}
+
 // EnrollOpaque upgrades an already-authenticated account to OPAQUE. It runs once,
 // after the first v4 password login, and is idempotent on the client: the local
 // OpaqueEnrolled flag prevents re-enrollment (which would rotate the record).

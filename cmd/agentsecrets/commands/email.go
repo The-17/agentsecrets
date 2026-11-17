@@ -75,6 +75,31 @@ var emailUpdateCmd = &cobra.Command{
 		}
 		otp, _ := strconv.Atoi(codeStr)
 
+		// An OPAQUE-enrolled account keeps its credential record keyed by the
+		// email. Re-enrolling under the new address also rotates the export key
+		// that wraps the v2 vault share, so it has to happen together with the
+		// confirm, while the old key can still be derived. Ask for the password
+		// up front; it never leaves the device.
+		if config.GetOpaqueEnrolled() {
+			password, ok := promptReenrollPassword()
+			if !ok {
+				ui.Warning("Email change cancelled. Your address is unchanged.")
+				return nil
+			}
+			if err := ui.Spinner("Confirming email change and re-linking OPAQUE...", func() error {
+				return app.Auth().ChangeEmailWithOpaque(newEmail, otp, password)
+			}); err != nil {
+				ui.ErrorWithSuggestions(
+					fmt.Errorf("email change failed: %w", err),
+					"The address may already be changed. Sign in with your new email and password to finish.",
+					"If that fails, use your recovery key. It is always the way back in.",
+				)
+				return nil
+			}
+			ui.Success("Email updated and OPAQUE re-linked. Sign in again with your new address.")
+			return nil
+		}
+
 		if err := ui.Spinner("Confirming email change...", func() error {
 			return app.Auth().ConfirmEmail(newEmail, otp)
 		}); err != nil {
@@ -82,24 +107,6 @@ var emailUpdateCmd = &cobra.Command{
 				fmt.Errorf("email change confirmation failed: %w", err),
 				"The code may be invalid, expired, or the change was never requested.",
 			)
-			return nil
-		}
-
-		// An OPAQUE-enrolled account keeps its credential record keyed by the
-		// email, so re-enroll it under the new address to keep login working.
-		// The password never leaves the device; only the OPAQUE record moves.
-		if config.GetOpaqueEnrolled() {
-			password, ok := promptReenrollPassword()
-			if !ok {
-				ui.Warning("Email updated, but OPAQUE was not re-linked. Run 'agentsecrets login' with your new email and password to finish the switch.")
-				return nil
-			}
-			if _, err := app.Auth().EnrollOpaque(newEmail, password); err != nil {
-				ui.Warning("Email updated, but OPAQUE re-link failed: " + err.Error() +
-					". Run 'agentsecrets login' with your new email and password to finish.")
-				return nil
-			}
-			ui.Success("Email updated and OPAQUE re-linked to your new address. Log in again to finish.")
 			return nil
 		}
 

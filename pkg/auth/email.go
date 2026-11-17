@@ -35,6 +35,69 @@ func (s *Service) ConfirmEmail(newEmail string, otp int) error {
 	return nil
 }
 
+// ChangeEmailWithOpaque confirms a pending email change and, for an
+// OPAQUE-enrolled account, keeps OPAQUE and the v2 vault consistent with the new
+// address.
+//
+// The credential id is derived from the email, so re-enrolling under the new
+// address rotates the OPAQUE export key. A v2 vault's opaque share is wrapped
+// under that key. The old key and the Vault Key must therefore be captured
+// BEFORE the server swaps the address, then the shares re-wrapped under the new
+// key. Skip that and the next OPAQUE login cannot reconstruct the Vault Key,
+// leaving the recovery key as the only way back in.
+func (s *Service) ChangeEmailWithOpaque(newEmail string, otp int, password string) error {
+	if !config.GetOpaqueEnrolled() {
+		return s.ConfirmEmail(newEmail, otp)
+	}
+
+	oldEmail := config.GetEmail()
+	userID := config.GetUserID()
+
+	v, version, _, err := s.fetchVault(userID)
+	if err != nil {
+		return fmt.Errorf("change email: %w", err)
+	}
+
+	var oldExportKey, vaultKey []byte
+	if v != nil && v.IsSplit() {
+		oldExportKey, err = s.DeriveOpaqueExportKey(oldEmail, password)
+		if err != nil {
+			return fmt.Errorf("change email: %w", err)
+		}
+		vaultKey, err = v.UnlockWithShares(userID, password, oldExportKey)
+		if err != nil {
+			return fmt.Errorf("change email: unlock vault: %w", err)
+		}
+	}
+
+	if err := s.ConfirmEmail(newEmail, otp); err != nil {
+		return err
+	}
+
+	newExportKey, err := s.EnrollOpaque(newEmail, password)
+	if err != nil {
+		return fmt.Errorf("change email: OPAQUE re-link failed: %w", err)
+	}
+
+	if v != nil && v.IsSplit() && len(vaultKey) > 0 && len(newExportKey) > 0 {
+		if err := v.RotateShares(userID, vaultKey, password, newExportKey); err != nil {
+			return fmt.Errorf("change email: re-wrap vault shares: %w", err)
+		}
+		v.BumpVersion()
+		if err := v.Sign(userID, vaultKey); err != nil {
+			return fmt.Errorf("change email: re-sign vault: %w", err)
+		}
+		if err := s.putVault(v, version); err != nil {
+			return fmt.Errorf("change email: save re-wrapped vault: %w", err)
+		}
+	}
+
+	clear(oldExportKey)
+	clear(vaultKey)
+	clear(newExportKey)
+	return nil
+}
+
 // VerifyEmail proves control of the account address with the code sent at
 // signup. Verification is what unlocks cloud mode and lifts the free caps.
 func (s *Service) VerifyEmail(otp int) error {
