@@ -324,8 +324,8 @@ func runSecretsRotationSet(cmd *cobra.Command, args []string) error {
 	overlapHours, _ := cmd.Flags().GetInt("overlap-hours")
 	disable, _ := cmd.Flags().GetBool("disable")
 
-	if disable == (periodDays <= 0) {
-		return fmt.Errorf("provide --period-days (>0) to arm, or --disable to disarm")
+	if err := validateRotationArmFlags(disable, periodDays); err != nil {
+		return err
 	}
 	if !disable {
 		switch policyType {

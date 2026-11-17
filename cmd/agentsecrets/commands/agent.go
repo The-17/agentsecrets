@@ -646,8 +646,8 @@ var agentTokenRotationSetCmd = &cobra.Command{
 		if agentName == "" {
 			return fmt.Errorf("please provide the --agent <name> for the token")
 		}
-		if disable == (periodDays <= 0) {
-			return fmt.Errorf("provide --period-days (>0) to arm, or --disable to disarm")
+		if err := validateRotationArmFlags(disable, periodDays); err != nil {
+			return err
 		}
 
 		agent, err := getAgentByName(workspaceID, agentName)
