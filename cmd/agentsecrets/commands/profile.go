@@ -177,11 +177,28 @@ var profileDeactivateCmd = &cobra.Command{
 	Use:   "deactivate",
 	Short: "Sign out everywhere and stop new logins",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Same local password re-auth gate the other sensitive ops use. Password
+		// is typed, never piped or passed as an argument.
+		if err := verifyPasswordLocally(); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+
+		// Establish the reactivation path before asking for the irreversible
+		// step: deactivation is reversible by signing in again, and nothing is
+		// removed. The user must know that before confirming.
+		fmt.Println()
+		fmt.Println("  Deactivating signs you out of every device and blocks new logins.")
+		fmt.Println("  Nothing is deleted: your workspaces, secrets, and vault stay intact.")
+		fmt.Println("  To reactivate, just sign in again with this account (password, passkey,")
+		fmt.Println("  or recovery key). The same credentials still work.")
+		fmt.Println()
+
 		var confirmed bool
 		form := huh.NewForm(huh.NewGroup(
 			huh.NewConfirm().
 				Title("Deactivate your account?").
-				Description("You will be signed out and login blocked until you reactivate.").
+				Description("You can reactivate any time by signing in again. No data is removed.").
 				Value(&confirmed),
 		))
 		if err := form.Run(); err != nil || !confirmed {
@@ -194,7 +211,7 @@ var profileDeactivateCmd = &cobra.Command{
 			ui.Error(err.Error())
 			return nil
 		}
-		ui.Success("Account deactivated.")
+		ui.Success("Account deactivated. Sign in again any time to reactivate.")
 		_ = config.ClearSession()
 		return nil
 	},
@@ -209,11 +226,29 @@ var profileDeleteCmd = &cobra.Command{
 			ui.Error("not logged in; run 'agentsecrets login' first")
 			return nil
 		}
+
+		// Deletion is the most destructive action in the CLI. Require the same
+		// local password re-auth as allowlist and other sensitive ops, before
+		// showing the consequences or asking for the typed-email confirmation.
+		if err := verifyPasswordLocally(); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+
+		// Only after the correct password, spell out what is lost so the user
+		// confirms with full knowledge of the consequences.
+		fmt.Println()
+		fmt.Println("  This PERMANENTLY deletes your account and everything in it:")
+		fmt.Println("   - all workspaces, projects, environments, and secrets")
+		fmt.Println("   - your vault, keys, agents, tokens, and activity history")
+		fmt.Println("   - your recovery key; this cannot be undone or recovered")
+		fmt.Println()
+
 		var typed string
 		form := huh.NewForm(huh.NewGroup(
 			huh.NewInput().
-				Title("Type your email to confirm deletion").
-				Description("This permanently removes your account, workspaces, and secrets.").
+				Title("Type your email to confirm permanent deletion").
+				Description("This cannot be undone. Your account and all its data will be erased.").
 				Value(&typed).
 				Validate(func(s string) error {
 					if strings.EqualFold(strings.TrimSpace(s), email) {
