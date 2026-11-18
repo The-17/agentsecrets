@@ -11,6 +11,8 @@
  * usage: node scripts/opaque-wasm-check.mjs <wasm path> <wasm_exec.js path>
  */
 
+import { readFileSync } from "node:fs";
+
 import { EXPECTED_EXPORTS, assertCredentialIdVectors, credentialId, loadWasm } from "./opaque-wasm-common.mjs";
 
 const [wasmPath, execPath] = process.argv.slice(2);
@@ -30,6 +32,21 @@ for (const name of EXPECTED_EXPORTS) {
   }
 }
 console.log("PASS  all four js/wasm exports are installed");
+
+// Build freshness. A binary compiled before the v2 vault work has no
+// `export_key` in it, so the browser can never unlock a v2 vault and login dies
+// with "needs a passwordless sign-in". Every behavioural check above still
+// passes on such a binary, which is exactly how a stale build shipped. The
+// literal is the cheapest proof that this artifact came from current source.
+const wasmBytes = readFileSync(wasmPath);
+for (const marker of ["export_key", "session_key"]) {
+  if (!wasmBytes.includes(Buffer.from(marker))) {
+    throw new Error(
+      `wasm is missing the '${marker}' literal: stale build, rebuild from current cmd/wasmopaque`
+    );
+  }
+}
+console.log("PASS  build carries the v2 vault export-key markers");
 
 const password = "correct-horse-battery-staple";
 const credentialID = credentialId("user@example.com");
