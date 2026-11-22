@@ -245,6 +245,16 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	ui.Success(fmt.Sprintf("Project '%s' created and selected!", created.Name))
+	// Projects resolve inside the selected workspace. A developer with both a
+	// personal and a team workspace can put a work project in the wrong one
+	// without noticing, so say where it landed on the success path.
+	wsID := created.WorkspaceID
+	if wsID == "" {
+		wsID = workspaceID
+	}
+	if ws := displayScopeName(cachedWorkspaceName(wsID), wsID); ws != "" {
+		ui.StatusRow("Workspace", ws)
+	}
 	return nil
 }
 

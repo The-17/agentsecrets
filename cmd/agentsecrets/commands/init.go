@@ -223,22 +223,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return linkProjectForInit()
 }
 
-// initWorkspaceName resolves a workspace id to its cached name. The API returns
-// the id; showing only that would make a personal/team mistake invisible again.
-func initWorkspaceName(id string) string {
-	if id == "" {
-		return ""
-	}
-	cfg, err := config.LoadGlobalConfig()
-	if err != nil || cfg == nil {
-		return id
-	}
-	if ws, ok := cfg.Workspaces[id]; ok && ws.Name != "" {
-		return ws.Name
-	}
-	return id
-}
-
 // initProjectNameDefault derives a usable default project name from the working
 // directory, so the common case needs one keystroke.
 func initProjectNameDefault() string {
@@ -346,7 +330,7 @@ func linkProjectForInit() error {
 
 	fmt.Println()
 	ui.Success(fmt.Sprintf("Project '%s' linked to this directory.", bound.Name))
-	if ws := initWorkspaceName(bound.WorkspaceID); ws != "" {
+	if ws := displayScopeName(cachedWorkspaceName(bound.WorkspaceID), bound.WorkspaceID); ws != "" {
 		ui.StatusRow("Workspace", ws)
 	}
 	ui.Info("Secrets are ready. Inject them with 'agentsecrets env -- <command>', call an API with 'agentsecrets call', or expose them to an agent through the SDK.")
