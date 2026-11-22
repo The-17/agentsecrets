@@ -50,6 +50,8 @@ var endpointMap = map[string]map[string]string{
 		"upload_avatar":     "auth/me/avatar/",
 		"deactivate":        "auth/account/deactivate/",
 		"delete_account":    "auth/account/",
+		"reactivate_request": "auth/account/reactivate/request/",
+		"reactivate_confirm": "auth/account/reactivate/confirm/",
 		"oauth_authorize":   "auth/oauth/{provider}/authorize/",
 		"oauth_exchange":    "auth/oauth/{provider}/exchange/",
 		"keys_initialize":        "auth/keys/initialize/",

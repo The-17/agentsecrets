@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -109,6 +110,8 @@ func printAccountCard(email, host, fingerprint, vaultLine, recoveryLine string) 
 func init() {
 	profileCmd.AddCommand(
 		profileEmailCmd,
+		profilePasswordCmd,
+		profileReactivateCmd,
 		profileUpdateCmd,
 		profileAvatarCmd,
 		profileDeactivateCmd,
@@ -121,6 +124,14 @@ func init() {
 var profileEmailCmd = &cobra.Command{
 	Use:   "email",
 	Short: "Manage your email address",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
+}
+
+var profilePasswordCmd = &cobra.Command{
+	Use:   "password",
+	Short: "Manage your account password",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	},
@@ -185,20 +196,22 @@ var profileDeactivateCmd = &cobra.Command{
 		}
 
 		// Establish the reactivation path before asking for the irreversible
-		// step: deactivation is reversible by signing in again, and nothing is
-		// removed. The user must know that before confirming.
+		// step: deactivation is reversible, but NOT by logging in. A deactivated
+		// account is refused on every login path. Reactivation needs a code
+		// emailed to the account address. The user must know that first.
 		fmt.Println()
 		fmt.Println("  Deactivating signs you out of every device and blocks new logins.")
 		fmt.Println("  Nothing is deleted: your workspaces, secrets, and vault stay intact.")
-		fmt.Println("  To reactivate, just sign in again with this account (password, passkey,")
-		fmt.Println("  or recovery key). The same credentials still work.")
+		fmt.Println("  Logging in will NOT reactivate the account. To reactivate, run")
+		fmt.Println("  'agentsecrets profile reactivate' (or use the website) and enter the")
+		fmt.Println("  code we email to your account address.")
 		fmt.Println()
 
 		var confirmed bool
 		form := huh.NewForm(huh.NewGroup(
 			huh.NewConfirm().
 				Title("Deactivate your account?").
-				Description("You can reactivate any time by signing in again. No data is removed.").
+				Description("Login is blocked until you reactivate with an emailed code. No data is removed.").
 				Value(&confirmed),
 		))
 		if err := form.Run(); err != nil || !confirmed {
@@ -211,8 +224,72 @@ var profileDeactivateCmd = &cobra.Command{
 			ui.Error(err.Error())
 			return nil
 		}
-		ui.Success("Account deactivated. Sign in again any time to reactivate.")
+		ui.Success("Account deactivated. Run 'agentsecrets profile reactivate' with the emailed code to restore login.")
 		_ = config.ClearSession()
+		return nil
+	},
+}
+
+var profileReactivateCmd = &cobra.Command{
+	Use:   "reactivate",
+	Short: "Reactivate a deactivated account with an emailed code",
+	Long: `Reactivate an account that was deactivated.
+
+Deactivation blocks every login path. This command emails a one-time code to
+the account address and uses it to restore login. It works while signed out.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		email := config.GetEmail()
+		if email == "" {
+			var entered string
+			form := huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Account email").
+					Description("The address of the deactivated account.").
+					Value(&entered).
+					Validate(func(s string) error {
+						if !strings.Contains(s, "@") {
+							return fmt.Errorf("enter a valid email")
+						}
+						return nil
+					}),
+			))
+			if err := form.Run(); err != nil {
+				return nil
+			}
+			email = strings.TrimSpace(entered)
+		}
+
+		if err := ui.Spinner("Sending reactivation code...", func() error {
+			return app.Auth().RequestReactivation(email)
+		}); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+		ui.Success("If that account is deactivated, a code is on its way.")
+
+		var codeStr string
+		form := huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Reactivation code").
+				Description("The six-digit code sent to " + email).
+				Value(&codeStr).
+				Validate(numericCode),
+		))
+		if err := form.Run(); err != nil {
+			return nil
+		}
+		otp, err := strconv.Atoi(codeStr)
+		if err != nil {
+			ui.Error("Code must be six digits.")
+			return nil
+		}
+		if err := ui.Spinner("Reactivating account...", func() error {
+			return app.Auth().ConfirmReactivation(email, otp)
+		}); err != nil {
+			ui.Error(err.Error())
+			return nil
+		}
+		ui.Success("Account reactivated. Sign in again with 'agentsecrets login'.")
 		return nil
 	},
 }

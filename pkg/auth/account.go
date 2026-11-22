@@ -67,3 +67,29 @@ func (s *Service) DeleteAccount(confirmEmail string) error {
 	}
 	return nil
 }
+
+// RequestReactivation emails a code to a deactivated account. The endpoint is
+// unauthenticated, so this takes the address explicitly and does not require a
+// local session (the user may be logged out after deactivation).
+func (s *Service) RequestReactivation(email string) error {
+	if email == "" {
+		return fmt.Errorf("reactivate: email is required")
+	}
+	body := map[string]string{"email": email}
+	if err := s.API.CallNoContent("auth.reactivate_request", "POST", body, nil, nil, http.StatusOK); err != nil {
+		return fmt.Errorf("reactivate: %w", err)
+	}
+	return nil
+}
+
+// ConfirmReactivation submits the emailed code and re-enables login.
+func (s *Service) ConfirmReactivation(email string, otp int) error {
+	if email == "" {
+		return fmt.Errorf("reactivate: email is required")
+	}
+	body := map[string]interface{}{"email": email, "otp": otp}
+	if err := s.API.CallNoContent("auth.reactivate_confirm", "POST", body, nil, nil, http.StatusOK); err != nil {
+		return fmt.Errorf("reactivate: %w", err)
+	}
+	return nil
+}
