@@ -29,6 +29,20 @@ var projectListCmd = &cobra.Command{
 	RunE:  runProjectList,
 }
 
+func projectCreateArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.MaximumNArgs(2)(cmd, args); err != nil {
+		return err
+	}
+	// RunE already rejects a missing name, but Cobra runs PersistentPreRunE
+	// before ValidateArgs, so without this check the keychain middleware fires
+	// first and a plain usage error is reported as a daemon failure.
+	if len(args) == 0 && !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New(errors.ErrUsage, "a project name is required",
+			fmt.Errorf("agentsecrets project create <name> [description]"))
+	}
+	return nil
+}
+
 var projectCreateCmd = &cobra.Command{
 	Use:   "create [name] [description]",
 	Short: "Create a new project",
@@ -40,7 +54,7 @@ var projectCreateCmd = &cobra.Command{
 Without a name the CLI asks for one interactively. The description is optional
 and is only asked for in that same interactive flow, so scripts and agents are
 never left waiting on a prompt.`,
-	Args: cobra.MaximumNArgs(2),
+	Args: projectCreateArgs,
 	RunE: runProjectCreate,
 }
 

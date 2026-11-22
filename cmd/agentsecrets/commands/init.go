@@ -13,12 +13,14 @@ import (
 	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/errors"
+	"github.com/The-17/agentsecrets/pkg/projects"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
 var forceReinit bool
 var storageMode int
 var initServerFlag string
+var initProjectFlag string
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -35,7 +37,12 @@ var initCmd = &cobra.Command{
 	4. Prompts to select server (Cloud or Self-Hosted)
 	5. Prompts to create account or login
 	6. Generates encryption keypair (for new accounts)
-	7. Stores credentials securely`,
+	7. Stores credentials securely
+	8. Links this directory to a project (use --project <name> to skip the prompt)
+
+	When this finishes the directory is bound to a project, so secrets are
+	available however you consume them: 'agentsecrets env -- <command>',
+	'agentsecrets call', the proxy, or agents through the SDK.`,
 	RunE: runInit,
 }
 
@@ -43,6 +50,7 @@ func init() {
 	initCmd.Flags().BoolVarP(&forceReinit, "force", "f", false, "Skip reinitialize confirmation")
 	initCmd.Flags().IntVar(&storageMode, "storage-mode", 1, "Set storage mode (1: keychain only, 2: keychain & .env file)")
 	initCmd.Flags().StringVar(&initServerFlag, "server", "", "Custom AgentSecrets server endpoint URL")
+	initCmd.Flags().StringVar(&initProjectFlag, "project", "", "Project to link this directory to (skip the prompt; created if it does not exist)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -173,14 +181,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Phase 2: Project Setup
 	root, _ := config.GetProjectRoot()
 	if root != "" && !forceReinit {
-		ui.Info("Project already initialised in this directory.")
-		project, err := config.LoadProjectConfig()
-		if err == nil && project != nil {
+		if project, err := config.LoadProjectConfig(); err == nil && project != nil && project.ProjectID != "" {
+			ui.Info("Project already initialised in this directory.")
 			ui.StatusRow("Name", project.ProjectName)
 			ui.StatusRow("ID", project.ProjectID)
 			ui.StatusRow("Workspace", project.WorkspaceName)
+			return nil
 		}
-		return nil
 	}
 
 	if err := ui.Spinner("Initialising project wrapper...", func() error {
@@ -212,20 +219,137 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ui.Success("Project initialised successfully!")
-	ui.Info("Run 'agentsecrets project create <name>' or 'agentsecrets project use <name>' to link this folder.")
+	ui.Success("Project wrapper initialised.")
+	return linkProjectForInit()
+}
 
-	// Phase 3: Setup keychain-auth daemon (Disabled in v1.3.0)
-	/*
-		if err := ui.Spinner("Configuring secure keychain daemon...", func() error {
-			return keychainauth.AutoSetup()
+// initWorkspaceName resolves a workspace id to its cached name. The API returns
+// the id; showing only that would make a personal/team mistake invisible again.
+func initWorkspaceName(id string) string {
+	if id == "" {
+		return ""
+	}
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil || cfg == nil {
+		return id
+	}
+	if ws, ok := cfg.Workspaces[id]; ok && ws.Name != "" {
+		return ws.Name
+	}
+	return id
+}
+
+// initProjectNameDefault derives a usable default project name from the working
+// directory, so the common case needs one keystroke.
+func initProjectNameDefault() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(dir)
+}
+
+// isProjectNotFound reports whether a projects.Use failure means "no such
+// project in this workspace". Projects resolve inside the selected workspace,
+// so the same name may exist elsewhere; that still counts as not found here.
+func isProjectNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "404") || strings.Contains(msg, "not found")
+}
+
+// linkOrCreate binds the directory to the project named name, creating it when
+// the workspace has no such project yet. This is the create-or-use behaviour:
+// a developer who just cloned a repo should not have to know which case they
+// are in before running one command.
+func linkOrCreate(name string) (*projects.Project, error) {
+	var bound *projects.Project
+	err := ui.Spinner(fmt.Sprintf("Linking project '%s'...", name), func() error {
+		var e error
+		bound, e = app.Projects().Use(name)
+		return e
+	})
+	if err == nil {
+		return bound, nil
+	}
+	if !isProjectNotFound(err) {
+		return nil, err
+	}
+
+	if err := ui.Spinner(fmt.Sprintf("No project '%s' yet, creating it...", name), func() error {
+		var e error
+		bound, e = app.Projects().Create(name, "")
+		return e
+	}); err != nil {
+		return nil, err
+	}
+	return bound, nil
+}
+
+// linkProjectForInit finishes init by leaving the directory bound to a project,
+// so secrets are usable through env, call, the proxy or the SDK. Without this,
+// init printed success and then asked for a second command, and every one of
+// those paths failed with "no active project" until the user linked one.
+func linkProjectForInit() error {
+	name := strings.TrimSpace(initProjectFlag)
+	interactive := term.IsTerminal(int(os.Stdin.Fd()))
+
+	// The directory name is the default even without a terminal. init is an
+	// explicit setup command, and create-or-use makes this safe: an existing
+	// project with that name is linked instead of duplicated. --project is for
+	// callers that need a different name.
+	if name == "" && interactive {
+		defaultName := initProjectNameDefault()
+		var projs []projects.Project
+		if err := ui.Spinner("Looking up projects...", func() error {
+			var e error
+			projs, e = app.Projects().List()
+			return e
 		}); err != nil {
-			ui.Warning(fmt.Sprintf("Failed to auto-configure keychain-auth: %v", err))
-			ui.Info("You may need to run 'agentsecrets setup keychain-auth' later, or install manually:")
-			ui.Info("  brew install The-17/tap/keychain-auth")
+			ui.Warning("Could not list projects: " + err.Error())
 		}
-	*/
 
+		options := []huh.Option[string]{
+			huh.NewOption(fmt.Sprintf("Project %q (create it if missing)", defaultName), defaultName),
+		}
+		for _, p := range projs {
+			if strings.EqualFold(p.Name, defaultName) {
+				continue // already offered as the create/default entry
+			}
+			options = append(options, huh.NewOption("Use existing project "+p.Name, p.Name))
+		}
+
+		if err := huh.NewSelect[string]().
+			Title("Which project should this directory use?").
+			Options(options...).
+			Value(&name).
+			Run(); err != nil {
+			return nil
+		}
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = initProjectNameDefault()
+	}
+	if name == "" {
+		return errors.New(errors.ErrUsage, "could not derive a project name from this directory",
+			fmt.Errorf("re-run with --project <name>"))
+	}
+
+	bound, err := linkOrCreate(name)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	ui.Success(fmt.Sprintf("Project '%s' linked to this directory.", bound.Name))
+	if ws := initWorkspaceName(bound.WorkspaceID); ws != "" {
+		ui.StatusRow("Workspace", ws)
+	}
+	ui.Info("Secrets are ready. Inject them with 'agentsecrets env -- <command>', call an API with 'agentsecrets call', or expose them to an agent through the SDK.")
 	return nil
 }
 

@@ -605,6 +605,14 @@ func recordBinaryVerified() {
 // 1. The keychain-auth connection is established
 // 2. The user is authenticated (EnsureAuth)
 func keychainAuthMiddleware(cmd *cobra.Command, args []string) error {
+	// Cobra runs PersistentPreRunE before ValidateArgs (command.go: preRun, then
+	// ValidateArgs). Validating here means a plain usage error — a missing
+	// project name, too many arguments — is reported as what it is, instead of
+	// surfacing as a keychain daemon failure wrapped in ERR-999 on any machine
+	// where the daemon is unhealthy.
+	if err := cmd.ValidateArgs(args); err != nil {
+		return err
+	}
 	if err := ensureDaemonInitialized(); err != nil {
 		return err
 	}

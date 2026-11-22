@@ -39,6 +39,20 @@ func (s *Service) Set(key, value string) error {
 	return s.BatchSet(map[string]string{key: value}, "")
 }
 
+// setSecretsBatch is the keychain write seam. Tests replace it to prove a
+// keychain failure aborts the set; production always uses the real client.
+var setSecretsBatch = keyring.SetSecretsBatch
+
+// storeKeychainBatch writes one batch to the OS keychain and surfaces any
+// failure. Callers treat that failure as fatal so a project never ends up with
+// values in the cloud that env cannot read locally.
+func storeKeychainBatch(projectID, environment string, kv map[string]string) error {
+	if _, err := setSecretsBatch(projectID, environment, kv, nil); err != nil {
+		return fmt.Errorf("batch set: could not write to the OS keychain: %w", err)
+	}
+	return nil
+}
+
 // BatchSet adds or updates multiple secrets in a single API call.
 // If environment is empty, it uses the currently resolved environment.
 func (s *Service) BatchSet(kv map[string]string, environment string) error {
@@ -67,11 +81,13 @@ func (s *Service) BatchSet(kv map[string]string, environment string) error {
 		apiSecrets[k] = encryptedValue
 	}
 
-	// 2. Store in OS Keychain (for Proxy support) in a single batch IPC round-trip.
-	// This is best-effort: the cloud + .env writes below are the source of truth,
-	// so a keychain miss (e.g. daemon not running) must not fail the whole set — but warn.
-	if _, err := keyring.SetSecretsBatch(project.ProjectID, env, kv, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not store secrets in OS keychain (proxy may not resolve them until next pull): %v\n", err)
+	// 2. Store in OS Keychain in a single batch IPC round-trip. This is fatal on
+	// purpose. `agentsecrets env` in local mode reads the keychain and nothing
+	// else, so a set the user will consume through env must land there. A
+	// best-effort write left the cloud correct while env injected fewer secrets
+	// than the project held, with one stderr line as the only clue.
+	if err := storeKeychainBatch(project.ProjectID, env, kv); err != nil {
+		return err
 	}
 
 	// 3. Sync to cloud (Single bulk call with dictionary)

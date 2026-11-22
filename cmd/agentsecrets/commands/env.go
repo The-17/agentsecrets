@@ -29,9 +29,40 @@ import (
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
+// guardInjection decides whether env may spawn the child. It fails closed for
+// two states that used to warn and continue:
+//
+//   - a key named by --only that the project does not store, which means the
+//     user and the project disagree about what exists;
+//   - no secrets at all, which means the child will fail later on a missing
+//     variable and the failure will look like an application bug.
+//
+// allowEmpty is the explicit opt-in for the second state.
+func guardInjection(secrets map[string]string, missing []string, envName string, allowEmpty bool) error {
+	envLabel := envName
+	if envLabel == "" {
+		envLabel = "the active environment"
+	}
+	envFlag := ""
+	if envName != "" {
+		envFlag = " --env " + envName
+	}
+	if len(missing) > 0 {
+		return clierrors.New(clierrors.ErrSecretNotFound,
+			fmt.Sprintf("%s not found in %s", strings.Join(missing, ", "), envLabel),
+			fmt.Errorf("run 'agentsecrets secrets list%s' to see the keys this project stores", envFlag))
+	}
+	if len(secrets) == 0 && !allowEmpty {
+		return clierrors.New(clierrors.ErrSecretNotFound,
+			fmt.Sprintf("no secrets in %s for this project", envLabel),
+			fmt.Errorf("store one with 'agentsecrets secrets set KEY', or pass --allow-empty to run without injection"))
+	}
+	return nil
+}
+
 func NewEnvCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "env [--cloud] [--env NAME] [--only KEYS] [--sandbox] -- <command> [args...]",
+		Use:   "env [--cloud] [--env NAME] [--only KEYS] [--sandbox] [--allow-empty] -- <command> [args...]",
 		Short: "Inject secrets as environment variables into a child process",
 		Long: `Resolves secrets and injects them as environment variables into the specified command.
 		Supports Dual-Engine resolution:
@@ -52,7 +83,11 @@ func NewEnvCmd() *cobra.Command {
 		                     workload token's own binding when resolving in the cloud).
 		                     Any valid name works: development, staging, production, or
 		                     a custom environment such as qa or preview-pr-12.
-		--only KEY[,KEY...]  inject only these secrets (default: all)
+		--only KEY[,KEY...]  inject only these secrets (default: all). A listed key
+		                     that the project does not store is an error, not a warning.
+		--allow-empty        run the child even when no secrets resolve. Off by
+		                     default: silently running without credentials turns a
+		                     setup mistake into an unrelated application crash.
 		--sandbox            run the child with no network egress (Linux only)`,
 		Example: `  agentsecrets env -- npm run dev
   agentsecrets env --cloud -- npm run dev
@@ -74,6 +109,7 @@ func runEnv(cmd *cobra.Command, args []string) error {
 	// then applies env and saved-config precedence.
 	flagMode := ""
 	sandbox := false
+	allowEmpty := false
 	envName := ""
 	var onlyKeys []string
 parseArgs:
@@ -89,6 +125,9 @@ parseArgs:
 			args = args[1:]
 		case args[0] == "--sandbox":
 			sandbox = true
+			args = args[1:]
+		case args[0] == "--allow-empty":
+			allowEmpty = true
 			args = args[1:]
 		case args[0] == "--env" || strings.HasPrefix(args[0], "--env="):
 			val := strings.TrimPrefix(strings.TrimPrefix(args[0], "--env"), "=")
@@ -183,16 +222,21 @@ parseArgs:
 
 	// --only narrows what is injected. The default stays "all secrets": a codebase
 	// needing thirty credentials should not have to enumerate them.
+	var missing []string
 	if len(onlyKeys) > 0 {
-		var missing []string
 		secrets, missing = filterSecrets(secrets, onlyKeys)
-		if len(missing) > 0 {
-			ui.Warning("Not in this project: " + strings.Join(missing, " "))
-		}
+	}
+
+	// Fail closed before spawning. A missing key, or a project with nothing in
+	// it, used to warn and run the child anyway; the app then failed later on a
+	// missing variable and the developer debugged their code instead of their
+	// setup. --allow-empty is the explicit opt-in for that behaviour.
+	if err := guardInjection(secrets, missing, requestedEnv, allowEmpty); err != nil {
+		return err
 	}
 
 	if len(secrets) == 0 {
-		ui.Warning("No secrets found in active project — running without injection")
+		ui.Warning("No secrets found in active project — running without injection (--allow-empty)")
 	} else if !useCloud {
 		secretKeys := make([]string, 0, len(secrets))
 		for k := range secrets {
