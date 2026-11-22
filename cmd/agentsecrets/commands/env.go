@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/internal/envguard"
 	"github.com/The-17/agentsecrets/pkg/auth"
@@ -24,6 +25,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
+	"github.com/The-17/agentsecrets/pkg/projects"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/telemetry"
 	"github.com/The-17/agentsecrets/pkg/ui"
@@ -187,12 +189,35 @@ parseArgs:
 	}
 
 	localResolve := func() (map[string]string, error) {
+		// A cloned repo often has no committed project.json even though the
+		// project exists. Look it up once, bind it on an exact directory-name
+		// match, and then continue with normal resolution. Everything else gets
+		// the specific create-or-use guidance below.
+		root, _ := config.GetProjectRoot()
+		var projs []projects.Project
+		var listErr error
+		listed := false
+		listProjects := func() {
+			if listed {
+				return
+			}
+			listed = true
+			projs, listErr = app.Projects().List()
+		}
+		if root == "" {
+			listProjects()
+			if listErr == nil && term.IsTerminal(int(os.Stdin.Fd())) {
+				if err := bindProjectFromDirectory(projs); err != nil {
+					return nil, err
+				}
+			}
+		}
+
 		var loadErr error
 		project, loadErr = config.LoadProjectConfig()
 		if loadErr != nil || project == nil || project.ProjectID == "" {
-			return nil, clierrors.New(clierrors.ErrUsage,
-				"no active project",
-				fmt.Errorf("run 'agentsecrets project use <name>', or pass AGENTSECRETS_TOKEN / --cloud for cloud resolution"))
+			listProjects()
+			return nil, noActiveProjectError(projs, listErr)
 		}
 
 		// Ensure keychain-auth session is established before reading secrets.
@@ -310,8 +335,8 @@ parseArgs:
 		if msg := guardAttachWarning(warnPath); msg != "" {
 			ui.Warning(msg)
 		}
-	} else {
-		ui.Warning("Output guard library not installed — children run with parent-side stdout/stderr filtering only (run `make envguard` at install time to enable it)")
+	} else if guardNoticeOnce() {
+		ui.Info("Output guard library is not installed here; child output is filtered by the parent process only.")
 	}
 
 	// Build environment: parent env + injected secrets. Inherited entries for
