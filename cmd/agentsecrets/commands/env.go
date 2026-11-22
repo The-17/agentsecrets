@@ -64,7 +64,7 @@ func guardInjection(secrets map[string]string, missing []string, envName string,
 
 func NewEnvCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "env [--cloud] [--env NAME] [--only KEYS] [--sandbox] [--allow-empty] -- <command> [args...]",
+		Use:   "env [--cloud] [--env NAME] [--only KEYS] [--sandbox] [--allow-empty] [--check] -- <command> [args...]",
 		Short: "Inject secrets as environment variables into a child process",
 		Long: `Resolves secrets and injects them as environment variables into the specified command.
 		Supports Dual-Engine resolution:
@@ -90,6 +90,8 @@ func NewEnvCmd() *cobra.Command {
 		--allow-empty        run the child even when no secrets resolve. Off by
 		                     default: silently running without credentials turns a
 		                     setup mistake into an unrelated application crash.
+		--check              report mode, source, environment and key names, then
+		                     exit without spawning a child. Never prints values.
 		--sandbox            run the child with no network egress (Linux only)`,
 		Example: `  agentsecrets env -- npm run dev
   agentsecrets env --cloud -- npm run dev
@@ -97,6 +99,7 @@ func NewEnvCmd() *cobra.Command {
   agentsecrets env --cloud --env preview-pr-12 -- node server.js
   agentsecrets env --only DATABASE_URL -- ./run-migrations.sh
   agentsecrets env --sandbox -- ./seed.sh
+  agentsecrets env --check
   AGENTSECRETS_TOKEN=agt_prod_... agentsecrets env -- node server.js`,
 		RunE:               runEnv,
 		DisableFlagParsing: true,
@@ -112,6 +115,7 @@ func runEnv(cmd *cobra.Command, args []string) error {
 	flagMode := ""
 	sandbox := false
 	allowEmpty := false
+	checkOnly := false
 	envName := ""
 	var onlyKeys []string
 parseArgs:
@@ -130,6 +134,9 @@ parseArgs:
 			args = args[1:]
 		case args[0] == "--allow-empty":
 			allowEmpty = true
+			args = args[1:]
+		case args[0] == "--check":
+			checkOnly = true
 			args = args[1:]
 		case args[0] == "--env" || strings.HasPrefix(args[0], "--env="):
 			val := strings.TrimPrefix(strings.TrimPrefix(args[0], "--env"), "=")
@@ -160,8 +167,8 @@ parseArgs:
 			break parseArgs
 		}
 	}
-	if len(args) == 0 {
-		return fmt.Errorf("no command specified. Usage: agentsecrets env [--cloud] [--only KEYS] [--sandbox] -- <command> [args...]")
+	if len(args) == 0 && !checkOnly {
+		return fmt.Errorf("no command specified. Usage: agentsecrets env [--cloud] [--only KEYS] [--sandbox] [--check] -- <command> [args...]")
 	}
 
 	// One router decision for the whole command, and the router picks the
@@ -250,6 +257,28 @@ parseArgs:
 	var missing []string
 	if len(onlyKeys) > 0 {
 		secrets, missing = filterSecrets(secrets, onlyKeys)
+	}
+
+	// --check is a read-only inspection of exactly what this invocation would
+	// do. It reports the verdict from the same guard used by a real run, but
+	// never spawns the child and never prints a value.
+	if checkOnly {
+		keys := make([]string, 0, len(secrets))
+		for k := range secrets {
+			keys = append(keys, k)
+		}
+		projectName := ""
+		if project != nil {
+			projectName = project.ProjectName
+		}
+		tokenSource := ""
+		if useCloud {
+			tokenSource = gateway.DescribeTokenSource()
+		}
+		for _, line := range envCheckLines(selection, requestedEnv, projectName, tokenSource, keys, envguard.Locate() != "", guardInjection(secrets, missing, requestedEnv, allowEmpty)) {
+			fmt.Println(line)
+		}
+		return nil
 	}
 
 	// Fail closed before spawning. A missing key, or a project with nothing in

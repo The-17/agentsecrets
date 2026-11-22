@@ -14,6 +14,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/projects"
+	"github.com/The-17/agentsecrets/pkg/secrets"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -21,6 +22,7 @@ var forceReinit bool
 var storageMode int
 var initServerFlag string
 var initProjectFlag string
+var initWorkflowsFlag bool
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -40,6 +42,9 @@ var initCmd = &cobra.Command{
 	7. Stores credentials securely
 	8. Links this directory to a project (use --project <name> to skip the prompt)
 
+	Agent instruction files are opt-in with --workflows. Most repositories do
+	not want generated .agent/ files committed by a setup command.
+
 	When this finishes the directory is bound to a project, so secrets are
 	available however you consume them: 'agentsecrets env -- <command>',
 	'agentsecrets call', the proxy, or agents through the SDK.`,
@@ -51,6 +56,7 @@ func init() {
 	initCmd.Flags().IntVar(&storageMode, "storage-mode", 1, "Set storage mode (1: keychain only, 2: keychain & .env file)")
 	initCmd.Flags().StringVar(&initServerFlag, "server", "", "Custom AgentSecrets server endpoint URL")
 	initCmd.Flags().StringVar(&initProjectFlag, "project", "", "Project to link this directory to (skip the prompt; created if it does not exist)")
+	initCmd.Flags().BoolVar(&initWorkflowsFlag, "workflows", false, "Write .agent/workflows/ agent instructions into this repository")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -132,7 +138,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 			modeToUse = config.GetStorageMode()
 		}
 
-		_ = writeWorkflowFile()
+		if initWorkflowsFlag {
+			_ = writeWorkflowFile()
+		}
 
 		ui.Banner("AgentSecrets")
 		fmt.Println()
@@ -195,8 +203,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to initialize project config: %w", err)
 		}
 
-		// Create AI agent workflow/instruction file in current project
-		_ = writeWorkflowFile()
+		// Create AI agent workflow/instruction files only when asked. Generated
+		// .agent/ files otherwise appear as untracked noise in the repository.
+		if initWorkflowsFlag {
+			_ = writeWorkflowFile()
+		}
 
 		// If mode 2, create all .env files for standard environments
 		if modeToUse == 2 {
@@ -464,33 +475,11 @@ func writeWorkflowFile() error {
 	return nil
 }
 
-// updateGitignore adds environment-specific .env files to .gitignore if not already present.
+// updateGitignore keeps the wrapper setup path aligned with the write path.
+// The real rule lives next to the .env writer so it also runs on projects
+// created without init.
 func updateGitignore(projectRoot string) {
-	gitignorePath := filepath.Join(projectRoot, ".gitignore")
-	entries := []string{".env", ".env.development", ".env.staging", ".env.production"}
-
-	// Read existing content
-	existing := ""
-	if data, err := os.ReadFile(gitignorePath); err == nil {
-		existing = string(data)
-	}
-
-	// Append only missing entries
-	var toAdd []string
-	for _, entry := range entries {
-		if !strings.Contains(existing, entry) {
-			toAdd = append(toAdd, entry)
-		}
-	}
-
-	if len(toAdd) > 0 {
-		newContent := existing
-		if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
-			newContent += "\n"
-		}
-		newContent += "\n# AgentSecrets environment files\n"
-		newContent += strings.Join(toAdd, "\n")
-		newContent += "\n"
-		_ = os.WriteFile(gitignorePath, []byte(newContent), 0644)
+	if err := secrets.EnsureEnvGitignore(projectRoot); err != nil {
+		ui.Warning("Could not add .env files to .gitignore: " + err.Error())
 	}
 }

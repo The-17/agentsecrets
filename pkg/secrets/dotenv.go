@@ -100,10 +100,55 @@ func (m *EnvManager) parseValue(val string) string {
 	return val
 }
 
+// EnsureEnvGitignore adds environment-specific .env files to the gitignore at
+// the project root. It lives in the write path, not only in init, because a
+// project can be created with `project create` while the global default is
+// already mode 2. That route writes a plaintext .env with no gitignore entry.
+func EnsureEnvGitignore(dir string) error {
+	if dir == "" {
+		dir = "."
+	}
+	path := filepath.Join(dir, ".gitignore")
+	entries := []string{".env", ".env.development", ".env.staging", ".env.production"}
+
+	existing := ""
+	if data, err := os.ReadFile(path); err == nil {
+		existing = string(data)
+	}
+
+	var toAdd []string
+	for _, entry := range entries {
+		found := false
+		for _, line := range strings.Split(existing, "\n") {
+			if strings.TrimSpace(line) == entry {
+				found = true
+				break
+			}
+		}
+		if !found {
+			toAdd = append(toAdd, entry)
+		}
+	}
+	if len(toAdd) == 0 {
+		return nil
+	}
+
+	content := existing
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += "\n# AgentSecrets environment files\n" + strings.Join(toAdd, "\n") + "\n"
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
 // Write merges the provided secrets into the environment-specific .env file.
 func (m *EnvManager) Write(newSecrets map[string]string) error {
 	mode := config.GetStorageMode()
 	if mode != 1 {
+		root, _ := config.GetProjectRoot()
+		if err := EnsureEnvGitignore(root); err != nil {
+			return fmt.Errorf("failed to gitignore .env files: %w", err)
+		}
 		if err := m.updateFile(m.EnvPath, newSecrets, false); err != nil {
 			return err
 		}
