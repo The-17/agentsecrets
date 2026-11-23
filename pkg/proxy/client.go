@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -92,23 +93,22 @@ func IsProxyRunning() (pid int, port int, running bool) {
 		return 0, 0, false
 	}
 
-	// 1. Authoritative check: probe HTTP /health endpoint with 500ms timeout
+	// Authoritative check: the endpoint must answer with our health envelope.
+	// A bare TCP listener on the recorded port is not a running proxy.
 	healthClient := &http.Client{Timeout: 500 * time.Millisecond}
 	resp, err := healthClient.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
 	if err == nil {
-		resp.Body.Close()
+		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
-			return pid, port, true
+			var health struct {
+				Status string `json:"status"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&health); err == nil && health.Status == "ok" {
+				return pid, port, true
+			}
 		}
 	}
-
-	// 2. Fallback check: TCP dial with 500ms timeout
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
-	if err != nil {
-		return 0, 0, false
-	}
-	conn.Close()
-	return pid, port, true
+	return 0, 0, false
 }
 
 // StartTransientProxy starts a proxy server in a background goroutine.

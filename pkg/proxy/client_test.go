@@ -83,6 +83,22 @@ func TestIsProxyRunningWithMockServer(t *testing.T) {
 	}
 }
 
+func TestIsProxyRunningRejectsBareTCPListener(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := WritePIDFile(listener.Addr().(*net.TCPAddr).Port); err != nil {
+		t.Fatal(err)
+	}
+	defer RemovePIDFile()
+
+	if _, _, running := IsProxyRunning(); running {
+		t.Error("a listener without the proxy health envelope must not be reported as the proxy")
+	}
+}
+
 func TestIsProxyRunningNonDestructiveOnFailure(t *testing.T) {
 	// Write a PID file with a port that is NOT listening
 	fakePort := 54321
