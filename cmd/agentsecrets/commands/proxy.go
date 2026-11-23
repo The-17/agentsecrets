@@ -186,7 +186,7 @@ func runProxyStart(cmd *cobra.Command, args []string) error {
 
 	// Write PID file for proxy status
 	if err := proxy.WritePIDFile(proxyPort); err != nil {
-		ui.Warning(fmt.Sprintf("Failed to write PID file: %v", err))
+		return fmt.Errorf("proxy is listening on port %d but its PID file could not be written: %w; status, stop and approve cannot find it", proxyPort, err)
 	}
 	defer proxy.RemovePIDFile()
 

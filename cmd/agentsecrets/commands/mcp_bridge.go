@@ -134,13 +134,17 @@ func bridgeErr(format string, args ...interface{}) {
 // runMCPBridge is the single entrypoint: parse verb+args, dispatch, envelope.
 func runMCPBridge(cmd *cobra.Command, args []string) error {
 	if err := keychainauth.Init(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: keychain-auth initialization failed: %v\n", err)
+		// Every bridge reply must be one JSON envelope. A stderr warning here
+		// left later secret verbs to fail with opaque keyring errors instead
+		// of telling the caller that the daemon was never initialized.
+		bridgeErr("keychain-auth initialization failed: %v", err)
+		return nil
 	}
 
 	// "agentsecrets mcp bridge <verb>" was the old spelling. The word is
-	// accepted and dropped so already-configured MCP clients keep working;
-	// the supported form is "agentsecrets mcp <verb>".
-	if len(args) > 1 && args[0] == "bridge" {
+	// accepted and dropped even when it is the only argument, so an old client
+	// config invoking the bare two-word form still reaches the no-verb guard.
+	if len(args) > 0 && args[0] == "bridge" {
 		args = args[1:]
 	}
 
@@ -443,6 +447,16 @@ func checkDaemonProject() error {
 // switchBridgeEnv mirrors the Go MCP write tools: when an explicit,
 // valid environment differs from the active one, persist it to the
 // project + global config before operating. Returns the active env.
+// scopeBridgeEnv parses an environment for a read-only verb. Unlike
+// switchBridgeEnv it never persists the choice: a read must not silently
+// change the active environment for every later command.
+func scopeBridgeEnv(envParam string) (string, error) {
+	if envParam == "" {
+		return config.ResolveEnvironment(), nil
+	}
+	return config.ParseEnvironment(envParam)
+}
+
 func switchBridgeEnv(envParam string) (string, error) {
 	env := envParam
 	if env == "" {
@@ -1441,7 +1455,7 @@ func bridgeSecretsRotationStatus(a map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	env, err := switchBridgeEnv(argStr(a, "environment"))
+	env, err := scopeBridgeEnv(argStr(a, "environment"))
 	if err != nil {
 		return err
 	}
