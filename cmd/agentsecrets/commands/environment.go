@@ -342,7 +342,10 @@ func runEnvCopy(cmd *cobra.Command, args []string) error {
 	if err := ui.Spinner(fmt.Sprintf("Copying %d secrets to %s...", len(fromSecrets), to), func() error {
 		kv := make(map[string]string)
 		for _, s := range fromSecrets {
-			plaintext, _ := crypto.DecryptSecret(s.Value, wsKey)
+			plaintext, err := crypto.DecryptSecret(s.Value, wsKey)
+			if err != nil {
+				return fmt.Errorf("decrypt %s: %w", s.Key, err)
+			}
 			kv[s.Key] = plaintext
 		}
 
@@ -433,7 +436,10 @@ func runEnvMerge(cmd *cobra.Command, args []string) error {
 
 	for _, s := range fromSecrets {
 		// Mask the source value: show first 3 chars + ***
-		plaintext, _ := crypto.DecryptSecret(s.Value, wsKey)
+		plaintext, err := crypto.DecryptSecret(s.Value, wsKey)
+		if err != nil {
+			return fmt.Errorf("decrypt %s: %w", s.Key, err)
+		}
 		masked := maskValue(plaintext)
 
 		fmt.Printf("%s (%s: %s) [Enter to keep]: ", s.Key, from, masked)
@@ -465,7 +471,10 @@ func runEnvMerge(cmd *cobra.Command, args []string) error {
 	if err := ui.Spinner(fmt.Sprintf("Updating %d secrets in %s...", len(toSet), to), func() error {
 		kv := make(map[string]string)
 		for _, s := range toSet {
-			plaintext, _ := crypto.DecryptSecret(s["value"], wsKey)
+			plaintext, err := crypto.DecryptSecret(s["value"], wsKey)
+			if err != nil {
+				return fmt.Errorf("decrypt %s: %w", s["key"], err)
+			}
 			kv[s["key"]] = plaintext
 		}
 		return app.Secrets().BatchSet(kv, to)
@@ -515,12 +524,19 @@ func runEnvClean(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	var failed []string
 	for _, s := range list {
 		if err := ui.Spinner(fmt.Sprintf("Deleting %s...", s.Key), func() error {
 			return app.Secrets().Delete(s.Key)
 		}); err != nil {
 			ui.Error(fmt.Sprintf("Failed to delete %s: %v", s.Key, err))
+			failed = append(failed, s.Key)
 		}
+	}
+	if len(failed) > 0 {
+		return errors.New(errors.ErrServerInternal,
+			fmt.Sprintf("could not delete %d secret(s) from %s", len(failed), activeEnv),
+			fmt.Errorf("failed keys: %s", strings.Join(failed, ", ")))
 	}
 
 	ui.Success(fmt.Sprintf("Cleaned %s environment.", activeEnv))

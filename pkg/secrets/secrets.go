@@ -329,10 +329,6 @@ func (s *Service) Pull(targetKeys []string) error {
 
 	telemetry.RecordSecretCount(len(secretsMap))
 
-	if isSelective && len(secretsMap) == 0 {
-		// Even if empty, we want to ensure .env footprint is laid down
-	}
-
 	if err := s.Env.Write(secretsMap); err != nil {
 		return fmt.Errorf("pull: failed to update local files: %w", err)
 	}

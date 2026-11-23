@@ -44,11 +44,13 @@ func secretExists(projectID, env, key string) (bool, error) {
 	if exists {
 		return true, nil
 	}
-	if remoteKeys, err := app.Secrets().ListForEnv(env); err == nil {
-		for _, k := range remoteKeys {
-			if strings.EqualFold(k.Key, key) {
-				return true, nil
-			}
+	remoteKeys, err := app.Secrets().ListForEnv(env)
+	if err != nil {
+		return false, fmt.Errorf("failed to check remote secrets: %w", err)
+	}
+	for _, k := range remoteKeys {
+		if strings.EqualFold(k.Key, key) {
+			return true, nil
 		}
 	}
 	return false, nil
@@ -657,6 +659,7 @@ func storeSecretValues(kv map[string]string, env string, quiet bool) ([]secrets.
 		if err := verifyPasswordLocally(); err != nil {
 			return nil, err
 		}
+		var failed []string
 		for _, e := range config.StandardEnvironments {
 			var setErr error
 			if quiet {
@@ -667,6 +670,7 @@ func storeSecretValues(kv map[string]string, env string, quiet bool) ([]secrets.
 				})
 			}
 			if setErr != nil {
+				failed = append(failed, e)
 				if !quiet {
 					ui.Error(fmt.Sprintf("Failed to set in %s: %v", e, setErr))
 				}
@@ -678,6 +682,11 @@ func storeSecretValues(kv map[string]string, env string, quiet bool) ([]secrets.
 			for _, key := range sortedKeys(kv) {
 				metas = append(metas, secrets.DescribeValue(key, e, kv[key]))
 			}
+		}
+		if len(failed) > 0 {
+			return metas, errors.New(errors.ErrServerInternal,
+				fmt.Sprintf("could not set secrets in %d of %d environments", len(failed), len(config.StandardEnvironments)),
+				fmt.Errorf("failed environments: %s", strings.Join(failed, ", ")))
 		}
 		return metas, nil
 	}
