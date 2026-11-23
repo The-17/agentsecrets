@@ -50,36 +50,6 @@ import (
 	"github.com/The-17/agentsecrets/pkg/telemetry"
 )
 
-var mcpBridgeCmd = &cobra.Command{
-	Use:   "<verb> [json-args]",
-	Short: "Machine-readable JSON interface for the MCP bridge (local mode)",
-	Long: `Execute one privileged local operation and print a JSON envelope to stdout.
-
-Verbs: ping, status, auth.export,
-  secrets.list, secrets.set, secrets.delete, secrets.pull, secrets.push, secrets.diff,
-  proxy.call, proxy.status,
-  project.list, project.create, project.use, project.update, project.delete,
-  workspace.list, workspace.create, workspace.switch, workspace.members,
-  workspace.pending_invites, workspace.accept_invite,
-  email.verify, email.resend,
-  agent.list, agent.delete, agent.token_issue,
-  logs.list, logs.summary, logs.detail
-
-Args are a single JSON object (argv or stdin). Stdout is always exactly one
-JSON envelope: {"ok":true,"data":...} or {"ok":false,"error":"..."}.
-
-The old form "agentsecrets mcp bridge <verb>" still works: the word "bridge" is
-accepted and ignored, so existing MCP client configs keep running.`,
-	Args: cobra.MinimumNArgs(1),
-	RunE: runMCPBridge,
-}
-
-func init() {
-	// Intentionally empty: the bridge is now the parent "mcp" command's default
-	// action, so there is no "bridge" subcommand to register. Registering it
-	// would list a "<verb>" entry in help and shadow the verbs.
-}
-
 // bridgeVerbs is the advertised capability set (also returned by ping).
 var bridgeVerbs = []string{
 	"ping", "status", "auth.export",

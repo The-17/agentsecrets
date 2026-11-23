@@ -1,9 +1,9 @@
 // Package secrets provisioning primitives let a secret value be stored without
 // the value ever passing through a command line or a model's context. The
-// value arrives from a reader (typed at a visible prompt or piped in), is
-// generated in-process, or is produced by a source command's stdout or a
-// fetched URL. It is never an argv argument, so it stays out of shell history
-// and process listings, and it is never a tool parameter or tool result.
+// value arrives from a reader (typed at a visible prompt or piped in) or from a
+// source command's stdout. It is never an argv argument, so it stays out of
+// shell history and process listings, and it is never a tool parameter or tool
+// result.
 package secrets
 
 import (
@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -21,7 +20,6 @@ import (
 	"time"
 
 	"github.com/The-17/agentsecrets/pkg/config"
-	"github.com/The-17/agentsecrets/pkg/crypto"
 )
 
 // MaxProvisionInput bounds the bytes accepted from any value source.
@@ -29,9 +27,6 @@ const MaxProvisionInput = 1 << 20 // 1 MiB
 
 // sourceCommandTimeout bounds how long a --from-command source may run.
 const sourceCommandTimeout = 60 * time.Second
-
-// httpSourceTimeout bounds how long a source=http fetch may take.
-const httpSourceTimeout = 30 * time.Second
 
 // StoredMeta describes a stored secret without revealing its value. Safe to
 // print, log, or return over MCP.
@@ -227,91 +222,6 @@ func (s *Service) SetFromReader(key string, r io.Reader, environment string) (St
 		return StoredMeta{}, fmt.Errorf("provision: value exceeds %d bytes", MaxProvisionInput)
 	}
 	value, err := NormalizeValue(raw)
-	if err != nil {
-		return StoredMeta{}, fmt.Errorf("provision: %w", err)
-	}
-	return s.SetProvisioned(key, value, environment)
-}
-
-// Generate mints a random value, stores it, and returns metadata only. The
-// value is never returned, because nothing outside the vault needs to read it.
-func (s *Service) Generate(key string, byteLength int, environment string) (StoredMeta, error) {
-	if err := validateProvision(key, environment); err != nil {
-		return StoredMeta{}, err
-	}
-	if byteLength <= 0 {
-		byteLength = 32
-	}
-	value, err := crypto.GeneratePassword(byteLength)
-	if err != nil {
-		return StoredMeta{}, fmt.Errorf("provision: generate: %w", err)
-	}
-	return s.SetProvisioned(key, value, environment)
-}
-
-// SetFromCommand stores the stdout of command as the secret value. When
-// extract is non-empty, the value is the string at that dot-separated JSON path
-// in the stdout instead of the whole stdout. The command is the caller's own,
-// run at the caller's trust level. stdout is never logged.
-func (s *Service) SetFromCommand(key, command, extract, environment string) (StoredMeta, error) {
-	if err := validateProvision(key, environment); err != nil {
-		return StoredMeta{}, err
-	}
-	if strings.TrimSpace(command) == "" {
-		return StoredMeta{}, fmt.Errorf("provision: empty source command")
-	}
-
-	raw, err := runCommandRaw(command)
-	if err != nil {
-		return StoredMeta{}, fmt.Errorf("provision: %w", err)
-	}
-	value, err := applyExtract(raw, extract)
-	if err != nil {
-		return StoredMeta{}, fmt.Errorf("provision: %w", err)
-	}
-	return s.SetProvisioned(key, value, environment)
-}
-
-// SetFromHTTP stores the response body of a GET to rawURL as the secret value.
-// When extract is non-empty, the value is the string at that dot-separated JSON
-// path in the body instead of the whole body.
-func (s *Service) SetFromHTTP(key, rawURL, extract, environment string, headers map[string]string) (StoredMeta, error) {
-	if err := validateProvision(key, environment); err != nil {
-		return StoredMeta{}, err
-	}
-	if strings.TrimSpace(rawURL) == "" {
-		return StoredMeta{}, fmt.Errorf("provision: empty URL")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), httpSourceTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return StoredMeta{}, fmt.Errorf("provision: invalid URL: %w", err)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return StoredMeta{}, fmt.Errorf("provision: fetch: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, MaxProvisionInput+1))
-	if err != nil {
-		return StoredMeta{}, fmt.Errorf("provision: read response: %w", err)
-	}
-	if len(raw) > MaxProvisionInput {
-		return StoredMeta{}, fmt.Errorf("provision: response exceeds %d bytes", MaxProvisionInput)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return StoredMeta{}, fmt.Errorf("provision: HTTP %d fetching %s", resp.StatusCode, rawURL)
-	}
-
-	value, err := applyExtract(raw, extract)
 	if err != nil {
 		return StoredMeta{}, fmt.Errorf("provision: %w", err)
 	}

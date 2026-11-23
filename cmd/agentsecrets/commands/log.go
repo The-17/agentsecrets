@@ -626,27 +626,6 @@ func runLogList(cmd *cobra.Command, args []string) error {
 	return runLogListWithFilter(cmd, filter)
 }
 
-func runProjectLogs(cmd *cobra.Command, args []string) error {
-	sinceStr, _ := cmd.Flags().GetString("since")
-	filter := buildFilter(cmd, sinceStr)
-
-	var projectID string
-	if pc, err := config.LoadProjectConfig(); err == nil && pc != nil {
-		projectID = pc.ProjectID
-	} else {
-		cfg, _ := config.LoadGlobalConfig()
-		if cfg != nil {
-			projectID = cfg.SelectedProjectID
-		}
-	}
-	if projectID == "" {
-		return fmt.Errorf("no project selected — run 'agentsecrets project use' first")
-	}
-	filter.ProjectID = projectID
-
-	return runLogListWithFilter(cmd, filter)
-}
-
 // displayLogBasic prints a single log entry in the spec format:
 // 14:22:01  billing-tool  →  api.stripe.com  POST /v1/charges  200  143ms
 func displayLogBasic(l proxy.AuditEvent) {
@@ -1016,10 +995,8 @@ func init() {
 	}
 
 	addFilterFlags(logsCmd)
-	logsCmd.Flags().Bool("verbose", false, "full record including allowlist snapshot")
 	logsCmd.Flags().Bool("json", false, "output as newline-delimited JSON")
 	logsCmd.Flags().Bool("csv", false, "output as CSV with headers")
-	logsCmd.Flags().Bool("no-color", false, "disable color output")
 	logsCmd.Flags().Bool("tail", false, "live stream new entries (same as log watch)")
 
 	logSummaryCmd.Flags().String("since", "7d", "default: 7d")

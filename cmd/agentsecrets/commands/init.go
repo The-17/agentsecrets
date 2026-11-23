@@ -143,10 +143,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 			modeToUse = config.GetStorageMode()
 		}
 
-		if initWorkflowsFlag {
-			_ = writeWorkflowFile()
-		}
-
 		ui.Banner("AgentSecrets")
 		fmt.Println()
 
@@ -175,7 +171,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		} else {
-			if err := runLoginFlow(); err != nil {
+			if err := performLogin(); err != nil {
 				return err
 			}
 		}
@@ -451,10 +447,6 @@ func runSignup() error {
 	ui.Success("Account created and logged in!")
 	showVaultResult(result, password)
 	return nil
-}
-
-func runLoginFlow() error {
-	return performLogin()
 }
 
 func writeWorkflowFile() error {

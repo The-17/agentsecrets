@@ -2,8 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	clierrors "github.com/The-17/agentsecrets/pkg/errors"
@@ -68,11 +66,7 @@ func noActiveProjectError(projs []projects.Project, listErr error) error {
 // declining leaves the directory untouched. Non-interactive callers never get
 // a prompt: they get the explicit create/use guidance from noProjectDetail.
 func bindProjectFromDirectory(projs []projects.Project) error {
-	dir, err := os.Getwd()
-	if err != nil {
-		return nil
-	}
-	match, unique := directoryProjectMatch(projs, filepath.Base(dir))
+	match, unique := directoryProjectMatch(projs, initProjectNameDefault())
 	if !unique || match == nil {
 		return nil
 	}
