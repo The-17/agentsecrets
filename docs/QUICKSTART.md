@@ -47,19 +47,26 @@ This will:
    - **Keychain (recommended)** — secrets go to the OS keychain, no `.env` file is created
    - **Standard** — secrets are written to a `.env` file (traditional workflow)
 3. Generate a cryptographic keypair on your machine — your private key never leaves your device
-4. Write `.agent/workflows/agentsecrets.md` — the workflow file that teaches any AI assistant how to use AgentSecrets automatically
+4. Generate a cryptographic keypair on your machine — your private key never leaves your device
+5. Link this directory to a project, so the next command can use secrets. Use `--project name` to skip that prompt.
+
+Workflow files are opt-in. Add `--workflows` if you want `.agent/workflows/agentsecrets.md` written into the repository. A plain `init` leaves no generated `.agent/` files behind.
 
 **Skip the interactive prompts:**
 ```bash
-agentsecrets init --storage-mode 1   # Keychain mode (default)
-agentsecrets init --storage-mode 2   # Standard .env mode
+agentsecrets init --storage-mode 1 --project my-app  # Keychain mode (default)
+agentsecrets init --storage-mode 2 --project my-app  # Standard .env mode
 ```
+
+On a machine that is already logged in, `init` ends with the directory linked. The examples below assume that link; run `project create my-app` only when you want a second project in the same directory.
 
 ---
 
 ## 2. Create a Project
 
 Projects map to your applications. Secrets are partitioned by project.
+
+`init` already linked a project if you ran it in this directory. Skip this step unless you need a different project or a second binding.
 
 ```bash
 agentsecrets project create my-app

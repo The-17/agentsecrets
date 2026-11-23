@@ -92,8 +92,7 @@ agentsecrets doctor
 ## Quick Start
 
 ```bash
-agentsecrets init
-agentsecrets project create my-agent
+agentsecrets init --project my-agent
 
 agentsecrets secrets set STRIPE_KEY            # typed at a visible prompt
 agentsecrets secrets set STRIPE_KEY --generate # or mint one, never shown
