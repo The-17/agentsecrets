@@ -178,12 +178,13 @@ func performOAuth(provider string) error {
 		return nil
 	}
 
+	for _, warning := range result.Warnings {
+		ui.Warning(warning)
+	}
+
 	// No terminal (script/CI): we cannot ask for the password safely. Keep the
 	// honest warning and let the human finish the unlock in an interactive shell.
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		for _, warning := range result.Warnings {
-			ui.Warning(warning)
-		}
 		return nil
 	}
 
@@ -192,9 +193,6 @@ func performOAuth(provider string) error {
 	// `login` again (which would just show the method picker).
 	password, ok := promptSocialVaultPassword(!result.HasKeys)
 	if !ok {
-		for _, warning := range result.Warnings {
-			ui.Warning(warning)
-		}
 		// Tokens are already stored at this point. Leaving them without a
 		// vault key or local password hash produces a session that every
 		// re-auth gated command refuses. Clear it and say so; the user can

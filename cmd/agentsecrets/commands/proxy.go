@@ -105,8 +105,6 @@ func init() {
 	proxyCmd.AddCommand(proxyRotateSessionCmd)
 }
 
-// Uptime format helper remains here.
-
 // formatUptime returns a human-readable uptime string from a start time.
 func formatUptime(start time.Time) string {
 	d := time.Since(start)

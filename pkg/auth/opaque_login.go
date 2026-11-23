@@ -167,22 +167,12 @@ func (s *Service) DeriveOpaqueExportKey(email, password string) ([]byte, error) 
 	return exportKey, nil
 }
 
-// EnrollOpaque upgrades an already-authenticated account to OPAQUE. It runs once,
-// after the first v4 password login, and is idempotent on the client: the local
-// OpaqueEnrolled flag prevents re-enrollment (which would rotate the record).
-//
-// Flow:
-//  1. RegisterStart(password) -> reg_request
-//  2. POST /auth/opaque/register/start/ {reg_request, credential_id} -> reg_response
-//  3. RegisterFinish(client, reg_response, credential_id) -> record
-//  4. POST /auth/opaque/register/finish/ (JWT) {reg_record, credential_id}
-//     -> server stores the record and disables the password factor.
-//
 // EnrollOpaque upgrades an already-authenticated account to OPAQUE and returns
 // the OPAQUE export key derived during registration. The export key is the
 // second vault share's KEK, so this is also where the account vault is upgraded
-// to the v2 split-share scheme (enforce v2). The upgrade is best-effort: a
-// failure leaves the v1 vault working and the next OPAQUE login migrates it.
+// to the v2 split-share scheme. A failed migration rolls the local enrollment
+// flag back and fails the command rather than leaving a v1 vault behind a flag
+// that says migration already happened.
 func (s *Service) EnrollOpaque(email, password string) ([]byte, error) {
 	credID := opaqueCredentialID(email)
 

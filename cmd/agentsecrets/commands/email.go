@@ -100,15 +100,7 @@ func runEmailUpdate(_ *cobra.Command, _ []string) error {
 				Title("Verification code").
 				Description("Enter the code sent to " + newEmail).
 				Value(&codeStr).
-				Validate(func(s string) error {
-					if s == "" {
-						return fmt.Errorf("code is required")
-					}
-					if _, err := strconv.Atoi(s); err != nil {
-						return fmt.Errorf("code must be numeric")
-					}
-					return nil
-				}),
+				Validate(numericCode),
 		),
 	)
 	if err := otpForm.Run(); err != nil {
