@@ -334,7 +334,6 @@ var agentListCmd = &cobra.Command{
 			return err
 		}
 
-		// Load projects to resolve IDs to Names in display
 		projectNames := make(map[string]string)
 		projService := app.Projects()
 		projectsList, err := projService.List()
@@ -356,7 +355,6 @@ var agentListCmd = &cobra.Command{
 				return fmt.Errorf("failed to list agents: %w", err)
 			}
 		} else {
-			// Fetch all agents (workspace and project-scoped) in a single fast call
 			list, err = app.Agents().ListAll(workspaceID)
 			if err != nil {
 				// Fallback to sequential listing if backend does not support include_projects
@@ -381,7 +379,6 @@ var agentListCmd = &cobra.Command{
 			return nil
 		}
 
-		// Header
 		fmt.Printf("%-20s %-15s %-8s %-25s %s\n", "AGENT", "SCOPE", "TOKENS", "LAST USED", "REGISTERED")
 		for _, a := range list {
 			scope := "workspace"
@@ -720,7 +717,6 @@ var agentTokenRevokeCmd = &cobra.Command{
 			return nil
 		}
 
-		// Revoke single token
 		tokenID := args[0]
 		if agentName == "" {
 			return fmt.Errorf("please provide the --agent <name> for the token")
@@ -791,7 +787,6 @@ var agentDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	// Root subcommands
 	agentCmd.AddCommand(agentPolicyCmd)
 	agentPolicyCmd.AddCommand(agentPolicyGetCmd)
 	agentPolicyCmd.AddCommand(agentPolicySetCmd)
@@ -807,7 +802,6 @@ func init() {
 	agentCmd.AddCommand(agentTokenCmd)
 	agentCmd.AddCommand(agentDeleteCmd)
 
-	// Token subcommands
 	agentTokenCmd.AddCommand(agentTokenIssueCmd)
 	agentTokenCmd.AddCommand(agentTokenListCmd)
 	agentTokenCmd.AddCommand(agentTokenRevokeCmd)
@@ -815,7 +809,6 @@ func init() {
 	agentTokenCmd.AddCommand(agentTokenRotationCmd)
 	agentTokenRotationCmd.AddCommand(agentTokenRotationSetCmd)
 
-	// Flags for register
 	agentRegisterCmd.Flags().StringP("project", "p", "", "scope to a specific project")
 	agentRegisterCmd.Flags().StringP("label", "l", "", "human label for the first token")
 	agentRegisterCmd.Flags().StringP("expires", "e", "", "token expiry (e.g. 30d, 90d)")
@@ -824,7 +817,6 @@ func init() {
 	agentRegisterCmd.Flags().Bool("env-read", false, "grant headless environment delivery scope (can_env_read) at creation")
 	agentRegisterCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve) at creation")
 
-	// Flags for create (the v4 command)
 	agentCreateCmd.Flags().String("scope", "project", "binding scope: 'project' (default) or 'workspace'")
 	agentCreateCmd.Flags().StringP("project", "p", "", "project to bind the agent to (required when --scope project)")
 	agentCreateCmd.Flags().StringP("label", "l", "", "human label for the first token")
@@ -834,35 +826,27 @@ func init() {
 	agentCreateCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
 	agentCreateCmd.Flags().BoolVar(&agentCreateStoreSecret, "store-secret", true, "store the token as project secret AGENTSECRETS_TOKEN so workloads pick it up automatically")
 
-	// Flags for list
 	agentListCmd.Flags().StringP("project", "p", "", "filter to a specific project")
 
-	// Flags for token issue
 	agentTokenIssueCmd.Flags().StringP("label", "l", "", "label for this token")
 	agentTokenIssueCmd.Flags().StringP("expires", "e", "", "token expiry (e.g. 30d, 90d)")
 	agentTokenIssueCmd.Flags().String("env", "", "environment for the token (development, staging, production, or a custom name)")
 	agentTokenIssueCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
 
-	// Flags for token list
-
-	// Flags for token revoke
 	agentTokenRevokeCmd.Flags().StringP("agent", "a", "", "used with --all or specific token to identify the agent")
 	agentTokenRevokeCmd.Flags().Bool("all", false, "revoke all active tokens for the agent")
 
-	// Flags for token rotate
 	agentTokenRotateCmd.Flags().StringP("agent", "a", "", "identify the agent owning the token")
 	agentTokenRotateCmd.Flags().Int("overlap-hours", 24, "routine-rotation grace window in hours")
 	agentTokenRotateCmd.Flags().Bool("compromise", false, "zero overlap: revoke the old token immediately and poison the family")
 	agentTokenRotateCmd.Flags().Bool("confirm", false, "skip the confirmation prompt")
 
-	// Flags for token rotation set
 	agentTokenRotationSetCmd.Flags().StringP("agent", "a", "", "identify the agent owning the token")
 	agentTokenRotationSetCmd.Flags().Int("period-days", 0, "rotation cadence in days (1-365)")
 	agentTokenRotationSetCmd.Flags().Int("overlap-hours", 0, "routine-rotation grace window in hours")
 	agentTokenRotationSetCmd.Flags().Bool("disable", false, "disarm the rotation cadence")
 	agentTokenRevokeCmd.Flags().Bool("confirm", false, "skip confirmation prompt")
 
-	// Flags for delete
 	agentDeleteCmd.Flags().Bool("confirm", false, "skip confirmation prompt")
 }
 

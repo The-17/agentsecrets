@@ -25,8 +25,6 @@ func NewEnvManager() *EnvManager {
 	}
 
 	env := config.ResolveEnvironment()
-	// Map "development" to ".env" for backward compatibility if desired
-	// We use .env for development as the primary default, but support others.
 	filename := ".env"
 	if env != "development" {
 		filename = fmt.Sprintf(".env.%s", env)
@@ -38,7 +36,6 @@ func NewEnvManager() *EnvManager {
 	}
 }
 
-// Regex to parse a .env line: optional whitespace, KEY, optional whitespace, =, optional whitespace, VALUE, optional inline comment
 var envLineRegex = regexp.MustCompile(`^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$`)
 
 // Read returns all secrets from the .env file as a map.
@@ -66,7 +63,6 @@ func (m *EnvManager) Read() (map[string]string, error) {
 			key := match[1]
 			value := match[2]
 
-			// Handle inline comments and quoting
 			value = m.parseValue(value)
 			secrets[key] = value
 		}
@@ -82,7 +78,6 @@ func (m *EnvManager) parseValue(val string) string {
 		return ""
 	}
 
-	// If starting with a quote, find the closing quote
 	if val[0] == '"' || val[0] == '\'' {
 		quote := val[0]
 		for i := 1; i < len(val); i++ {
@@ -92,7 +87,6 @@ func (m *EnvManager) parseValue(val string) string {
 		}
 	}
 
-	// If not quoted, the first # starts a comment
 	if idx := strings.Index(val, "#"); idx != -1 {
 		return strings.TrimSpace(val[:idx])
 	}
@@ -166,7 +160,6 @@ func (m *EnvManager) updateFile(path string, newSecrets map[string]string, keysO
 	var lines []string
 	existingKeys := make(map[string]bool)
 
-	// Read existing file if it exists
 	if _, err := os.Stat(path); err == nil {
 		file, err := os.Open(path)
 		if err != nil {
@@ -178,12 +171,10 @@ func (m *EnvManager) updateFile(path string, newSecrets map[string]string, keysO
 		for scanner.Scan() {
 			line := scanner.Text()
 
-			// If it's a KEY=VALUE line, check if we need to update it
 			match := envLineRegex.FindStringSubmatch(line)
 			if len(match) > 2 {
 				key := match[1]
 				if val, ok := newSecrets[key]; ok {
-					// Preserve comment if exists
 					comment := ""
 					if idx := strings.Index(match[2], "#"); idx != -1 {
 						comment = " " + strings.TrimSpace(match[2][idx:])
@@ -203,7 +194,6 @@ func (m *EnvManager) updateFile(path string, newSecrets map[string]string, keysO
 		}
 	}
 
-	// Append any new secrets that weren't in the file
 	for key, val := range newSecrets {
 		if !existingKeys[key] {
 			formatted := ""
@@ -251,8 +241,6 @@ func (m *EnvManager) removeFromFile(path string, keyToDelete string) error {
 
 	return writeLines(path, lines)
 }
-
-// --- Helpers ---
 
 func formatValue(val string) string {
 	if strings.ContainsAny(val, " #") {

@@ -73,7 +73,6 @@ func (s *Service) BatchSet(kv map[string]string, environment string) error {
 
 	apiSecrets := make(map[string]string, len(kv))
 	for k, v := range kv {
-		// 1. Encrypt for cloud
 		encryptedValue, err := crypto.EncryptSecret(v, workspaceKey)
 		if err != nil {
 			return fmt.Errorf("batch set: encryption failed for %s: %w", k, err)
@@ -90,7 +89,6 @@ func (s *Service) BatchSet(kv map[string]string, environment string) error {
 		return err
 	}
 
-	// 3. Sync to cloud (Single bulk call with dictionary)
 	data := map[string]interface{}{
 		"project_id":  project.ProjectID,
 		"environment": env,
@@ -101,15 +99,13 @@ func (s *Service) BatchSet(kv map[string]string, environment string) error {
 		return fmt.Errorf("batch set: API call failed: %w", err)
 	}
 
-	// 4. Write to .env
 	if err := s.Env.Write(kv); err != nil {
 		return fmt.Errorf("batch set: failed to update .env: %w", err)
 	}
 
-	// 5. Update local cache (reuses already encrypted values, eliminating double encryption)
+	// Update local cache (reuses already encrypted values, eliminating double encryption)
 	s.updateCacheAfterSetWithEncrypted(project.ProjectID, env, apiSecrets)
 
-	// 6. Update .env.example
 	_ = s.UpdateEnvExampleFromLocal()
 
 	return nil
@@ -124,12 +120,10 @@ func (s *Service) Get(key string) (string, error) {
 
 	env := config.ResolveEnvironment()
 
-	// Try keychain first (fast paths)
 	if val, err := keyring.GetSecret(project.ProjectID, env, key); err == nil {
 		return val, nil
 	}
 
-	// Fallback to API
 	valWrapper, err := api.CallJSON[struct {
 		Value string `json:"value"`
 	}](s.API, "secrets.get", "GET", nil, map[string]string{
@@ -301,7 +295,6 @@ func (s *Service) Pull(targetKeys []string) error {
 		}
 		secretsMap[s.Key] = plaintext
 
-		// Prepare policy for batch write
 		if s.Policy != nil && (len(s.Policy.Domains) > 0 || len(s.Policy.Methods) > 0) {
 			policyBytes, err := json.Marshal(s.Policy)
 			if err == nil {
@@ -312,7 +305,6 @@ func (s *Service) Pull(targetKeys []string) error {
 		}
 	}
 
-	// Batch write secrets + policies in a single round-trip
 	keychainFailures := 0
 	if len(secretsMap) > 0 {
 		if _, err := keyring.SetSecretsBatch(project.ProjectID, env, secretsMap, policies); err != nil {
@@ -330,18 +322,15 @@ func (s *Service) Pull(targetKeys []string) error {
 		return fmt.Errorf("pull: failed to update local files: %w", err)
 	}
 
-	// Update project last_pull timestamp
 	project.LastPull = time.Now().Format(time.RFC3339)
 	if err := config.SaveProjectConfig(project); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: pull succeeded but failed to update last_pull timestamp: %v\n", err)
 	}
 
-	// Pull agent policies/capabilities and cache them locally in keyring
 	if project.WorkspaceID != "" {
 		agentSvc := agents.NewService(s.API)
 		agentsList, err := agentSvc.ListAll(project.WorkspaceID)
 		if err == nil && len(agentsList) > 0 {
-			// Fetch capabilities concurrently
 			type capResult struct {
 				name string
 				caps []byte
@@ -360,7 +349,6 @@ func (s *Service) Pull(targetKeys []string) error {
 					ch <- capResult{name: agent.Name, caps: nil}
 				}(a)
 			}
-			// Collect results and write to keyring
 			for range agentsList {
 				r := <-ch
 				if r.caps != nil {
@@ -423,7 +411,6 @@ func (s *Service) Push() error {
 		return fmt.Errorf("push secrets: %d secret(s) could not be written to the OS keychain; local resolution would be incomplete", keychainFailures)
 	}
 
-	// 2. Sync to cloud (Bulk dictionary format)
 	data := map[string]interface{}{
 		"project_id":  project.ProjectID,
 		"environment": env,
@@ -434,7 +421,6 @@ func (s *Service) Push() error {
 		return fmt.Errorf("push secrets: API call failed: %w", err)
 	}
 
-	// Update project last_push timestamp
 	project.LastPush = time.Now().Format(time.RFC3339)
 	if err := config.SaveProjectConfig(project); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: push succeeded but failed to update last_push timestamp: %v\n", err)
@@ -442,7 +428,6 @@ func (s *Service) Push() error {
 
 	_ = s.UpdateEnvExampleFromLocal()
 
-	// Refresh cloud secrets cache
 	_, _ = s.ListForEnv(env)
 
 	return nil
@@ -455,7 +440,6 @@ func (s *Service) Delete(key string) error {
 		return fmt.Errorf("delete secret: no project configured in current directory")
 	}
 
-	// 1. Delete from API
 	env := config.ResolveEnvironment()
 	if err := s.API.CallNoContent("secrets.delete", "DELETE", nil, map[string]string{
 		"project_id":  project.ProjectID,
@@ -465,7 +449,6 @@ func (s *Service) Delete(key string) error {
 		return fmt.Errorf("delete secret: API call failed: %w", err)
 	}
 
-	// 2. Delete from .env
 	if err := s.Env.Delete(key); err != nil {
 		return fmt.Errorf("delete secret: failed to update .env: %w", err)
 	}
@@ -476,7 +459,6 @@ func (s *Service) Delete(key string) error {
 		return fmt.Errorf("delete secret: removed from cloud and .env but the keychain still holds %s: %w", key, err)
 	}
 
-	// Update local cache
 	s.updateCacheAfterDelete(project.ProjectID, env, key)
 
 	_ = s.UpdateEnvExampleFromLocal()
@@ -511,9 +493,7 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 		return nil, err
 	}
 
-	// 1. Resolve Source
 	if fromEnv != "" {
-		// Source is Cloud(fromEnv)
 		var list []SecretMetadata
 		var cacheErr error
 		if useCache {
@@ -534,7 +514,6 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 			}
 		}
 	} else {
-		// Source is Local
 		if config.GetStorageMode() == 1 {
 			projectID, _ := config.ResolveProjectContext()
 			if projectID == "" {
@@ -550,7 +529,6 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 		}
 	}
 
-	// 2. Resolve Target
 	targetEnv := toEnv
 	if targetEnv == "" {
 		targetEnv = config.ResolveEnvironment()
@@ -603,7 +581,6 @@ func (s *Service) diffInternal(fromEnv, toEnv string, useCache bool) (*DiffResul
 		return nil, fmt.Errorf("found %d secret(s) in cloud, but decryption failed. The local project workspace key does not match the cloud encryption key", len(list))
 	}
 
-	// 3. Compare Source vs Target
 	res := &DiffResult{
 		Changed: make(map[string][2]string),
 	}

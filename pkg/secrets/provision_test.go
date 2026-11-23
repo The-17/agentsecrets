@@ -125,7 +125,6 @@ func TestExtractJSONPath(t *testing.T) {
 		{"non-string leaf", "account.id.len", "", true},
 	}
 
-	// top-level object key
 	if got, err := ExtractJSONPath(body, "account.id"); err != nil || got != "acct_1" {
 		t.Fatalf("account.id = %q, %v (want acct_1, nil)", got, err)
 	}

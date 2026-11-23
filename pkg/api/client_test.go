@@ -12,9 +12,7 @@ import (
 )
 
 func TestAPIClient(t *testing.T) {
-	// 1. Mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify headers
 		if !strings.Contains(r.URL.Path, "login") && r.Header.Get("Authorization") != "Bearer test-token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{"message": "invalid token"})
@@ -26,7 +24,6 @@ func TestAPIClient(t *testing.T) {
 			return
 		}
 
-		// Handle specific endpoints
 		switch r.URL.Path {
 		case "/workspaces/":
 			if r.Method == "POST" {
@@ -48,14 +45,12 @@ func TestAPIClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 2. Client setup with lazy token provider
 	tokenProvider := func() string {
 		return "test-token"
 	}
 	client := NewClient(tokenProvider)
-	client.BaseURL = server.URL // Override for test
+	client.BaseURL = server.URL
 
-	// 3. Test simple POST (login is a public endpoint)
 	resp, err := client.Call("auth.login", "POST", map[string]string{"email": "t@t.com"}, nil, nil)
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)

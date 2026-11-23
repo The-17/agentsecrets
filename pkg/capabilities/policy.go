@@ -50,7 +50,6 @@ func EvaluateSecret(c *SecretPolicy, domain, method string) Action {
 		return Allow // no policy = unrestricted
 	}
 
-	// 1. Check domain-specific Rules if present
 	var matchedRule *PolicyRule
 	if len(c.Rules) > 0 {
 		for i := range c.Rules {
@@ -62,7 +61,6 @@ func EvaluateSecret(c *SecretPolicy, domain, method string) Action {
 	}
 
 	if matchedRule != nil {
-		// Domain matched! Now check method inside this rule
 		if len(matchedRule.Methods) > 0 {
 			action, exists := matchedRule.Methods[strings.ToUpper(method)]
 			if exists {
@@ -79,15 +77,12 @@ func EvaluateSecret(c *SecretPolicy, domain, method string) Action {
 		return Allow // default to Allow for unlisted methods
 	}
 
-	// 2. No domain-specific rule matched. Fall back to global constraints.
-
 	// If there are domain-specific rules, but no global constraints are configured:
 	// any unlisted domain is denied.
 	if len(c.Rules) > 0 && len(c.Domains) == 0 && len(c.Methods) == 0 {
 		return Deny
 	}
 
-	// Global Domain check
 	if len(c.Domains) > 0 {
 		matched := false
 		for _, d := range c.Domains {
@@ -101,7 +96,6 @@ func EvaluateSecret(c *SecretPolicy, domain, method string) Action {
 		}
 	}
 
-	// Global Method check
 	if len(c.Methods) > 0 {
 		action, exists := c.Methods[strings.ToUpper(method)]
 		if exists {

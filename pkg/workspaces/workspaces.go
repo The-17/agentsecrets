@@ -70,7 +70,6 @@ func (s *Service) Create(name string) error {
 		return fmt.Errorf("create workspace: failed to parse response: %w", err)
 	}
 
-	// Load config
 	cfg, _ := config.LoadGlobalConfig()
 	if cfg == nil {
 		cfg = &config.GlobalConfig{}
@@ -139,7 +138,6 @@ func (s *Service) InviteBatch(workspaceID string, emails []string, role string) 
 		return nil, err
 	}
 
-	// Fetch all public keys concurrently
 	type keyResult struct {
 		email  string
 		pubKey []byte
@@ -189,7 +187,6 @@ func (s *Service) InviteBatch(workspaceID string, emails []string, role string) 
 		}(email)
 	}
 
-	// Collect results and encrypt workspace key for each
 	type inviteEntry struct {
 		Email                 string `json:"email"`
 		Role                  string `json:"role"`
@@ -230,12 +227,10 @@ func (s *Service) InviteBatch(workspaceID string, emails []string, role string) 
 		})
 	}
 
-	// If no valid invites, return early with errors
 	if len(invites) == 0 {
 		return results, nil
 	}
 
-	// Send bulk invite
 	resp, err := s.API.Call("workspaces.invite", "POST", map[string]any{
 		"invites": invites,
 	}, map[string]string{"workspace_id": workspaceID}, nil)
@@ -248,14 +243,12 @@ func (s *Service) InviteBatch(workspaceID string, emails []string, role string) 
 		return nil, s.API.DecodeError(resp)
 	}
 
-	// Parse per-email results from API
 	var apiRes struct {
 		Data []InviteResult `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&apiRes); err == nil && len(apiRes.Data) > 0 {
 		results = append(results, apiRes.Data...)
 	} else {
-		// If the API doesn't return per-email results, mark all as success
 		for _, inv := range invites {
 			results = append(results, InviteResult{Email: inv.Email})
 		}
@@ -295,8 +288,6 @@ func (s *Service) UpdateRole(workspaceID, userID, action string) error {
 		"user_id":      userID,
 	}, nil)
 }
-
-// --- Workspace Allowlist ---
 
 // AddAllowlist adds one or more domains to the workspace allowlist.
 func (s *Service) AddAllowlist(workspaceID string, domains ...string) error {
@@ -361,7 +352,6 @@ func (s *Service) Delete(workspaceID string) error {
 		return err
 	}
 
-	// Remove it from the local global config if it's cached there
 	cfg, err := config.LoadGlobalConfig()
 	if err == nil && cfg != nil {
 		delete(cfg.Workspaces, workspaceID)

@@ -11,7 +11,6 @@ import (
 )
 
 func TestWorkspaceCreate(t *testing.T) {
-	// Setup: redirect config to temp dir
 	tmpDir := t.TempDir()
 	oldHome := config.HomeDirHook
 	config.HomeDirHook = func() (string, error) { return tmpDir, nil }
@@ -21,10 +20,8 @@ func TestWorkspaceCreate(t *testing.T) {
 		t.Fatalf("InitGlobalConfig failed: %v", err)
 	}
 
-	// Set email in config (required for Create)
 	config.SetEmail("test@example.com")
 
-	// 1. Mock API
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" && r.URL.Path == "/workspaces/" {
 			w.WriteHeader(http.StatusCreated)
@@ -41,16 +38,10 @@ func TestWorkspaceCreate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 2. Service setup
 	client := api.NewClient(func() string { return "" })
 	client.BaseURL = server.URL
 	svc := NewService(client)
 
-	// Note: Create expects a public key to exist in the global context/keyring?
-	// Wait, svc.Create calls keyring.GetPublicKey(email).
-	// This will fail in test if we don't mock it or skip the check.
-
-	// Let's see if we can at least reach the API call or if it fails early.
 	err := svc.Create("New Team")
 	if err != nil {
 		t.Logf("Workspace Create error (likely public key missing): %v", err)
@@ -58,7 +49,6 @@ func TestWorkspaceCreate(t *testing.T) {
 }
 
 func TestWorkspaceMembers(t *testing.T) {
-	// Setup
 	tmpDir := t.TempDir()
 	config.HomeDirHook = func() (string, error) { return tmpDir, nil }
 
@@ -87,7 +77,6 @@ func TestWorkspaceMembers(t *testing.T) {
 }
 
 func TestWorkspaceDelete(t *testing.T) {
-	// Setup
 	tmpDir := t.TempDir()
 	oldHome := config.HomeDirHook
 	config.HomeDirHook = func() (string, error) { return tmpDir, nil }
@@ -130,4 +119,3 @@ func TestWorkspaceDelete(t *testing.T) {
 		t.Error("SelectedWorkspaceID was not cleared")
 	}
 }
-

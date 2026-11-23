@@ -169,7 +169,6 @@ func TestRewrapPasswordKeepsVaultRoot(t *testing.T) {
 func TestOldClientPasswordChangeHealsThroughBridge(t *testing.T) {
 	v, material, privateKey, userID := newTestVault(t)
 
-	// An old client re-encrypts the same private key with a new password.
 	encrypted, salt, err := crypto.EncryptPrivateKey(privateKey, "old-client-new-password")
 	if err != nil {
 		t.Fatalf("legacy encrypt: %v", err)

@@ -20,7 +20,6 @@ import (
 // CLIVersion is the version of the CLI tool, dynamically set on start.
 var CLIVersion = "dev"
 
-// Brand colors
 var (
 	PrimaryColor = lipgloss.Color("#00C6A5") // Brand Teal Accent
 	Secondary    = lipgloss.Color("#5EEAD4") // Teal 300 — readable highlight
@@ -33,7 +32,6 @@ var (
 	FaintBorder  = lipgloss.Color("#1F2937") // Gray 800
 )
 
-// Reusable styles
 var (
 	BrandStyle = lipgloss.NewStyle().
 			Foreground(PrimaryColor).
@@ -61,13 +59,11 @@ var (
 			Foreground(White).
 			Bold(true)
 
-	// Banner for init/welcome screens
 	BannerStyle = lipgloss.NewStyle().
 			Foreground(PrimaryColor).
 			Bold(true).
 			MarginBottom(1)
 
-	// Status key-value pair styling
 	KeyStyle = lipgloss.NewStyle().
 			Foreground(DimText).
 			Width(30)
@@ -75,7 +71,6 @@ var (
 	ValStyle = lipgloss.NewStyle().
 			Foreground(White)
 
-	// Divider
 	DividerStyle = lipgloss.NewStyle().
 			Foreground(Dim)
 )

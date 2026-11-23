@@ -13,7 +13,7 @@ import (
 // AGENTSECRETS_POP_SEED (with no OS keychain) regenerates the exact proof key
 // bound to its token. Without this, a deployment host with only the token +
 // seed could not satisfy the resolver, and cloud mode would break for every
-// new agent once --no-pop is gone.
+// new agent.
 func TestSeedEnvReproducesProofKey(t *testing.T) {
 	signer, err := NewProofSigner()
 	if err != nil {
