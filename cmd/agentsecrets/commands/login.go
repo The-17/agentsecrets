@@ -195,7 +195,16 @@ func performOAuth(provider string) error {
 		for _, warning := range result.Warnings {
 			ui.Warning(warning)
 		}
-		return nil
+		// Tokens are already stored at this point. Leaving them without a
+		// vault key or local password hash produces a session that every
+		// re-auth gated command refuses. Clear it and say so; the user can
+		// redo the social step and finish setup in one run.
+		if err := config.ClearSession(); err != nil {
+			return fmt.Errorf("social sign-in cancelled, but the partial session could not be cleared: %w", err)
+		}
+		return errors.New(errors.ErrUsage,
+			"social sign-in cancelled before the vault was unlocked",
+			fmt.Errorf("run 'agentsecrets login' again in a terminal to finish setup"))
 	}
 
 	var loginResult *auth.LoginResult

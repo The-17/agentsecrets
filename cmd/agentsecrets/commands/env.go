@@ -190,6 +190,7 @@ parseArgs:
 		return err
 	}
 	useCloud := selection.Mode == gateway.ModeCloud
+	guardPath := envguard.Locate()
 
 	var secrets map[string]string
 	var project *config.ProjectConfig
@@ -286,7 +287,7 @@ parseArgs:
 		if useCloud {
 			tokenSource = gateway.DescribeTokenSource()
 		}
-		for _, line := range envCheckLines(selection, requestedEnv, projectName, tokenSource, keys, envguard.Locate() != "", guardInjection(secrets, missing, requestedEnv, allowEmpty)) {
+		for _, line := range envCheckLines(selection, requestedEnv, projectName, tokenSource, keys, guardPath != "", guardInjection(secrets, missing, requestedEnv, allowEmpty)) {
 			fmt.Println(line)
 		}
 		return nil
@@ -371,7 +372,7 @@ parseArgs:
 	// when no guard library is installed at all, say that too — silent
 	// absence of a protection the help text describes would be a lie by
 	// omission.
-	if envguard.Locate() != "" {
+	if guardPath != "" {
 		if msg := guardAttachWarning(warnPath); msg != "" {
 			ui.Warning(msg)
 		}

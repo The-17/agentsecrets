@@ -138,6 +138,10 @@ func StartTransientProxy() (int, func(), error) {
 		listener.Close()
 		return 0, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
+	// The keyring slot is shared with a long-running daemon. Remember what was
+	// there and put it back on close; without this, a transient call changed the
+	// process-wide session credential and made every later call 401.
+	previousToken, _ := ReadSessionToken()
 	if err := WriteSessionToken(sessionToken); err != nil {
 		listener.Close()
 		return 0, nil, fmt.Errorf("failed to write session token: %w", err)
@@ -164,6 +168,9 @@ func StartTransientProxy() (int, func(), error) {
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
 		_ = listener.Close()
+		if err := WriteSessionToken(previousToken); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: transient proxy could not restore the previous session token: %v\n", err)
+		}
 	}
 
 	return port, closeFunc, nil

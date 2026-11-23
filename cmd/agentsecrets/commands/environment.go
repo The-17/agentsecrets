@@ -137,7 +137,7 @@ func setActiveEnvironment(environment string) error {
 		}
 	}
 	if err := config.SetSelectedEnvironment(environment); err != nil {
-		return fmt.Errorf("failed to update global config: %w", err)
+		return fmt.Errorf("project environment changed to %s but the global selection did not: %w", environment, err)
 	}
 	return nil
 }
