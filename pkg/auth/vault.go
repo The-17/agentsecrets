@@ -267,21 +267,17 @@ func (s *Service) ensureVault(state *vaultLoginState) error {
 		// through the bridge and re-wrap it under this password.
 		bridgeVK, berr := existing.UnlockWithBridge(state.UserID, state.PrivateKey)
 		if berr != nil {
-			state.Result.Warnings = append(state.Result.Warnings, "the vault on the server does not match this account key; login continued on the legacy key")
-			return nil
+			return fmt.Errorf("vault repair: the server vault does not match this account key: %w", berr)
 		}
 		if err := existing.RewrapPassword(state.UserID, bridgeVK, state.Password); err != nil {
-			state.Result.Warnings = append(state.Result.Warnings, fmt.Sprintf("vault password re-wrap failed: %v", err))
-			return nil
+			return fmt.Errorf("vault repair: password re-wrap failed: %w", err)
 		}
 		existing.BumpVersion()
 		if err := existing.Sign(state.UserID, bridgeVK); err != nil {
-			state.Result.Warnings = append(state.Result.Warnings, fmt.Sprintf("vault repair sign failed: %v", err))
-			return nil
+			return fmt.Errorf("vault repair: signing failed: %w", err)
 		}
 		if err := s.putVault(existing, version); err != nil {
-			state.Result.Warnings = append(state.Result.Warnings, fmt.Sprintf("vault repair upload failed: %v", err))
-			return nil
+			return fmt.Errorf("vault repair: upload failed: %w", err)
 		}
 		state.Result.VaultVersion = existing.VaultVersion
 		state.Result.RecoveryConfirmed = existing.RecoveryConfirmed
