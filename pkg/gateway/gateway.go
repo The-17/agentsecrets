@@ -93,6 +93,28 @@ type Selection struct {
 	Source string
 }
 
+func parseModeValue(value, source string) (Mode, error) {
+	switch Mode(strings.ToLower(strings.TrimSpace(value))) {
+	case ModeCloud:
+		return ModeCloud, nil
+	case ModeLocal:
+		return ModeLocal, nil
+	default:
+		return "", fmt.Errorf("%s must be %q or %q, got %q", source, ModeLocal, ModeCloud, value)
+	}
+}
+
+func parseUseCloudValue(value string) (Mode, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1":
+		return ModeCloud, nil
+	case "false", "0":
+		return ModeLocal, nil
+	default:
+		return "", fmt.Errorf("%s must be true, 1, false or 0, got %q", envUseCloud, value)
+	}
+}
+
 // Select resolves the effective mode.
 //
 // Precedence, highest first:
@@ -123,32 +145,45 @@ func Select(flag string) (Selection, error) {
 		return Selection{}, fmt.Errorf("mode must be %q or %q, got %q", ModeLocal, ModeCloud, flag)
 	}
 
-	if v := strings.ToLower(strings.TrimSpace(os.Getenv(envMode))); v != "" {
-		switch Mode(v) {
-		case ModeCloud:
-			return Selection{Mode: ModeCloud, Source: envMode}, nil
-		case ModeLocal:
-			return Selection{Mode: ModeLocal, Source: envMode}, nil
-		default:
-			return Selection{}, fmt.Errorf("%s must be %q or %q, got %q", envMode, ModeLocal, ModeCloud, v)
+	if modeVar := strings.ToLower(strings.TrimSpace(os.Getenv(envMode))); modeVar != "" {
+		mode, err := parseModeValue(modeVar, envMode)
+		if err != nil {
+			return Selection{}, err
 		}
+		if useCloudVar := strings.TrimSpace(os.Getenv(envUseCloud)); useCloudVar != "" {
+			cloudMode, err := parseUseCloudValue(useCloudVar)
+			if err != nil {
+				return Selection{}, err
+			}
+			if mode != cloudMode {
+				return Selection{}, fmt.Errorf("%s=%q conflicts with %s=%q; set only one", envMode, modeVar, envUseCloud, useCloudVar)
+			}
+		}
+		return Selection{Mode: mode, Source: envMode}, nil
 	}
 
-	if v := strings.ToLower(strings.TrimSpace(os.Getenv(envUseCloud))); v != "" {
-		switch v {
-		case "true", "1":
-			return Selection{Mode: ModeCloud, Source: envUseCloud}, nil
-		case "false", "0":
-			return Selection{Mode: ModeLocal, Source: envUseCloud}, nil
+	if v := strings.TrimSpace(os.Getenv(envUseCloud)); v != "" {
+		mode, err := parseUseCloudValue(v)
+		if err != nil {
+			return Selection{}, err
 		}
+		return Selection{Mode: mode, Source: envUseCloud}, nil
 	}
 
 	if stored := config.GetProjectMode(); stored != "" {
-		return Selection{Mode: Mode(stored), Source: "project config"}, nil
+		mode, err := parseModeValue(stored, "project config")
+		if err != nil {
+			return Selection{}, err
+		}
+		return Selection{Mode: mode, Source: "project config"}, nil
 	}
 
 	if stored := config.GetDefaultMode(); stored != "" {
-		return Selection{Mode: Mode(stored), Source: "config"}, nil
+		mode, err := parseModeValue(stored, "config")
+		if err != nil {
+			return Selection{}, err
+		}
+		return Selection{Mode: mode, Source: "config"}, nil
 	}
 
 	// Auto-detecting cloud from the environment stays on the canonical

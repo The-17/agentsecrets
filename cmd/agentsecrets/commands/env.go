@@ -113,6 +113,13 @@ func runEnv(cmd *cobra.Command, args []string) error {
 	// flagMode stays empty unless the user passes --cloud/--local; the router
 	// then applies env and saved-config precedence.
 	flagMode := ""
+	setFlagMode := func(mode string) error {
+		if flagMode != "" && flagMode != mode {
+			return fmt.Errorf("--cloud and --local are mutually exclusive")
+		}
+		flagMode = mode
+		return nil
+	}
 	sandbox := false
 	allowEmpty := false
 	checkOnly := false
@@ -124,10 +131,14 @@ parseArgs:
 		case args[0] == "--help" || args[0] == "-h":
 			return cmd.Help()
 		case args[0] == "--cloud":
-			flagMode = string(gateway.ModeCloud)
+			if err := setFlagMode(string(gateway.ModeCloud)); err != nil {
+				return err
+			}
 			args = args[1:]
 		case args[0] == "--local":
-			flagMode = string(gateway.ModeLocal)
+			if err := setFlagMode(string(gateway.ModeLocal)); err != nil {
+				return err
+			}
 			args = args[1:]
 		case args[0] == "--sandbox":
 			sandbox = true

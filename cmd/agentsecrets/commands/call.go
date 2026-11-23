@@ -263,8 +263,20 @@ func resolveCallMode(cmd *cobra.Command) (gateway.Selection, error) {
 	flagMode := callMode
 	cloudFlag, _ := cmd.Flags().GetBool("cloud")
 	localFlag, _ := cmd.Flags().GetBool("local")
-	if cloudFlag && localFlag {
-		return gateway.Selection{}, errors.New(errors.ErrUsage, "--cloud and --local are mutually exclusive", nil)
+	explicit := 0
+	if callMode != "" {
+		explicit++
+	}
+	if cloudFlag {
+		explicit++
+	}
+	if localFlag {
+		explicit++
+	}
+	if explicit > 1 {
+		return gateway.Selection{}, errors.New(errors.ErrUsage,
+			"--mode, --cloud and --local are mutually exclusive",
+			fmt.Errorf("choose one resolution mode for this call"))
 	}
 	if cloudFlag {
 		flagMode = string(gateway.ModeCloud)

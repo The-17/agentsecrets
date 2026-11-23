@@ -5,6 +5,16 @@ import (
 	"testing"
 )
 
+func TestEnvRejectsConflictingModeFlags(t *testing.T) {
+	err := runEnv(NewEnvCmd(), []string{"--cloud", "--local", "--", "true"})
+	if err == nil {
+		t.Fatal("--cloud and --local must not resolve by last wins")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error should name the conflict, got %v", err)
+	}
+}
+
 func TestGuardInjection(t *testing.T) {
 	secrets := map[string]string{"A": "1"}
 
