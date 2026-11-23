@@ -60,8 +60,14 @@ func isRegistrationDenial(err error) bool {
 // immediately instead of deadlocking on an in-flight Once.
 var (
 	repairMu         sync.Mutex
-	repairAttempted  bool
+	repairAttempts   int
 	repairInProgress bool
+
+	// maxRegistrationRepairs bounds request-time self-healing per process. One
+	// attempt was not enough: a command can hit two distinct denials (for
+	// example a stale binary record and a stale session), and the second was
+	// never repaired. Elevation is cached by the CLI, so two attempts do not
+	// create two password prompts.
 
 	// AutoRepairNotice, when set, presents a request-time repair to the user. It is
 	// handed the repair to run, so the CLI can show why work is happening (and the
@@ -74,6 +80,12 @@ var (
 	// DisableAutoRepair turns off request-time self-healing. Set for machine-facing
 	// paths (`mcp <verb>`, `exec`) where an interactive sudo prompt is never wanted.
 	DisableAutoRepair bool
+
+	// maxRegistrationRepairs bounds request-time self-healing per process. One
+	// attempt was not enough: a command can hit two distinct denials, and the
+	// second was never repaired. Elevation is cached by the CLI, so two attempts
+	// do not create two password prompts.
+	maxRegistrationRepairs = 2
 )
 
 var errRepairUnavailable = fmt.Errorf("automatic repair already attempted")
@@ -86,7 +98,7 @@ func tryRegistrationRepair() error {
 	}
 
 	repairMu.Lock()
-	if repairAttempted || repairInProgress {
+	if repairAttempts >= maxRegistrationRepairs || repairInProgress {
 		repairMu.Unlock()
 		return errRepairUnavailable
 	}
@@ -96,7 +108,7 @@ func tryRegistrationRepair() error {
 	defer func() {
 		repairMu.Lock()
 		repairInProgress = false
-		repairAttempted = true
+		repairAttempts++
 		repairMu.Unlock()
 	}()
 
@@ -110,7 +122,7 @@ func tryRegistrationRepair() error {
 // ResetAutoRepairState clears the once-per-process repair guard. Used by tests.
 func ResetAutoRepairState() {
 	repairMu.Lock()
-	repairAttempted = false
+	repairAttempts = 0
 	repairInProgress = false
 	repairMu.Unlock()
 }

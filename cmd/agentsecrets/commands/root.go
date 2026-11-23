@@ -386,8 +386,8 @@ func classifyInitError(err error) recoveryKind {
 		return recoverDaemon
 	}
 
-	errStr := err.Error()
-	if strings.Contains(errStr, "protocol mismatch") || strings.Contains(errStr, "unexpected response status") {
+	var protocol *keychainauth.DaemonProtocolError
+	if errors.As(err, &protocol) {
 		return recoverProtocol
 	}
 
@@ -395,10 +395,9 @@ func classifyInitError(err error) recoveryKind {
 	if errors.As(err, &denied) && (denied.IsUnregistered() || denied.IsHashMismatch()) {
 		return recoverRegister
 	}
-	if strings.Contains(errStr, "daemon closed connection immediately") ||
-		strings.Contains(errStr, "connection closed by daemon") ||
-		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "connection reset by peer") {
+
+	var dropped *keychainauth.DaemonConnectionError
+	if errors.As(err, &dropped) {
 		return recoverRegister
 	}
 

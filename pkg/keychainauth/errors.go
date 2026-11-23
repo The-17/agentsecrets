@@ -27,6 +27,32 @@ func (e *DaemonDeniedError) IsHashMismatch() bool {
 	return e.Reason == reasonHashMismatch
 }
 
+// DaemonProtocolError means the daemon answered with a status this client does
+// not implement. It is the typed signal for a protocol recovery, replacing a
+// substring match in the CLI recovery ladder.
+type DaemonProtocolError struct {
+	Status string
+	Cause  error
+}
+
+func (e *DaemonProtocolError) Error() string {
+	return fmt.Sprintf("keychainauth: unexpected response status %q", e.Status)
+}
+
+func (e *DaemonProtocolError) Unwrap() error { return e.Cause }
+
+// DaemonConnectionError is a dropped or half-open daemon connection. It is the
+// typed signal for re-registration recovery.
+type DaemonConnectionError struct {
+	Cause error
+}
+
+func (e *DaemonConnectionError) Error() string {
+	return "keychainauth: connection to daemon was lost"
+}
+
+func (e *DaemonConnectionError) Unwrap() error { return e.Cause }
+
 // DaemonNotRunningError is returned when the keychain-auth socket does not exist
 // or the connection is refused.
 type DaemonNotRunningError struct {

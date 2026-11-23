@@ -486,11 +486,11 @@ func sendRequestOnce(req request) (*response, error) {
 	if err := encoder.Encode(req); err != nil {
 		resetConn()
 		if reconnectErr := ensureConn(); reconnectErr != nil {
-			return nil, fmt.Errorf("keychainauth: failed to send request: %w (reconnect failed: %v)", err, reconnectErr)
+			return nil, &DaemonConnectionError{Cause: fmt.Errorf("failed to send request: %w (reconnect failed: %v)", err, reconnectErr)}
 		}
 		if err = encoder.Encode(req); err != nil {
 			resetConn()
-			return nil, fmt.Errorf("keychainauth: failed to send request on retry: %w", err)
+			return nil, &DaemonConnectionError{Cause: fmt.Errorf("failed to send request on retry: %w", err)}
 		}
 	}
 
@@ -500,21 +500,21 @@ func sendRequestOnce(req request) (*response, error) {
 		resetConn()
 		if reconnectErr := ensureConn(); reconnectErr != nil {
 			if scanErr != nil {
-				return nil, fmt.Errorf("keychainauth: connection lost: %w (reconnect failed: %v)", scanErr, reconnectErr)
+				return nil, &DaemonConnectionError{Cause: fmt.Errorf("connection lost: %w (reconnect failed: %v)", scanErr, reconnectErr)}
 			}
-			return nil, fmt.Errorf("keychainauth: connection closed by daemon (reconnect failed: %v)", reconnectErr)
+			return nil, &DaemonConnectionError{Cause: fmt.Errorf("connection closed by daemon (reconnect failed: %v)", reconnectErr)}
 		}
 		if err := encoder.Encode(req); err != nil {
 			resetConn()
-			return nil, fmt.Errorf("keychainauth: failed to resend request on retry: %w", err)
+			return nil, &DaemonConnectionError{Cause: fmt.Errorf("failed to resend request on retry: %w", err)}
 		}
 		if !scanner.Scan() {
 			retryErr := scanner.Err()
 			resetConn()
 			if retryErr != nil {
-				return nil, fmt.Errorf("keychainauth: connection lost on retry: %w", retryErr)
+				return nil, &DaemonConnectionError{Cause: fmt.Errorf("connection lost on retry: %w", retryErr)}
 			}
-			return nil, fmt.Errorf("keychainauth: connection closed by daemon on retry")
+			return nil, &DaemonConnectionError{Cause: fmt.Errorf("connection closed by daemon on retry")}
 		}
 	}
 
@@ -533,7 +533,7 @@ func sendRequestOnce(req request) (*response, error) {
 	case "error":
 		return nil, &DaemonDeniedError{Reason: resp.Reason}
 	default:
-		return nil, fmt.Errorf("keychainauth: unexpected response status %q", resp.Status)
+		return nil, &DaemonProtocolError{Status: resp.Status}
 	}
 }
 
