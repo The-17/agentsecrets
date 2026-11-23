@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -303,17 +304,24 @@ func cacheWorkspaces(privateKey, publicKey []byte, workspaces []loginWorkspace) 
 // Logout clears all stored credentials and invalidates the server session.
 func (s *Service) Logout() error {
 	email := config.GetEmail()
+	var failures []error
 
-	// Best-effort: tell server to invalidate tokens
-	_, _ = s.API.Call("auth.logout", "POST", nil, nil, nil)
-
-	// Clear keyring
-	if email != "" {
-		_ = keyring.DeleteKeypair(email)
+	// Tell the server, then clear local state. Every step runs even when an
+	// earlier one fails: clearing the session is what actually logs the user
+	// out on this machine, and hiding a failed keyring delete used to leave an
+	// orphaned private key behind a success banner.
+	if _, err := s.API.Call("auth.logout", "POST", nil, nil, nil); err != nil {
+		failures = append(failures, fmt.Errorf("server logout: %w", err))
 	}
-
-	// Clear config files
-	return config.ClearSession()
+	if email != "" {
+		if err := keyring.DeleteKeypair(email); err != nil {
+			failures = append(failures, fmt.Errorf("keyring cleanup: %w", err))
+		}
+	}
+	if err := config.ClearSession(); err != nil {
+		failures = append(failures, fmt.Errorf("clear session: %w", err))
+	}
+	return errors.Join(failures...)
 }
 
 // --- Response types for JSON parsing ---

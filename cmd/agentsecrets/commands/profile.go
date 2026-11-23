@@ -145,12 +145,16 @@ var profileUpdateCmd = &cobra.Command{
 		form := huh.NewForm(huh.NewGroup(
 			huh.NewInput().Title("First name").Value(&first).
 				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" { return fmt.Errorf("first name is required") }
+					if strings.TrimSpace(s) == "" {
+						return fmt.Errorf("first name is required")
+					}
 					return nil
 				}),
 			huh.NewInput().Title("Last name").Value(&last).
 				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" { return fmt.Errorf("last name is required") }
+					if strings.TrimSpace(s) == "" {
+						return fmt.Errorf("last name is required")
+					}
 					return nil
 				}),
 		))
@@ -218,14 +222,13 @@ var profileDeactivateCmd = &cobra.Command{
 			ui.Warning("Cancelled. Your account is unchanged.")
 			return nil
 		}
-		if err := ui.Spinner("Deactivating account...", func() error {
-			return app.Auth().DeactivateAccount()
-		}); err != nil {
-			ui.Error(err.Error())
-			return nil
+		if err := app.Auth().DeactivateAccount(); err != nil {
+			return err
 		}
 		ui.Success("Account deactivated. Run 'agentsecrets profile reactivate' with the emailed code to restore login.")
-		_ = config.ClearSession()
+		if err := config.ClearSession(); err != nil {
+			return fmt.Errorf("account deactivated but session could not be cleared: %w", err)
+		}
 		return nil
 	},
 }
@@ -337,14 +340,13 @@ var profileDeleteCmd = &cobra.Command{
 		if err := form.Run(); err != nil {
 			return nil
 		}
-		if err := ui.Spinner("Deleting account...", func() error {
-			return app.Auth().DeleteAccount(strings.TrimSpace(typed))
-		}); err != nil {
-			ui.Error(err.Error())
-			return nil
+		if err := app.Auth().DeleteAccount(strings.TrimSpace(typed)); err != nil {
+			return err
 		}
 		ui.Success("Account deleted.")
-		_ = config.ClearSession()
+		if err := config.ClearSession(); err != nil {
+			return fmt.Errorf("account deleted but session could not be cleared: %w", err)
+		}
 		return nil
 	},
 }

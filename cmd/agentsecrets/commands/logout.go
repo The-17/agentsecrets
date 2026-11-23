@@ -23,7 +23,7 @@ var logoutCmd = &cobra.Command{
 
 	Note: Project bindings (.agentsecrets/project.json) are NOT removed.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !config.IsAuthenticated() {
+		if config.GetAccessToken() == "" && config.GetEmail() == "" {
 			ui.Info("You're not logged in.")
 			return nil
 		}
@@ -39,8 +39,7 @@ var logoutCmd = &cobra.Command{
 		}
 
 		if err := app.Auth().Logout(); err != nil {
-			ui.Error("Logout failed: " + err.Error())
-			return nil
+			return err
 		}
 
 		fmt.Println()

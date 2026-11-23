@@ -62,6 +62,11 @@ func init() {
 func runInit(cmd *cobra.Command, args []string) error {
 	var modeToUse int
 
+	// Capture this before --server writes a config file. Otherwise a fresh
+	// machine with --server skips the entire first-run branch: no server
+	// picker, no storage mode prompt, no default environment.
+	firstRun := !config.GlobalConfigExists()
+
 	if initServerFlag != "" {
 		if err := config.SetGlobalServerURL(initServerFlag); err != nil {
 			return fmt.Errorf("invalid server URL: %w", err)
@@ -69,10 +74,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Phase 1: Global Setup (Self-Contained)
-	if !config.GlobalConfigExists() || !config.IsAuthenticated() {
+	if firstRun || !config.IsAuthenticated() {
 		ui.Info("Setting up AgentSecrets...")
 
-		if !config.GlobalConfigExists() {
+		if firstRun {
 			if err := config.InitGlobalConfig(); err != nil {
 				return fmt.Errorf("failed to initialize global config: %w", err)
 			}

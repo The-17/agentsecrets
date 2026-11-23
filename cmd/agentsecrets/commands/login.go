@@ -24,6 +24,57 @@ var loginGoogleFlag bool
 var loginGithubFlag bool
 var loginEmailFlag string
 
+// loginMethod is the explicit outcome of flag and terminal resolution. Before
+// this existed the RunE chain used hard-coded priority: --recovery silently
+// beat --email and --google, so conflicting flags picked a method instead of
+// reporting a usage error.
+type loginMethod string
+
+const (
+	methodPassword  loginMethod = "password"
+	methodGoogle    loginMethod = "google"
+	methodGithub    loginMethod = "github"
+	methodRecovery  loginMethod = "recovery"
+	methodPicker    loginMethod = "picker"
+	methodEmailWith loginMethod = "email"
+)
+
+func resolveLoginMethod(recovery, google, github bool, email string, interactive bool) (loginMethod, error) {
+	chosen := 0
+	if recovery {
+		chosen++
+	}
+	if google {
+		chosen++
+	}
+	if github {
+		chosen++
+	}
+	if strings.TrimSpace(email) != "" {
+		chosen++
+	}
+	if chosen > 1 {
+		return "", errors.New(errors.ErrUsage,
+			"choose one sign-in method",
+			fmt.Errorf("use one of --email, --google, --github, --recovery, or none for the interactive picker"))
+	}
+
+	switch {
+	case recovery:
+		return methodRecovery, nil
+	case google:
+		return methodGoogle, nil
+	case github:
+		return methodGithub, nil
+	case strings.TrimSpace(email) != "":
+		return methodEmailWith, nil
+	case interactive:
+		return methodPicker, nil
+	default:
+		return methodPassword, nil
+	}
+}
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to your AgentSecrets account",
@@ -43,30 +94,24 @@ var loginCmd = &cobra.Command{
 				return fmt.Errorf("invalid server URL: %w", err)
 			}
 		}
-		if loginRecoveryFlag {
+		method, err := resolveLoginMethod(loginRecoveryFlag, loginGoogleFlag, loginGithubFlag, loginEmailFlag, term.IsTerminal(int(os.Stdin.Fd())))
+		if err != nil {
+			return err
+		}
+		switch method {
+		case methodRecovery:
 			return performRecovery()
-		}
-		if loginGoogleFlag && loginGithubFlag {
-			return fmt.Errorf("choose one provider: --google or --github")
-		}
-		if loginEmailFlag != "" && (loginGoogleFlag || loginGithubFlag || loginRecoveryFlag) {
-			return fmt.Errorf("use --email by itself, or --google/--github/--recovery, not in combination")
-		}
-		if loginGoogleFlag {
+		case methodGoogle:
 			return performOAuth("google")
-		}
-		if loginGithubFlag {
+		case methodGithub:
 			return performOAuth("github")
-		}
-		if loginEmailFlag != "" {
+		case methodEmailWith:
 			return performEmailLogin(loginEmailFlag)
-		}
-		// No explicit method: ask when there is a terminal, else keep the
-		// historical email+password path for scripts.
-		if term.IsTerminal(int(os.Stdin.Fd())) {
+		case methodPicker:
 			return chooseLoginMethod()
+		default:
+			return performLogin()
 		}
-		return performLogin()
 	},
 }
 

@@ -23,12 +23,13 @@ var signupCmd = &cobra.Command{
 	the account, signs you in, and asks you to choose a vault password so your
 	secrets are protected on this device right away.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		firstRun := !config.GlobalConfigExists()
 		if signupServerFlag != "" {
 			if err := config.SetGlobalServerURL(signupServerFlag); err != nil {
 				return fmt.Errorf("invalid server URL: %w", err)
 			}
 		}
-		if !config.GlobalConfigExists() {
+		if firstRun {
 			if err := config.InitGlobalConfig(); err != nil {
 				return fmt.Errorf("failed to initialize global config: %w", err)
 			}
