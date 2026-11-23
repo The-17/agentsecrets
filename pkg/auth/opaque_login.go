@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -178,6 +177,7 @@ func (s *Service) DeriveOpaqueExportKey(email, password string) ([]byte, error) 
 //  3. RegisterFinish(client, reg_response, credential_id) -> record
 //  4. POST /auth/opaque/register/finish/ (JWT) {reg_record, credential_id}
 //     -> server stores the record and disables the password factor.
+//
 // EnrollOpaque upgrades an already-authenticated account to OPAQUE and returns
 // the OPAQUE export key derived during registration. The export key is the
 // second vault share's KEK, so this is also where the account vault is upgraded
@@ -233,11 +233,13 @@ func (s *Service) EnrollOpaque(email, password string) ([]byte, error) {
 		return nil, fmt.Errorf("opaque enroll: %w", err)
 	}
 
-	// Enforce v2: upgrade the account vault to the split-share scheme now that
-	// the OPAQUE export key (the second share's KEK) is available. Best-effort:
-	// on failure the v1 vault still works and the next login migrates it.
 	if err := s.enforceV2Vault(email, password, exportKey); err != nil {
-		fmt.Fprintf(os.Stderr, "opaque enroll: vault v2 migration skipped: %v\n", err)
+		// The OPAQUE record is live but the vault is still v1. Leaving the local
+		// flag set would tell the next login that migration already happened.
+		// Roll the flag back and fail closed so the retry re-enrolls and retries
+		// the migration instead of silently skipping it.
+		_ = config.SetOpaqueEnrolled(false)
+		return nil, fmt.Errorf("opaque enroll: vault v2 migration failed: %w", err)
 	}
 
 	return exportKey, nil

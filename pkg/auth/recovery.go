@@ -183,7 +183,7 @@ func (s *Service) RecoverAccount(email, recoveryKey, newPassword string) (*Login
 		}
 
 		if err := saveLocalPasswordHash(email, newPassword); err != nil {
-			result.Warnings = append(result.Warnings, "password reset, but the local verification hash could not be saved")
+			return nil, fmt.Errorf("recovery: the new password was saved, but the local verification hash could not be: %w", err)
 		}
 		result.VaultVersion = fullVault.VaultVersion
 		result.RecoveryConfirmed = fullVault.RecoveryConfirmed

@@ -100,8 +100,6 @@ func promoteBinaryTo(src, dst string) error {
 //
 // Returns nil if everything is ready, or an error describing what failed.
 func AutoSetup() error {
-	_ = PurgeLegacyFiles()
-
 	kcPath, err := EnsureInstalled()
 	if err != nil {
 		return fmt.Errorf("keychain-auth setup: %w", err)
@@ -840,7 +838,6 @@ func startDaemonLinux(keychainAuthPath string) error {
 		// Path A: systemd is live and manages the unit.
 		if isSocketDialable(sysSocket) {
 			// Already running; reload trust store via restart.
-			_ = exec.Command("systemctl", "restart", "keychain-auth").Run()
 			_, _ = runSudo(60*time.Second, "systemctl", "restart", "keychain-auth")
 			if isSocketDialable(sysSocket) {
 				return nil
@@ -938,8 +935,13 @@ func startDirect(keychainAuthPath string) error {
 	} else {
 		logDir = os.TempDir()
 	}
-	_ = os.MkdirAll(logDir, 0700)
-	logFile, _ := os.OpenFile(filepath.Join(logDir, "daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err := os.MkdirAll(logDir, 0700); err != nil {
+		return fmt.Errorf("daemon log directory: %w", err)
+	}
+	logFile, err := os.OpenFile(filepath.Join(logDir, "daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("daemon log file: %w", err)
+	}
 
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

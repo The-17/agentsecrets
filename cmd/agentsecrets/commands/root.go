@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/The-17/agentsecrets/pkg/api"
 	"github.com/The-17/agentsecrets/pkg/config"
@@ -332,6 +333,15 @@ func ensureSudoCached(reason string) {
 	_ = sudoVal.Run() // wait for password entry to cache it
 }
 
+// One command can walk through several recovery kinds. Without this guard each
+// kind asked for a fresh sudo credential, so a single CLI invocation could
+// prompt two or three times. The first call still checks `sudo -n true`.
+var sudoCacheOnce sync.Once
+
+func ensureSudoCachedOnce(reason string) {
+	sudoCacheOnce.Do(func() { ensureSudoCached(reason) })
+}
+
 // keychainRequiredError prints the manual-setup hint and returns the canonical
 // "keychain-auth is required" error, used whenever a transparent recovery fails.
 func keychainRequiredError(action string, cause error) error {
@@ -403,7 +413,7 @@ func recoverDaemonState(kind recoveryKind) error {
 	case recoverDaemon:
 		keychainauth.Close()
 		_ = os.Remove(keychainauth.SocketPath())
-		ensureSudoCached("keychain-auth daemon restart is required. Please authorize when prompted.")
+		ensureSudoCachedOnce("keychain-auth daemon restart is required. Please authorize when prompted.")
 		if err := ui.Spinner("Starting keychain-auth daemon...", keychainauth.AutoSetup); err != nil {
 			return keychainRequiredError("keychain-auth setup", err)
 		}
@@ -411,7 +421,7 @@ func recoverDaemonState(kind recoveryKind) error {
 
 	case recoverProtocol:
 		keychainauth.Close()
-		ensureSudoCached("keychain-auth daemon restart is required. Please authorize when prompted.")
+		ensureSudoCachedOnce("keychain-auth daemon restart is required. Please authorize when prompted.")
 		if err := ui.Spinner("Starting keychain-auth daemon...", keychainauth.RestartDaemon); err != nil {
 			return keychainRequiredError("keychain-auth setup", err)
 		}
@@ -419,7 +429,7 @@ func recoverDaemonState(kind recoveryKind) error {
 
 	case recoverRegister:
 		keychainauth.Close()
-		ensureSudoCached("keychain-auth binary registration is required. Please authorize when prompted.")
+		ensureSudoCachedOnce("keychain-auth binary registration is required. Please authorize when prompted.")
 		// RegisterAndActivate authorizes, restarts the daemon so the new policy is
 		// live, and verifies the daemon accepts us before returning.
 		if err := ui.Spinner("Registering agentsecrets binary with daemon...", keychainauth.RegisterAndActivate); err != nil {
@@ -469,7 +479,7 @@ func ensureDaemonInitialized() error {
 			// Genuinely unconfigured: run full setup (installs the sandbox,
 			// registers this binary, starts the daemon). This is the only path
 			// that may prompt for authorization.
-			ensureSudoCached("keychain-auth sandbox system setup is required. Please authorize when prompted.")
+			ensureSudoCachedOnce("keychain-auth sandbox system setup is required. Please authorize when prompted.")
 			if err := ui.Spinner("Setting up keychain-auth...", keychainauth.AutoSetup); err != nil {
 				return keychainRequiredError("keychain-auth setup", err)
 			}
@@ -483,7 +493,7 @@ func ensureDaemonInitialized() error {
 	// stat plus one `--version` exec, so an up-to-date daemon costs almost nothing.
 	binaryChanged := binaryVerificationNeeded()
 	if keychainauth.DaemonUpdateNeeded() {
-		ensureSudoCached("A keychain-auth daemon update is required. Please authorize when prompted.")
+		ensureSudoCachedOnce("A keychain-auth daemon update is required. Please authorize when prompted.")
 		if err := ui.Spinner("Updating keychain-auth daemon...", keychainauth.EnsureDaemonUpToDate); err != nil {
 			return keychainRequiredError("keychain-auth update", err)
 		}
