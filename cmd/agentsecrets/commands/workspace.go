@@ -12,6 +12,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/The-17/agentsecrets/pkg/config"
+	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/proxy"
 	"github.com/The-17/agentsecrets/pkg/ui"
 	"github.com/The-17/agentsecrets/pkg/workspaces"
@@ -198,6 +199,11 @@ func runWorkspaceAccept(cmd *cobra.Command, args []string) error {
 	}
 	code, _ := cmd.Flags().GetString("code")
 	workspaceRef, _ := cmd.Flags().GetString("workspace")
+	if workspaceRef != "" && code == "" {
+		return errors.New(errors.ErrUsage,
+			"--workspace needs an invitation code",
+			fmt.Errorf("pass the code as the positional argument or with --code"))
+	}
 
 	var workspaceID string
 	if workspaceRef != "" {

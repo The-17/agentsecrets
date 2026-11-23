@@ -456,31 +456,39 @@ parseArgs:
 		close(done)
 	}()
 
+	var flushErrors []error
+	if err := stdoutMasker.Flush(); err != nil {
+		flushErrors = append(flushErrors, fmt.Errorf("stdout flush: %w", err))
+	}
+	if err := stderrMasker.Flush(); err != nil {
+		flushErrors = append(flushErrors, fmt.Errorf("stderr flush: %w", err))
+	}
+
 	// Audit is written after the child exits so it can carry the child's identity,
 	// exit code and duration. Only key names and hosts are recorded — never values.
+	// Runs with no injected secrets are audited too: --allow-empty is still an
+	// execution that should be attributable.
 	started := time.Now()
 	runErr := childCmd.Run()
-	_ = stdoutMasker.Flush()
-	_ = stderrMasker.Flush()
-
-	if len(secrets) > 0 {
-		secretKeys := make([]string, 0, len(secrets))
-		for k := range secrets {
-			secretKeys = append(secretKeys, k)
+	secretKeys := make([]string, 0, len(secrets))
+	for k := range secrets {
+		secretKeys = append(secretKeys, k)
+	}
+	pid := 0
+	if childCmd.Process != nil {
+		pid = childCmd.Process.Pid
+	}
+	exitCode := 0
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
 		}
-		pid := 0
-		if childCmd.Process != nil {
-			pid = childCmd.Process.Pid
-		}
-		exitCode := 0
-		if runErr != nil {
-			if exitErr, ok := runErr.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
-			} else {
-				exitCode = -1
-			}
-		}
-		auditLog(project, scrubArgv(args, secrets), secretKeys, auditableHosts(hosts, secrets), commandPath, pid, exitCode, time.Since(started))
+	}
+	auditLog(project, scrubArgv(args, secrets), secretKeys, auditableHosts(hosts, secrets), commandPath, pid, exitCode, time.Since(started))
+	if runErr == nil && len(flushErrors) > 0 {
+		return errors.Join(flushErrors...)
 	}
 
 	if runErr != nil {
