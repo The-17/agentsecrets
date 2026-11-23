@@ -320,11 +320,8 @@ func (s *Service) Pull(targetKeys []string) error {
 		}
 	}
 
-	// A keychain miss during pull is why the proxy later "can't find" secrets —
-	// so don't swallow it. The .env write below still succeeds, so this stays a
-	// warning rather than a hard failure.
 	if keychainFailures > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: %d secret/policy value(s) could not be written to the OS keychain; the proxy may not resolve them until keychain-auth is available.\n", keychainFailures)
+		return fmt.Errorf("pull: %d secret/policy value(s) could not be written to the OS keychain; local env would resolve fewer secrets than the project holds", keychainFailures)
 	}
 
 	telemetry.RecordSecretCount(len(secretsMap))
@@ -423,7 +420,7 @@ func (s *Service) Push() error {
 		}
 	}
 	if keychainFailures > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: %d secret(s) could not be written to the OS keychain.\n", keychainFailures)
+		return fmt.Errorf("push secrets: %d secret(s) could not be written to the OS keychain; local resolution would be incomplete", keychainFailures)
 	}
 
 	// 2. Sync to cloud (Bulk dictionary format)
@@ -473,8 +470,11 @@ func (s *Service) Delete(key string) error {
 		return fmt.Errorf("delete secret: failed to update .env: %w", err)
 	}
 
-	// 3. Delete from Keychain
-	_ = keyring.DeleteSecret(project.ProjectID, env, key)
+	// 3. Delete from Keychain. A miss here leaves a stale local value that the
+	// next push or pull can resurrect, so the user must hear about it.
+	if err := keyring.DeleteSecret(project.ProjectID, env, key); err != nil {
+		return fmt.Errorf("delete secret: removed from cloud and .env but the keychain still holds %s: %w", key, err)
+	}
 
 	// Update local cache
 	s.updateCacheAfterDelete(project.ProjectID, env, key)

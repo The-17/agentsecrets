@@ -232,7 +232,7 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 			return classifyRotationError("rollback", err)
 		}
 		if err := svc.Pull([]string{res.Key}); err != nil {
-			ui.Error(fmt.Sprintf("Rolled back cloud-side, but local resync failed: %v", err))
+			return fmt.Errorf("rollback succeeded cloud-side but local resync failed: %w", err)
 		}
 		ui.Success(fmt.Sprintf("Rolled back %s to its previous value.", res.Key))
 		return nil
@@ -261,7 +261,7 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 			return classifyRotationError("promote", err)
 		}
 		if err := svc.Pull([]string{res.Key}); err != nil {
-			ui.Error(fmt.Sprintf("Promoted cloud-side, but local resync failed: %v", err))
+			return fmt.Errorf("promotion succeeded cloud-side but local resync failed: %w", err)
 		}
 		if reason == "compromise" {
 			ui.Success(fmt.Sprintf("Promoted %s with zero overlap; previous value shredded.", res.Key))
@@ -303,6 +303,19 @@ func runSecretsRotate(cmd *cobra.Command, args []string) error {
 	}
 	if plaintext == "" {
 		return fmt.Errorf("empty value: nothing staged")
+	}
+
+	// Stacking pendings loses the first staged value. The server may reject
+	// this, but the CLI must not generate a new rotation ID on top of an
+	// existing pending version and then report success.
+	if status, statusErr := svc.RotationStatus(key, env); statusErr == nil {
+		for _, v := range status.Versions {
+			if strings.EqualFold(v.Staging, "pending") {
+				return errors.New(errors.ErrUsage,
+					fmt.Sprintf("%s already has a pending rotation (%s)", key, v.VersionID),
+					fmt.Errorf("promote it with --promote or discard it with --abort before staging another"))
+			}
+		}
 	}
 
 	staged, _, err := svc.StageVersion(key, plaintext, env, reason)
