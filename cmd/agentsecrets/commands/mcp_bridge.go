@@ -42,6 +42,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/agents"
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/crypto"
+	"github.com/The-17/agentsecrets/pkg/gateway"
 	"github.com/The-17/agentsecrets/pkg/keychainauth"
 	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/log"
@@ -401,16 +402,28 @@ func withExpectWorkspace(a map[string]interface{}, fn func() error) error {
 	if expect == "" {
 		return fn()
 	}
-	// Resolve "personal" (and names) to the concrete workspace id.
-	wsID := resolveBridgeWorkspaceRef(expect)
-	prev := config.GetSelectedWorkspaceID()
-	if wsID == prev {
-		return fn()
-	}
-	if err := config.SetSelectedWorkspaceID(wsID); err != nil {
+	// Use the process-level override instead of writing the selected workspace
+	// into the shared global config. A bridge process handles several verbs in
+	// sequence, and persisting the scope left later verbs in the wrong workspace
+	// if an error skipped the deferred restore.
+	wsID, err := config.ResolveWorkspaceRef(expect)
+	if err != nil {
 		return err
 	}
-	defer func() { _ = config.SetSelectedWorkspaceID(prev) }()
+	prev, hadPrev := os.LookupEnv("AGENTSECRETS_WORKSPACE")
+	if prev == wsID && hadPrev {
+		return fn()
+	}
+	if err := os.Setenv("AGENTSECRETS_WORKSPACE", wsID); err != nil {
+		return err
+	}
+	defer func() {
+		if hadPrev {
+			_ = os.Setenv("AGENTSECRETS_WORKSPACE", prev)
+		} else {
+			_ = os.Unsetenv("AGENTSECRETS_WORKSPACE")
+		}
+	}()
 	return fn()
 }
 
@@ -956,6 +969,16 @@ func parseBridgeInjections(raw map[string]interface{}) ([]proxy.Injection, error
 }
 
 func bridgeProxyCall(a map[string]interface{}) error {
+	// This verb uses the local proxy transport only. If the resolved mode is
+	// cloud, silently resolving locally would give a different engine and a
+	// different audit trail from `agentsecrets call` in the same environment.
+	selection, err := gateway.Select("")
+	if err != nil {
+		return err
+	}
+	if selection.Mode == gateway.ModeCloud {
+		return fmt.Errorf("proxy.call is local-only; the resolved mode is cloud, so use 'agentsecrets call' for this request")
+	}
 	if err := expectBindingProject(a); err != nil {
 		return err
 	}
