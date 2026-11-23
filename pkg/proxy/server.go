@@ -33,6 +33,10 @@ type Server struct {
 	// written by handleRotateSession, so concurrent access must be synchronized.
 	tokenMu      sync.RWMutex
 	SessionToken string
+	// previousToken is the token replaced by the last rotation. It exists so
+	// a client that cannot persist the new token can ask the daemon to put the
+	// old one back, instead of leaving the two stores permanently divergent.
+	previousToken string
 }
 
 // GetSessionToken returns the current session token ("" when unset).
@@ -48,6 +52,7 @@ func (s *Server) GetSessionToken() string {
 func (s *Server) SetSessionToken(token string) {
 	s.tokenMu.Lock()
 	s.SessionToken = token
+	s.previousToken = ""
 	s.tokenMu.Unlock()
 }
 
@@ -60,6 +65,7 @@ func (s *Server) rotateSessionToken() (string, error) {
 		return "", err
 	}
 	s.tokenMu.Lock()
+	s.previousToken = s.SessionToken
 	s.SessionToken = newToken
 	s.tokenMu.Unlock()
 	return newToken, nil
@@ -77,6 +83,7 @@ func NewServer(port int, engine *Engine) *Server {
 	s.mux.HandleFunc("/sync", s.validateSession(s.handleSync))
 	s.mux.HandleFunc("/approve", s.validateSession(s.handleApprove))
 	s.mux.HandleFunc("/rotate-session", s.validateSession(s.handleRotateSession))
+	s.mux.HandleFunc("/rollback-session", s.validateSession(s.handleRollbackSession))
 	return s
 }
 
@@ -527,10 +534,37 @@ func (s *Server) handleRotateSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":     "ok",
-		"message":    "session token rotated successfully",
-		"new_token":  newToken,
+		"status":    "ok",
+		"message":   "session token rotated successfully",
+		"new_token": newToken,
 	})
+}
+
+// handleRollbackSession restores the token replaced by the last rotation. The
+// request must authenticate with the new token, so only a caller that received
+// it can undo the rotation. This is the compensating transition for a client
+// that failed to persist the new token in the keyring.
+func (s *Server) handleRollbackSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	_, _ = io.Copy(io.Discard, r.Body)
+
+	s.tokenMu.Lock()
+	previous := s.previousToken
+	if previous != "" {
+		s.SessionToken = previous
+		s.previousToken = ""
+	}
+	s.tokenMu.Unlock()
+
+	if previous == "" {
+		writeError(w, http.StatusConflict, "no previous session token to restore")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "restored"})
 }
 
 func maskToken(token string) string {

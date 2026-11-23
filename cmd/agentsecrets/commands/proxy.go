@@ -577,58 +577,14 @@ func runProxyRotateSession(cmd *cobra.Command, args []string) error {
 	ui.Banner("Rotate Session Token")
 	ui.Divider()
 
-	// Read current session token
-	oldToken, err := proxy.ReadSessionToken()
-	if err != nil {
-		return fmt.Errorf("failed to read current session token: %w", err)
-	}
-
-	// Determine port from PID file or default
 	port := 8765
 	_, _, pidPort, err := proxy.ReadPIDFile()
 	if err == nil && pidPort > 0 {
 		port = pidPort
 	}
 
-	// Notify running proxy server. The new token is generated server-side and
-	// returned; the client never chooses it (trusting a client-supplied token
-	// would let anyone who can reach the endpoint pick the session key).
-	url := fmt.Sprintf("http://127.0.0.1:%d/rotate-session", port)
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to build rotation request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-AS-Session-Token", oldToken)
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		ui.Warning("Proxy daemon is not currently running. Cannot rotate without a running daemon.")
-		return nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("proxy rejected session rotation: %s", string(respBody))
-	}
-
-	var rotResp struct {
-		Status   string `json:"status"`
-		Message  string `json:"message"`
-		NewToken string `json:"new_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&rotResp); err != nil {
-		return fmt.Errorf("failed to decode rotation response: %w", err)
-	}
-	if rotResp.NewToken == "" {
-		return fmt.Errorf("proxy returned no new session token")
-	}
-
-	// Persist the server-generated token to the keyring.
-	if err := proxy.WriteSessionToken(rotResp.NewToken); err != nil {
-		return fmt.Errorf("failed to store new session token: %w", err)
+	if err := rotateProxySession(port); err != nil {
+		return err
 	}
 
 	ui.Success("Running proxy daemon updated with new session token (server-generated).")

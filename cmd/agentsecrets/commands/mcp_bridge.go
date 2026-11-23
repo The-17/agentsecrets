@@ -102,30 +102,48 @@ const EnvBridgeAllowWrites = "AGENTSECRETS_MCP_ALLOW_WRITES"
 // bridgeWrites are the verbs that mutate state. They are refused unless a human
 // enabled writes at client configuration time.
 //
-// agent.token_issue is here despite minting rather than deleting: a token is a
-// durable credential, and minting one is exactly what an injected instruction
-// would ask for. auth.export is deliberately absent from every tier check: the
-// bridge protocol requires it, and it is the human's own session export, but it
-// is listed in the report so its exposure is not hidden.
-var bridgeWrites = map[string]bool{
-	"secrets.set":        true,
-	"secrets.delete":     true,
-	"secrets.pull":       true,
-	"secrets.push":       true,
-	"project.create":     true,
-	"project.use":        true,
-	"project.update":     true,
-	"project.delete":     true,
-	"workspace.create":   true,
-	"workspace.switch":   true,
-	"workspace.accept_invite": true,
-	"email.verify":            true,
-	"email.resend":            true,
-	"agent.delete":       true,
-	"agent.token_issue":  true,
-	"agent.token_rotate": true,
-	"secrets.rotate":     true,
+// The write gate is derived from bridgeAccessLevels. auth.export is classified
+// as a credential because it returns session tokens; a caller that can read
+// those tokens can act as the human, so it must not sit outside the switch.
+type bridgeAccess string
+
+const (
+	bridgeRead       bridgeAccess = "read"
+	bridgeWrite      bridgeAccess = "write"
+	bridgeCredential bridgeAccess = "credential"
+)
+
+// bridgeAccessLevels is the authoritative classification. There is no way to
+// add a verb to dispatch or to the advertised list without also deciding
+// whether it may mutate state: a test rejects any verb missing from here.
+var bridgeAccessLevels = map[string]bridgeAccess{
+	"ping": bridgeRead, "status": bridgeRead, "auth.export": bridgeCredential,
+	"secrets.list": bridgeRead, "secrets.set": bridgeWrite, "secrets.delete": bridgeWrite,
+	"secrets.pull": bridgeWrite, "secrets.push": bridgeWrite, "secrets.diff": bridgeRead,
+	"proxy.call": bridgeRead, "proxy.status": bridgeRead,
+	"project.list": bridgeRead, "project.create": bridgeWrite, "project.use": bridgeWrite,
+	"project.update": bridgeWrite, "project.delete": bridgeWrite,
+	"workspace.list": bridgeRead, "workspace.create": bridgeWrite, "workspace.switch": bridgeWrite,
+	"workspace.members": bridgeRead, "workspace.pending_invites": bridgeRead,
+	"workspace.accept_invite": bridgeWrite,
+	"email.verify":            bridgeWrite, "email.resend": bridgeWrite,
+	"agent.list": bridgeRead, "agent.delete": bridgeWrite,
+	"agent.token_issue": bridgeCredential, "agent.token_rotate": bridgeCredential,
+	"secrets.rotate": bridgeWrite, "secrets.rotation_status": bridgeRead,
+	"logs.list": bridgeRead, "logs.summary": bridgeRead, "logs.detail": bridgeRead,
 }
+
+// bridgeWrites is derived from the classification so the gate cannot drift
+// from the advertised and dispatch sets.
+var bridgeWrites = func() map[string]bool {
+	writes := make(map[string]bool)
+	for verb, level := range bridgeAccessLevels {
+		if level != bridgeRead {
+			writes[verb] = true
+		}
+	}
+	return writes
+}()
 
 func bridgeAllowWrites() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(EnvBridgeAllowWrites)), "true")
@@ -500,39 +518,39 @@ func bridgeWorkspaceID(a map[string]interface{}, pc *config.ProjectConfig) strin
 type bridgeHandler func(a map[string]interface{}) error
 
 var bridgeDispatch = map[string]bridgeHandler{
-	"ping":                    bridgePing,
-	"status":                  bridgeStatus,
-	"auth.export":             bridgeAuthExport,
-	"secrets.list":            bridgeSecretsList,
-	"secrets.set":             bridgeSecretsSet,
-	"secrets.delete":          bridgeSecretsDelete,
-	"secrets.pull":            bridgeSecretsPull,
-	"secrets.push":            bridgeSecretsPush,
-	"secrets.diff":            bridgeSecretsDiff,
-	"proxy.call":              bridgeProxyCall,
-	"proxy.status":            bridgeProxyStatus,
-	"project.list":            bridgeProjectList,
-	"project.create":          bridgeProjectCreate,
-	"project.use":             bridgeProjectUse,
-	"project.update":          bridgeProjectUpdate,
-	"project.delete":          bridgeProjectDelete,
-	"workspace.list":          bridgeWorkspaceList,
-	"workspace.create":        bridgeWorkspaceCreate,
-	"workspace.switch":        bridgeWorkspaceSwitch,
-	"workspace.members":       bridgeWorkspaceMembers,
+	"ping":                      bridgePing,
+	"status":                    bridgeStatus,
+	"auth.export":               bridgeAuthExport,
+	"secrets.list":              bridgeSecretsList,
+	"secrets.set":               bridgeSecretsSet,
+	"secrets.delete":            bridgeSecretsDelete,
+	"secrets.pull":              bridgeSecretsPull,
+	"secrets.push":              bridgeSecretsPush,
+	"secrets.diff":              bridgeSecretsDiff,
+	"proxy.call":                bridgeProxyCall,
+	"proxy.status":              bridgeProxyStatus,
+	"project.list":              bridgeProjectList,
+	"project.create":            bridgeProjectCreate,
+	"project.use":               bridgeProjectUse,
+	"project.update":            bridgeProjectUpdate,
+	"project.delete":            bridgeProjectDelete,
+	"workspace.list":            bridgeWorkspaceList,
+	"workspace.create":          bridgeWorkspaceCreate,
+	"workspace.switch":          bridgeWorkspaceSwitch,
+	"workspace.members":         bridgeWorkspaceMembers,
 	"workspace.pending_invites": bridgeWorkspacePendingInvites,
 	"workspace.accept_invite":   bridgeWorkspaceAcceptInvite,
 	"email.verify":              bridgeEmailVerify,
 	"email.resend":              bridgeEmailResend,
-	"agent.list":              bridgeAgentList,
-	"agent.delete":            bridgeAgentDelete,
-	"agent.token_issue":       bridgeAgentTokenIssue,
-	"agent.token_rotate":      bridgeAgentTokenRotate,
-	"secrets.rotate":          bridgeSecretsRotate,
-	"secrets.rotation_status": bridgeSecretsRotationStatus,
-	"logs.list":               bridgeLogsList,
-	"logs.summary":            bridgeLogsSummary,
-	"logs.detail":             bridgeLogsDetail,
+	"agent.list":                bridgeAgentList,
+	"agent.delete":              bridgeAgentDelete,
+	"agent.token_issue":         bridgeAgentTokenIssue,
+	"agent.token_rotate":        bridgeAgentTokenRotate,
+	"secrets.rotate":            bridgeSecretsRotate,
+	"secrets.rotation_status":   bridgeSecretsRotationStatus,
+	"logs.list":                 bridgeLogsList,
+	"logs.summary":              bridgeLogsSummary,
+	"logs.detail":               bridgeLogsDetail,
 }
 
 // ping / status -----------------------------------------------------------------
@@ -859,6 +877,15 @@ func bridgeSecretsRotate(a map[string]interface{}) error {
 	}
 
 	svc := app.Secrets()
+	sources := 0
+	for _, supplied := range []bool{argBool(a, "generate"), argStr(a, "command") != "", argStr(a, "value") != ""} {
+		if supplied {
+			sources++
+		}
+	}
+	if sources != 1 {
+		return fmt.Errorf("provide exactly one of generate, command or value")
+	}
 	var plaintext string
 	switch {
 	case argBool(a, "generate"):
@@ -1327,6 +1354,15 @@ func bridgeAgentDelete(a map[string]interface{}) error {
 func bridgeAgentTokenIssue(a map[string]interface{}) error {
 	ref, err := requireStr(a, "agent")
 	if err != nil {
+		return err
+	}
+	// Minting a token creates a durable credential. The human write switch
+	// alone is not enough for a model-facing call: require the same two
+	// boundaries as token rotation.
+	if err := requireConfirm(a, "agent.token_issue"); err != nil {
+		return err
+	}
+	if err := verifyPasswordLocally(); err != nil {
 		return err
 	}
 	pc, _ := config.LoadProjectConfig()
