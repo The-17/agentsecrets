@@ -436,27 +436,30 @@ parseArgs:
 	childCmd.Stdout = stdoutMasker
 	childCmd.Stderr = stderrMasker
 
-	// Forward every signal to the child for its whole lifetime (a single
-	// receive would drop the second Ctrl-C and orphan a secret-bearing child).
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	done := make(chan struct{})
-	go func() {
-		defer signal.Stop(sigChan)
-		for {
-			select {
-			case sig := <-sigChan:
-				if childCmd.Process != nil {
+	started := time.Now()
+	var runErr error
+	if err := childCmd.Start(); err != nil {
+		runErr = err
+	} else {
+		// The child now has a PID. Installing the forwarder after Start means
+		// an early Ctrl-C cannot be dropped before Process is set.
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() {
+			defer signal.Stop(sigChan)
+			for {
+				select {
+				case sig := <-sigChan:
 					_ = childCmd.Process.Signal(sig)
+				case <-done:
+					return
 				}
-			case <-done:
-				return
 			}
-		}
-	}()
-	defer func() {
+		}()
+		runErr = childCmd.Wait()
 		close(done)
-	}()
+	}
 
 	var flushErrors []error
 	if err := stdoutMasker.Flush(); err != nil {
@@ -466,12 +469,6 @@ parseArgs:
 		flushErrors = append(flushErrors, fmt.Errorf("stderr flush: %w", err))
 	}
 
-	// Audit is written after the child exits so it can carry the child's identity,
-	// exit code and duration. Only key names and hosts are recorded — never values.
-	// Runs with no injected secrets are audited too: --allow-empty is still an
-	// execution that should be attributable.
-	started := time.Now()
-	runErr := childCmd.Run()
 	secretKeys := make([]string, 0, len(secrets))
 	for k := range secrets {
 		secretKeys = append(secretKeys, k)
@@ -485,10 +482,16 @@ parseArgs:
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			exitCode = -1
+			// A failure to start is not a signal exit. 127 is the shell
+			// convention for "could not execute", so the audit row stays
+			// distinguishable from a child killed by signal 1 (-1).
+			exitCode = 127
 		}
 	}
-	auditLog(project, scrubArgv(args, secrets), secretKeys, auditableHosts(hosts, secrets), commandPath, pid, exitCode, time.Since(started))
+	// The audit must name the program the user asked to run, not the sandbox
+	// wrapper (unshare) that may sit in front of it. warnPath was resolved
+	// before the wrapper was added.
+	auditLog(project, scrubArgv(args, secrets), secretKeys, auditableHosts(hosts, secrets), warnPath, pid, exitCode, time.Since(started))
 	if runErr == nil && len(flushErrors) > 0 {
 		return errors.Join(flushErrors...)
 	}
