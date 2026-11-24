@@ -3,7 +3,6 @@ package keychainauth
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -108,11 +107,7 @@ func UserMessage(err error) string {
 }
 
 func getSelfPath() string {
-	selfPath, err := os.Executable()
-	if err == nil {
-		if resolved, err := filepath.EvalSymlinks(selfPath); err == nil {
-			return resolved
-		}
+	if selfPath, err := SelfPath(); err == nil {
 		return selfPath
 	}
 	return "agentsecrets"

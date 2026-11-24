@@ -2,28 +2,27 @@ package commands
 
 // AgentSecrets MCP bridge helper.
 //
-// `agentsecrets mcp bridge <verb> [json-args]` is the machine-readable
-// counterpart to the human CLI. It exists so out-of-process clients —
-// notably the TypeScript MCP bridge (`integrations/mcp`, `npx
-// @agentsecrets/mcp`) — can delegate privileged local operations (OS
-// keychain secrets, proxy session token, token refresh, E2EE workspace
-// keys) without reimplementing them and without parsing human-readable
-// tables.
+// `agentsecrets mcp <verb> [json-args]` is the machine-readable counterpart to
+// the human CLI. It exists so out-of-process clients — notably the TypeScript
+// MCP bridge (`integrations/mcp`, `npx @the-17/agentsecrets-mcp`) — can
+// delegate privileged local operations (OS keychain secrets, proxy session
+// token, token refresh, E2EE workspace keys) without reimplementing them and
+// without parsing human-readable tables.
 //
 // Protocol (v1, stable):
-//   - argv:  mcp bridge <verb> [<json-args>]. When <json-args> is absent,
+//   - argv:  mcp <verb> [<json-args>]. When <json-args> is absent,
 //     JSON is read from stdin when piped, otherwise "{}".
 //   - stdout: exactly one JSON object per invocation:
 //       {"ok": true, "data": ...}   on success
 //       {"ok": false, "error": "..."} on handled failure (exit code still 0)
 //     Non-zero exit codes are reserved for crashes and usage errors.
 //   - stderr: diagnostics and warnings only. Never JSON, never secrets.
-//   - Zero-knowledge: no verb returns secret VALUES or tokens, except
-//     agent.token_issue which returns a one-time token by design (the
-//     caller must store it immediately and never log it).
+//   - Zero-knowledge: read verbs return metadata, not secret values. The
+//     credential verbs auth.export and agent.token_issue return tokens by
+//     design and require the human write switch.
 //
-// Every verb calls the same services as the interactive commands and the
-// Go MCP server — no new product logic lives here.
+// Every verb calls the same services as the interactive commands. No separate
+// MCP server binary exists in this repository; this bridge is the only path.
 
 import (
 	"encoding/json"
@@ -1037,8 +1036,8 @@ func bridgeProxyCall(a map[string]interface{}) error {
 	}
 	agentID := argStr(a, "agent_id")
 	if agentID == "" {
-		// Parity with the Go MCP server: unattributed MCP calls log as "mcp",
-		// which the engine counts in proxy_calls_mcp telemetry.
+		// Unattributed MCP calls log as "mcp", which the engine counts in
+		// proxy_calls_mcp telemetry.
 		agentID = "mcp"
 	}
 	result, err := proxy.CallViaProxy(proxy.CallRequest{

@@ -556,24 +556,19 @@ func keychainMarkerPath() (string, error) {
 	return filepath.Join(paths.GlobalDir, "keychain-verified"), nil
 }
 
-// binarySignature returns a cheap identity for the running executable: resolved
-// path + size + modtime. A binary upgrade changes at least the modtime, which is
-// all we need to decide whether to re-verify. It is a change *hint*, not a
-// security check — the daemon still hash-verifies this binary on every real
-// request. An empty string (couldn't stat self) forces verification.
+// binarySignature returns the running executable's resolved path and content
+// hash. Path + size + modtime used to miss an atomic replace that preserved
+// mtime, skipping re-verification of a changed binary.
 func binarySignature() string {
-	path, err := os.Executable()
+	path, err := keychainauth.SelfPath()
 	if err != nil {
 		return ""
 	}
-	if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
-		path = resolved
-	}
-	info, err := os.Stat(path)
-	if err != nil {
+	hash := hashFile(path)
+	if hash == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s|%d|%d", path, info.Size(), info.ModTime().UnixNano())
+	return path + "|" + hash
 }
 
 // binaryVerificationNeeded reports whether to issue a daemon verification request

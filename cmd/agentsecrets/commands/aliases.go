@@ -160,7 +160,6 @@ func registerAliases() {
 			{"get-allowlist-logs", []string{"list-allowlist-logs"}, "get-allowlist-logs", allowlistLogCmd, workspaceCmd},
 
 			// agents
-			{"register-agent", []string{"register-agents", "create-agent", "create-agents"}, "register-agent(s)", agentRegisterCmd, agentCmd},
 			{"list-agents", []string{"list-agent", "get-agents", "get-agent"}, "list-agent(s)", agentListCmd, agentCmd},
 			{"delete-agent", []string{"delete-agents", "remove-agent", "remove-agents"}, "delete-agent(s)", agentDeleteCmd, agentCmd},
 			{"issue-token", []string{"issue-tokens"}, "issue-token(s)", agentTokenIssueCmd, agentCmd},

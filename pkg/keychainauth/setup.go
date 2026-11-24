@@ -561,13 +561,9 @@ func EnsureRegistered(keychainAuthPath string) error {
 		return nil
 	}
 
-	selfPath, err := os.Executable()
+	selfPath, err := SelfPath()
 	if err != nil {
-		return fmt.Errorf("cannot determine own binary path: %w", err)
-	}
-	selfPath, err = filepath.EvalSymlinks(selfPath)
-	if err != nil {
-		return fmt.Errorf("cannot resolve binary symlinks: %w", err)
+		return err
 	}
 
 	if err := authorizeBinary(keychainAuthPath, selfPath); err != nil {

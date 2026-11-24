@@ -34,50 +34,6 @@ var agentCmd = &cobra.Command{
 	PersistentPreRunE: keychainAuthMiddleware,
 }
 
-var agentRegisterCmd = &cobra.Command{
-	Use:        "register <name>",
-	Short:      "Register a new agent and issue its first token (alias of 'create')",
-	Deprecated: "use 'agent create' instead, which stores the token as a project secret for you",
-	Args:       cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		projectFlag, _ := cmd.Flags().GetString("project")
-		label, _ := cmd.Flags().GetString("label")
-		expires, _ := cmd.Flags().GetString("expires")
-		environment, _ := cmd.Flags().GetString("env")
-
-		caps := &capabilities.AgentCapabilities{}
-		hasCaps := false
-		if cmd.Flags().Changed("env-read") {
-			v, _ := cmd.Flags().GetBool("env-read")
-			caps.CanEnvRead = &v
-			hasCaps = true
-		}
-		if cmd.Flags().Changed("proxy-resolve") {
-			v, _ := cmd.Flags().GetBool("proxy-resolve")
-			caps.CanProxyResolve = &v
-			hasCaps = true
-		}
-		var capsReq *capabilities.AgentCapabilities
-		if hasCaps {
-			capsReq = caps
-		}
-
-		in := agentCreateInput{
-			Name:        args[0],
-			ProjectFlag: projectFlag,
-			Label:       label,
-			Expires:     expires,
-			Environment: environment,
-			Caps:        capsReq,
-		}
-		if cmd.Flags().Changed("save-token") {
-			v, _ := cmd.Flags().GetBool("save-token")
-			in.SaveToken = &v
-		}
-		return runAgentCreate(cmd, in)
-	},
-}
-
 // agentCreateCmd is the v4 one-command identity: bind an agent, mint its first
 // token, grant capability scopes, and (by default) store that token as the
 // project secret AGENTSECRETS_TOKEN so downstream workloads pick it up with no
@@ -796,7 +752,6 @@ func init() {
 	agentPolicySetCmd.Flags().Bool("env-read", false, "grant headless environment delivery scope (can_env_read); use --env-read=false to revoke")
 	agentPolicySetCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve); use --proxy-resolve=false to revoke")
 
-	agentCmd.AddCommand(agentRegisterCmd)
 	agentCmd.AddCommand(agentCreateCmd)
 	agentCmd.AddCommand(agentListCmd)
 	agentCmd.AddCommand(agentTokenCmd)
@@ -808,14 +763,6 @@ func init() {
 	agentTokenCmd.AddCommand(agentTokenRotateCmd)
 	agentTokenCmd.AddCommand(agentTokenRotationCmd)
 	agentTokenRotationCmd.AddCommand(agentTokenRotationSetCmd)
-
-	agentRegisterCmd.Flags().StringP("project", "p", "", "scope to a specific project")
-	agentRegisterCmd.Flags().StringP("label", "l", "", "human label for the first token")
-	agentRegisterCmd.Flags().StringP("expires", "e", "", "token expiry (e.g. 30d, 90d)")
-	agentRegisterCmd.Flags().String("env", "", "environment for the token (development, staging, production, or a custom name)")
-	agentRegisterCmd.Flags().Bool("save-token", false, "save the issued token to the OS Keychain without prompting")
-	agentRegisterCmd.Flags().Bool("env-read", false, "grant headless environment delivery scope (can_env_read) at creation")
-	agentRegisterCmd.Flags().Bool("proxy-resolve", false, "grant proxy credential resolution scope (can_proxy_resolve) at creation")
 
 	agentCreateCmd.Flags().String("scope", "project", "binding scope: 'project' (default) or 'workspace'")
 	agentCreateCmd.Flags().StringP("project", "p", "", "project to bind the agent to (required when --scope project)")

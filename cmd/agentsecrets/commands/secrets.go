@@ -25,12 +25,13 @@ import (
 )
 
 var (
-	pullForce  bool
-	pushForce  bool
-	allEnvs    bool
-	listRemote bool
-	diffFrom   string
-	diffTo     string
+	pullForce         bool
+	pushForce         bool
+	allEnvs           bool
+	setAllowlistHosts []string
+	listRemote        bool
+	diffFrom          string
+	diffTo            string
 )
 
 // secretExists reports whether a secret key exists for the given project/env.
@@ -459,6 +460,7 @@ func init() {
 	secretsSetCmd.Flags().String("extract", "", "With --from-command: dot-separated JSON path in the command output that holds the value")
 	secretsSetCmd.Flags().String("output", "text", "Output format: text or json")
 	secretsSetCmd.Flags().String("env", "", "Target environment: development, staging, production, or a custom name ("+config.EnvironmentNameRule+"); defaults to the active one")
+	secretsSetCmd.Flags().StringSliceVar(&setAllowlistHosts, "allowlist-hosts", nil, "After storing, add these hosts to the workspace allowlist (requires local password)")
 	secretsDiffCmd.Flags().StringVar(&diffFrom, "from", "", "Source environment for cross-environment diff")
 	secretsDiffCmd.Flags().StringVar(&diffTo, "to", "", "Target environment for cross-environment diff")
 
@@ -581,6 +583,9 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if err := applySetAllowlist(cmd); err != nil {
+			return err
+		}
 		return emitStoredJSON(metas, jsonOut)
 	}
 
@@ -623,7 +628,19 @@ func runSecretsSet(cmd *cobra.Command, args []string) error {
 			ui.Info(fmt.Sprintf("%s: %d bytes, fingerprint %s", key, len(kv[key]), secrets.Fingerprint(kv[key])))
 		}
 	}
+	if err := applySetAllowlist(cmd); err != nil {
+		return err
+	}
 	return emitStoredJSON(metas, jsonOut)
+}
+
+// applySetAllowlist runs the existing allowlist command after a successful set.
+// Reusing that command keeps the password authorization gate in one place.
+func applySetAllowlist(cmd *cobra.Command) error {
+	if len(setAllowlistHosts) == 0 {
+		return nil
+	}
+	return runAllowlistAdd(cmd, setAllowlistHosts)
 }
 
 // emitStoredJSON prints the structured result of `secrets set --output json`.
