@@ -14,6 +14,7 @@ import (
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/crypto"
 	"github.com/The-17/agentsecrets/pkg/errors"
+	"github.com/The-17/agentsecrets/pkg/keyring"
 	"github.com/The-17/agentsecrets/pkg/secrets"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
@@ -105,10 +106,19 @@ func runEnvSwitch(cmd *cobra.Command, args []string) error {
 	// `secrets push` would store real secrets under the misspelled name.
 	warnIfEnvironmentUnused(environment)
 
-	// Check for potentially unsaved local changes
+	// Check for potentially unsaved local changes. Mode 2 can inspect the .env
+	// file. Mode 1 has no file, so use the keychain: otherwise the warning
+	// never fires for the recommended storage mode.
 	prevEnv := config.ResolveEnvironment()
-	localEnvFile := fmt.Sprintf(".env.%s", prevEnv)
-	if _, err := os.Stat(localEnvFile); err == nil {
+	hasLocalSecrets := false
+	if config.GetStorageMode() == 2 {
+		_, err := os.Stat(fmt.Sprintf(".env.%s", prevEnv))
+		hasLocalSecrets = err == nil
+	} else if p, pErr := config.LoadProjectConfig(); pErr == nil && p != nil && p.ProjectID != "" {
+		keys, kErr := keyring.ListProjectKeyNames(p.ProjectID, prevEnv)
+		hasLocalSecrets = kErr == nil && len(keys) > 0
+	}
+	if hasLocalSecrets {
 		ui.Warning(fmt.Sprintf("You may have unpushed changes in %s.", prevEnv))
 		ui.Info("Run 'agentsecrets secrets push' first if you want to save them.")
 		if !confirmProceed(false, "Switch anyway? (y/n): ") {

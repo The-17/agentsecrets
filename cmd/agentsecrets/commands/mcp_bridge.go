@@ -359,13 +359,16 @@ func expectBindingProject(a map[string]interface{}) error {
 
 // expectBindingWorkspace fails on workspace disagreement with the binding.
 func expectBindingWorkspace(a map[string]interface{}) error {
-	expect := argStr(a, "expect_workspace")
-	if expect == "" {
+	expectArg := argStr(a, "expect_workspace")
+	if expectArg == "" {
 		return nil
 	}
-	// Resolve "personal" (and names) to the concrete workspace id before matching,
-	// so the portable per-call address works here too.
-	expect = resolveBridgeWorkspaceRef(expect)
+	// Fail closed on an unknown workspace instead of forwarding the raw value
+	// to the server as an assertion that can never match.
+	expect, err := config.ResolveWorkspaceRef(expectArg)
+	if err != nil {
+		return err
+	}
 	b := loadBindingScope()
 	if b == nil || b.workspaceID == "" {
 		return nil
@@ -500,14 +503,14 @@ func bridgeProject() (*config.ProjectConfig, error) {
 	return pc, nil
 }
 
-func bridgeWorkspaceID(a map[string]interface{}, pc *config.ProjectConfig) string {
+func bridgeWorkspaceID(a map[string]interface{}, pc *config.ProjectConfig) (string, error) {
 	if v := argStr(a, "workspace"); v != "" {
-		return resolveBridgeWorkspaceRef(v)
+		return config.ResolveWorkspaceRef(v)
 	}
 	if pc != nil && pc.WorkspaceID != "" {
-		return pc.WorkspaceID
+		return pc.WorkspaceID, nil
 	}
-	return config.GetSelectedWorkspaceID()
+	return config.GetSelectedWorkspaceID(), nil
 }
 
 // dispatch table ---------------------------------------------------------------
@@ -1223,7 +1226,10 @@ func bridgeWorkspaceSwitch(a map[string]interface{}) error {
 
 func bridgeWorkspaceMembers(a map[string]interface{}) error {
 	pc, _ := config.LoadProjectConfig()
-	wsID := bridgeWorkspaceID(a, pc)
+	wsID, err := bridgeWorkspaceID(a, pc)
+	if err != nil {
+		return err
+	}
 	if wsID == "" {
 		return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch <name>' first")
 	}
@@ -1251,7 +1257,11 @@ func bridgeWorkspaceAcceptInvite(a map[string]interface{}) error {
 	code := argStr(a, "code")
 	workspaceID := argStr(a, "workspace_id")
 	if workspaceID != "" {
-		workspaceID = resolveBridgeWorkspaceRef(workspaceID)
+		resolved, err := config.ResolveWorkspaceRef(workspaceID)
+		if err != nil {
+			return err
+		}
+		workspaceID = resolved
 	}
 	result, err := app.Workspaces().AcceptInvite(token, code, workspaceID)
 	if err != nil {
@@ -1294,7 +1304,10 @@ func bridgeEmailResend(a map[string]interface{}) error {
 
 func bridgeAgentList(a map[string]interface{}) error {
 	pc, _ := config.LoadProjectConfig()
-	wsID := bridgeWorkspaceID(a, pc)
+	wsID, err := bridgeWorkspaceID(a, pc)
+	if err != nil {
+		return err
+	}
 	if wsID == "" {
 		return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch <name>' first")
 	}
@@ -1342,7 +1355,10 @@ func bridgeAgentDelete(a map[string]interface{}) error {
 		return err
 	}
 	pc, _ := config.LoadProjectConfig()
-	wsID := bridgeWorkspaceID(a, pc)
+	wsID, err := bridgeWorkspaceID(a, pc)
+	if err != nil {
+		return err
+	}
 	if wsID == "" {
 		return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch <name>' first")
 	}
@@ -1373,7 +1389,10 @@ func bridgeAgentTokenIssue(a map[string]interface{}) error {
 		return err
 	}
 	pc, _ := config.LoadProjectConfig()
-	wsID := bridgeWorkspaceID(a, pc)
+	wsID, err := bridgeWorkspaceID(a, pc)
+	if err != nil {
+		return err
+	}
 	if wsID == "" {
 		return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch <name>' first")
 	}
@@ -1429,7 +1448,10 @@ func bridgeAgentTokenRotate(a map[string]interface{}) error {
 		overlapHours = 0
 	}
 	pc, _ := config.LoadProjectConfig()
-	wsID := bridgeWorkspaceID(a, pc)
+	wsID, err := bridgeWorkspaceID(a, pc)
+	if err != nil {
+		return err
+	}
 	if wsID == "" {
 		return fmt.Errorf("no workspace selected — run 'agentsecrets workspace switch <name>' first")
 	}
@@ -1496,21 +1518,6 @@ func bridgeSecretsRotationStatus(a map[string]interface{}) error {
 	return nil
 }
 
-// resolveBridgeWorkspaceRef maps a workspace id-or-name to its id via the
-// local cache, passing unknown values through for the server to reject.
-// "personal" resolves to the caller's personal workspace so it is a portable
-// per-call address that does not require the workspace's display name baked in.
-func resolveBridgeWorkspaceRef(ref string) string {
-	if cfg, err := config.LoadGlobalConfig(); err == nil && cfg != nil {
-		for id, ws := range cfg.Workspaces {
-			if id == ref || ws.Name == ref || (strings.EqualFold(ref, "personal") && strings.EqualFold(ws.Type, "personal")) {
-				return id
-			}
-		}
-	}
-	return ref
-}
-
 // logs ----------------------------------------------------------------------------------
 
 // bridgeSafeLogs mirrors the Go MCP SafeProxyLog: metadata only, never values.
@@ -1557,7 +1564,11 @@ func bridgeLogsList(a map[string]interface{}) error {
 	}
 	// Explicit workspace routes directly (server-authorized); no binding check.
 	if v := argStr(a, "workspace"); v != "" {
-		wsID = resolveBridgeWorkspaceRef(v)
+		resolved, err := config.ResolveWorkspaceRef(v)
+		if err != nil {
+			return err
+		}
+		wsID = resolved
 	}
 	if wsID == "" {
 		return fmt.Errorf("no workspace configured — run 'agentsecrets init' first")
@@ -1602,7 +1613,11 @@ func bridgeLogsSummary(a map[string]interface{}) error {
 	}
 	// Explicit workspace routes directly (server-authorized); no binding check.
 	if v := argStr(a, "workspace"); v != "" {
-		wsID = resolveBridgeWorkspaceRef(v)
+		resolved, err := config.ResolveWorkspaceRef(v)
+		if err != nil {
+			return err
+		}
+		wsID = resolved
 	}
 	filter := log.Filter{Limit: 1000, ProjectID: projectID}
 	if days, ok := a["days"].(float64); ok && days > 0 {
