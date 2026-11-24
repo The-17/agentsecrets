@@ -53,6 +53,22 @@ func storeKeychainBatch(projectID, environment string, kv map[string]string) err
 	return nil
 }
 
+// restoreKeychainBatch is the compensating transition for a failed cloud write.
+// It restores values captured before the keychain batch was written.
+func restoreKeychainBatch(projectID, env string, keys map[string]string, previous map[string]string) {
+	restore := make(map[string]string)
+	for key := range keys {
+		if value, ok := previous[key]; ok {
+			restore[key] = value
+			continue
+		}
+		_ = keyring.DeleteSecret(projectID, env, key)
+	}
+	if len(restore) > 0 {
+		_, _ = setSecretsBatch(projectID, env, restore, nil)
+	}
+}
+
 // BatchSet adds or updates multiple secrets in a single API call.
 // If environment is empty, it uses the currently resolved environment.
 func (s *Service) BatchSet(kv map[string]string, environment string) error {
@@ -85,6 +101,7 @@ func (s *Service) BatchSet(kv map[string]string, environment string) error {
 	// else, so a set the user will consume through env must land there. A
 	// best-effort write left the cloud correct while env injected fewer secrets
 	// than the project held, with one stderr line as the only clue.
+	previous, _ := keyring.GetAllProjectSecrets(project.ProjectID, env)
 	if err := storeKeychainBatch(project.ProjectID, env, kv); err != nil {
 		return err
 	}
@@ -96,6 +113,10 @@ func (s *Service) BatchSet(kv map[string]string, environment string) error {
 	}
 
 	if err := s.API.CallNoContent("secrets.create", "POST", data, nil, nil); err != nil {
+		// The keychain was written first. Put the previous local values back so
+		// a failed cloud write cannot leave local env resolution ahead of the
+		// server. A key that did not exist locally is removed again.
+		restoreKeychainBatch(project.ProjectID, env, kv, previous)
 		return fmt.Errorf("batch set: API call failed: %w", err)
 	}
 

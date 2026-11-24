@@ -287,7 +287,11 @@ parseArgs:
 		if useCloud {
 			tokenSource = gateway.DescribeTokenSource()
 		}
-		for _, line := range envCheckLines(selection, requestedEnv, projectName, tokenSource, keys, guardPath != "", guardInjection(secrets, missing, requestedEnv, allowEmpty)) {
+		checkEnv := requestedEnv
+		if checkEnv == "" && useCloud {
+			checkEnv = "token-bound"
+		}
+		for _, line := range envCheckLines(selection, checkEnv, projectName, tokenSource, keys, guardPath != "", guardInjection(secrets, missing, requestedEnv, allowEmpty)) {
 			fmt.Println(line)
 		}
 		return nil
