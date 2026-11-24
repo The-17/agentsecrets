@@ -118,8 +118,9 @@ func Close() {
 	resetConn()
 }
 
-// IsAvailable checks whether the keychain-auth socket file exists on disk.
-// On Windows, it attempts to dial the named pipe to check availability.
+// IsAvailable probes the candidate daemon sockets. It is read-only: deleting a
+// stale socket from a predicate made a status check mutate shared state and
+// could remove the socket of a daemon that came up between the dial and remove.
 func IsAvailable() bool {
 	sockPath := SocketPath()
 	c, err := dialCLOEXEC(sockPath)
@@ -136,13 +137,7 @@ func IsAvailable() bool {
 		}
 	}
 
-	// Clean up stale dead socket file if any
-	if runtime.GOOS != "windows" {
-		_ = os.Remove(sockPath)
-		if userSock != sockPath {
-			_ = os.Remove(userSock)
-		}
-	}
+	// Stale sockets are removed only by the explicit repair path, not here.
 	return false
 }
 
@@ -457,6 +452,19 @@ func sendRequest(req request) (*response, error) {
 // sendRequestOnce performs a single request/response exchange, reconnecting once if
 // the connection is half-open. It does not attempt registration repair.
 // The caller must NOT hold sessionMu.
+// retrySafe reports whether replaying a request after a lost response has the
+// same effect as the first attempt. All four daemon actions are keyed by target:
+// write overwrites the same target, delete removes the same target, and read
+// and search have no effect. An unknown action is never replayed.
+func retrySafe(req request) bool {
+	switch req.Action {
+	case actionRead, actionWrite, actionDelete, actionSearch:
+		return true
+	default:
+		return false
+	}
+}
+
 func sendRequestOnce(req request) (*response, error) {
 	sessionMu.Lock()
 	testMode := testStubMode
@@ -488,6 +496,9 @@ func sendRequestOnce(req request) (*response, error) {
 		if reconnectErr := ensureConn(); reconnectErr != nil {
 			return nil, &DaemonConnectionError{Cause: fmt.Errorf("failed to send request: %w (reconnect failed: %v)", err, reconnectErr)}
 		}
+		if !retrySafe(req) {
+			return nil, &DaemonConnectionError{Cause: fmt.Errorf("request action %q is not safe to replay: %w", req.Action, err)}
+		}
 		if err = encoder.Encode(req); err != nil {
 			resetConn()
 			return nil, &DaemonConnectionError{Cause: fmt.Errorf("failed to send request on retry: %w", err)}
@@ -503,6 +514,9 @@ func sendRequestOnce(req request) (*response, error) {
 				return nil, &DaemonConnectionError{Cause: fmt.Errorf("connection lost: %w (reconnect failed: %v)", scanErr, reconnectErr)}
 			}
 			return nil, &DaemonConnectionError{Cause: fmt.Errorf("connection closed by daemon (reconnect failed: %v)", reconnectErr)}
+		}
+		if !retrySafe(req) {
+			return nil, &DaemonConnectionError{Cause: fmt.Errorf("request action %q is not safe to replay", req.Action)}
 		}
 		if err := encoder.Encode(req); err != nil {
 			resetConn()

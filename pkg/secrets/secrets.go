@@ -231,7 +231,9 @@ func (s *Service) ListForEnv(env string) ([]SecretMetadata, error) {
 			if list.WorkspaceName != "" {
 				project.WorkspaceName = list.WorkspaceName
 			}
-			_ = config.SaveProjectConfig(project)
+			if err := config.SaveProjectConfig(project); err != nil {
+				return nil, fmt.Errorf("secrets list: workspace transfer detected but the local binding could not be updated: %w", err)
+			}
 		}
 	}
 
@@ -285,7 +287,9 @@ func (s *Service) Pull(targetKeys []string) error {
 						if ws, ok := cfg.Workspaces[cfg.SelectedWorkspaceID]; ok {
 							project.WorkspaceName = ws.Name
 						}
-						_ = config.SaveProjectConfig(project)
+						if err := config.SaveProjectConfig(project); err != nil {
+							return fmt.Errorf("pull: workspace key fallback succeeded but the local binding could not be updated: %w", err)
+						}
 					}
 				}
 			}

@@ -41,6 +41,25 @@ func UserSocketPath() string {
 	return filepath.Join(runtimeDir, "keychain-auth", "agent.sock")
 }
 
+// RemoveStaleSockets deletes daemon socket files that no longer have a live
+// listener. This is an explicit repair action, called only from the recovery
+// ladder, so a read-only availability probe never removes shared state.
+func RemoveStaleSockets() {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	for _, path := range []string{"/run/keychain-auth/agent.sock", UserSocketPath(), socketPathOverride} {
+		if path == "" {
+			continue
+		}
+		if c, err := dialCLOEXEC(path); err == nil {
+			_ = c.Close()
+			continue // a live daemon owns this socket
+		}
+		_ = os.Remove(path)
+	}
+}
+
 // SocketPath returns the active keychain-auth Unix socket path or named pipe path on Windows.
 // It checks whether a system socket is actively dialable before falling back to user paths.
 func SocketPath() string {

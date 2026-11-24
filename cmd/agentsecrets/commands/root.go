@@ -411,7 +411,7 @@ func recoverDaemonState(kind recoveryKind) error {
 	switch kind {
 	case recoverDaemon:
 		keychainauth.Close()
-		_ = os.Remove(keychainauth.SocketPath())
+		keychainauth.RemoveStaleSockets()
 		ensureSudoCachedOnce("keychain-auth daemon restart is required. Please authorize when prompted.")
 		if err := ui.Spinner("Starting keychain-auth daemon...", keychainauth.AutoSetup); err != nil {
 			return keychainRequiredError("keychain-auth setup", err)
@@ -476,8 +476,9 @@ func ensureDaemonInitialized() error {
 		}
 		if !keychainauth.IsAvailable() {
 			// Genuinely unconfigured: run full setup (installs the sandbox,
-			// registers this binary, starts the daemon). This is the only path
-			// that may prompt for authorization.
+			// registers this binary, starts the daemon). Remove stale socket
+			// files here, where a restart is already about to happen.
+			keychainauth.RemoveStaleSockets()
 			ensureSudoCachedOnce("keychain-auth sandbox system setup is required. Please authorize when prompted.")
 			if err := ui.Spinner("Setting up keychain-auth...", keychainauth.AutoSetup); err != nil {
 				return keychainRequiredError("keychain-auth setup", err)

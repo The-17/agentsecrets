@@ -376,8 +376,9 @@ parseArgs:
 		if msg := guardAttachWarning(warnPath); msg != "" {
 			ui.Warning(msg)
 		}
-	} else if guardNoticeOnce() {
+	} else if guardNoticePending() {
 		ui.Info("Output guard library is not installed here; child output is filtered by the parent process only.")
+		markGuardNoticeSeen()
 	}
 
 	// Build environment: parent env + injected secrets. Inherited entries for

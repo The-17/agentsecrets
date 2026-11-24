@@ -9,24 +9,26 @@ import (
 
 const envGuardNoticeFile = ".envguard-notice"
 
-// guardNoticeOnce reports whether the missing-guard notice has not been shown
-// before. The old warning printed a `make envguard` instruction on every env
-// run. Package users have no makefile, and a protection notice repeated on
-// every invocation trains them to ignore it. Show it once, in plain language.
-func guardNoticeOnce() bool {
+// guardNoticePending reports whether the missing-guard notice has not been
+// shown before. It does not write the marker: the caller writes it only after
+// the notice has actually been printed.
+func guardNoticePending() bool {
 	paths, err := config.GetPaths()
 	if err != nil {
 		return false
 	}
-	marker := filepath.Join(paths.GlobalDir, envGuardNoticeFile)
-	if _, err := os.Stat(marker); err == nil {
-		return false
+	_, err = os.Stat(filepath.Join(paths.GlobalDir, envGuardNoticeFile))
+	return err != nil
+}
+
+// markGuardNoticeSeen records that the notice was shown on this machine.
+func markGuardNoticeSeen() {
+	paths, err := config.GetPaths()
+	if err != nil {
+		return
 	}
 	if err := os.MkdirAll(paths.GlobalDir, 0700); err != nil {
-		return false
+		return
 	}
-	if err := os.WriteFile(marker, []byte("1\n"), 0600); err != nil {
-		return false
-	}
-	return true
+	_ = os.WriteFile(filepath.Join(paths.GlobalDir, envGuardNoticeFile), []byte("1\n"), 0600)
 }
