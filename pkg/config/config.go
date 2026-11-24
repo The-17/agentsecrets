@@ -73,6 +73,15 @@ type GlobalConfig struct {
 	// on this device. It gates re-enrollment (which would rotate the record) and
 	// tells the login command to prefer the OPAQUE exchange over password.
 	OpaqueEnrolled bool `json:"opaque_enrolled,omitempty"`
+	// PendingEmail is the address of an email change that was requested but
+	// not yet confirmed. It lets a later run resume after an interrupted OTP
+	// prompt without requesting a second code.
+	PendingEmail string `json:"pending_email,omitempty"`
+	// PendingRecoveryEnvelope identifies a recovery key rotation that was
+	// started but not finished. The old key stays valid until the marker is
+	// cleared, so a later run can finish or discard the rotation explicitly.
+	PendingRecoveryEnvelope string `json:"pending_recovery_envelope,omitempty"`
+	PendingRecoveryVersion  int    `json:"pending_recovery_version,omitempty"`
 }
 
 // GetWorkspacesSyncedAt returns when the workspace cache was last reconciled
@@ -634,6 +643,56 @@ func GetEmail() string {
 	return config.Email
 }
 
+// GetPendingRecovery returns the envelope id and version of an unfinished
+// recovery key rotation.
+func GetPendingRecovery() (string, int) {
+	c, err := LoadGlobalConfig()
+	if err != nil || c == nil {
+		return "", 0
+	}
+	return c.PendingRecoveryEnvelope, c.PendingRecoveryVersion
+}
+
+// SetPendingRecovery records an unfinished recovery key rotation.
+func SetPendingRecovery(envelopeID string, version int) error {
+	c, _ := LoadGlobalConfig()
+	if c == nil {
+		c = &GlobalConfig{}
+	}
+	c.PendingRecoveryEnvelope = envelopeID
+	c.PendingRecoveryVersion = version
+	return SaveGlobalConfig(c)
+}
+
+// ClearPendingRecovery removes the marker after the rotation is finished.
+func ClearPendingRecovery() error {
+	return SetPendingRecovery("", 0)
+}
+
+// GetPendingEmail returns the address of an unconfirmed email change.
+func GetPendingEmail() string {
+	c, err := LoadGlobalConfig()
+	if err != nil || c == nil {
+		return ""
+	}
+	return c.PendingEmail
+}
+
+// SetPendingEmail records an email change that is waiting for its code.
+func SetPendingEmail(email string) error {
+	c, _ := LoadGlobalConfig()
+	if c == nil {
+		c = &GlobalConfig{}
+	}
+	c.PendingEmail = email
+	return SaveGlobalConfig(c)
+}
+
+// ClearPendingEmail removes the resume marker after a confirmed change.
+func ClearPendingEmail() error {
+	return SetPendingEmail("")
+}
+
 // SetEmail stores the user's email in global config.
 func SetEmail(email string) error {
 	c, _ := LoadGlobalConfig()
@@ -641,6 +700,9 @@ func SetEmail(email string) error {
 		c = &GlobalConfig{}
 	}
 	c.Email = email
+	if c.PendingEmail == email {
+		c.PendingEmail = ""
+	}
 	return SaveGlobalConfig(c)
 }
 

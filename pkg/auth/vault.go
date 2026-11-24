@@ -483,6 +483,38 @@ func (s *Service) BeginRecoveryRotation(password string) (*RecoveryRotation, err
 }
 
 // FinishRecoveryRotation retires every recovery envelope except the new one.
+// ResumeRecoveryRotation rebuilds the in-memory rotation state from the local
+// marker after an interruption. The Vault Key is re-derived from the password;
+// it is never persisted.
+func (s *Service) ResumeRecoveryRotation(password string) (*RecoveryRotation, error) {
+	envelopeID, version := config.GetPendingRecovery()
+	if envelopeID == "" {
+		return nil, fmt.Errorf("rotate recovery: no pending rotation to resume")
+	}
+	userID := config.GetUserID()
+	if userID == "" {
+		return nil, fmt.Errorf("rotate recovery: no account id stored; log in again")
+	}
+	v, _, supported, err := s.fetchVault(userID)
+	if err != nil {
+		return nil, err
+	}
+	if !supported || v == nil {
+		return nil, fmt.Errorf("rotate recovery: no vault is available for this account")
+	}
+	vk, err := v.UnlockWithPassword(userID, password)
+	if err != nil {
+		return nil, fmt.Errorf("rotate recovery: %w", err)
+	}
+	return &RecoveryRotation{
+		EnvelopeID: envelopeID,
+		UserID:     userID,
+		VK:         vk,
+		Version:    version,
+		Vault:      v,
+	}, nil
+}
+
 func (s *Service) FinishRecoveryRotation(rot *RecoveryRotation) error {
 	if rot == nil || rot.Vault == nil {
 		return fmt.Errorf("rotate recovery: missing rotation state")

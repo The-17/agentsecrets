@@ -61,34 +61,44 @@ func numericCode(s string) error {
 }
 
 func runEmailUpdate(_ *cobra.Command, _ []string) error {
-	var newEmail string
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("New email").
-				Description("A verification code will be sent to this address.").
-				Value(&newEmail).
-				Validate(func(s string) error {
-					if s == "" {
-						return fmt.Errorf("email is required")
-					}
-					return nil
-				}),
-		),
-	)
-	if err := form.Run(); err != nil {
-		return nil
+	newEmail := config.GetPendingEmail()
+	resume := false
+	if newEmail != "" {
+		resume = confirmHuh("Resume pending email change to "+newEmail+"?", "", "Resume", "Start over")
 	}
-
-	if err := ui.Spinner("Requesting email change...", func() error {
-		return app.Auth().UpdateEmail(newEmail)
-	}); err != nil {
-		ui.ErrorWithSuggestions(
-			fmt.Errorf("email change request failed: %w", err),
-			"Make sure the new address is not already registered.",
-			"If the server reports delivery is not configured, email change is not enabled on this host yet.",
+	if !resume {
+		newEmail = ""
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("New email").
+					Description("A verification code will be sent to this address.").
+					Value(&newEmail).
+					Validate(func(s string) error {
+						if s == "" {
+							return fmt.Errorf("email is required")
+						}
+						return nil
+					}),
+			),
 		)
-		return nil
+		if err := form.Run(); err != nil {
+			return nil
+		}
+
+		if err := ui.Spinner("Requesting email change...", func() error {
+			return app.Auth().UpdateEmail(newEmail)
+		}); err != nil {
+			ui.ErrorWithSuggestions(
+				fmt.Errorf("email change request failed: %w", err),
+				"Make sure the new address is not already registered.",
+				"If the server reports delivery is not configured, email change is not enabled on this host yet.",
+			)
+			return nil
+		}
+		if err := config.SetPendingEmail(newEmail); err != nil {
+			return fmt.Errorf("email change was requested but the resume marker could not be saved: %w", err)
+		}
 	}
 
 	ui.Success("Verification code sent. Check your new address.")
@@ -116,7 +126,7 @@ func runEmailUpdate(_ *cobra.Command, _ []string) error {
 	if config.GetOpaqueEnrolled() {
 		password, ok := promptReenrollPassword()
 		if !ok {
-			ui.Warning("Email change cancelled. Your address is unchanged.")
+			ui.Warning("Email change cancelled. Your address is unchanged; run 'agentsecrets profile email update' to resume with the same code.")
 			return nil
 		}
 		if err := ui.Spinner("Confirming email change and re-linking OPAQUE...", func() error {
@@ -128,6 +138,9 @@ func runEmailUpdate(_ *cobra.Command, _ []string) error {
 				"If that fails, use your recovery key. It is always the way back in.",
 			)
 			return nil
+		}
+		if err := config.ClearPendingEmail(); err != nil {
+			return fmt.Errorf("email changed but the resume marker could not be cleared: %w", err)
 		}
 		ui.Success("Email updated and OPAQUE re-linked. Sign in again with your new address.")
 		return nil
@@ -143,6 +156,9 @@ func runEmailUpdate(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	if err := config.ClearPendingEmail(); err != nil {
+		return fmt.Errorf("email changed but the resume marker could not be cleared: %w", err)
+	}
 	ui.Success("Email updated. Log in again to pick up the new address on this device.")
 	return nil
 }

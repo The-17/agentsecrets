@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/The-17/agentsecrets/pkg/auth"
+	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/ui"
 )
 
@@ -78,25 +79,40 @@ you saved the new one. If you abort or the process crashes, no lockout occurs.
 		}
 
 		var rotation *auth.RecoveryRotation
-		if err := ui.Spinner("Creating a new recovery key...", func() error {
+		pendingEnvelope, _ := config.GetPendingRecovery()
+		spinnerLabel := "Creating a new recovery key..."
+		if pendingEnvelope != "" {
+			spinnerLabel = "Resuming the interrupted recovery key rotation..."
+		}
+		if err := ui.Spinner(spinnerLabel, func() error {
 			var err error
+			if pendingEnvelope != "" {
+				rotation, err = app.Auth().ResumeRecoveryRotation(password)
+				return err
+			}
 			rotation, err = app.Auth().BeginRecoveryRotation(password)
+			if err == nil {
+				if markerErr := config.SetPendingRecovery(rotation.EnvelopeID, rotation.Version); markerErr != nil {
+					return fmt.Errorf("recovery key created but the resume marker could not be saved: %w", markerErr)
+				}
+			}
 			return err
 		}); err != nil {
-			ui.Error(fmt.Sprintf("Recovery rotation failed: %v", err))
-			return nil
+			return err
 		}
 
 		if !showRecoveryKey(rotation.Key) {
-			ui.Warning("New key not confirmed. The old key is still valid. Run the command again to create another key.")
+			ui.Warning("New key not confirmed. The old key is still valid. Run this command again to resume the rotation with the same envelope.")
 			return nil
 		}
 
 		if err := ui.Spinner("Retiring the old recovery key...", func() error {
 			return app.Auth().FinishRecoveryRotation(rotation)
 		}); err != nil {
-			ui.Warning(fmt.Sprintf("New key saved, but retiring the old key failed: %v", err))
-			return nil
+			return err
+		}
+		if err := config.ClearPendingRecovery(); err != nil {
+			return fmt.Errorf("recovery key rotated but the resume marker could not be cleared: %w", err)
 		}
 		ui.Success("Recovery key rotated. The old key no longer works.")
 		return nil
