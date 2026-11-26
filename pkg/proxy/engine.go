@@ -144,15 +144,15 @@ func redactSecretFromResponse(body []byte, secretValue string) []byte {
 
 // CallRequest is the input to the engine — used by both MCP and HTTP paths.
 type CallRequest struct {
-	TargetURL     string            // full URL e.g. https://api.stripe.com/v1/charges
-	Method        string            // GET, POST, PUT, PATCH, DELETE
-	Headers       map[string]string // extra headers to forward (non-auth)
-	Body          []byte            // raw request body (optional)
-	Injections    []Injection       // what to inject and where
-	AgentID       string            // optional, for audit logging
-	AgentToken    string            // optional agent token (or reads AS_AGENT_TOKEN)
-	IdentityLevel string            // "anonymous", "declared", "issued"
-	TokenID       string            // optional token ID if issued
+	TargetURL     string                          // full URL e.g. https://api.stripe.com/v1/charges
+	Method        string                          // GET, POST, PUT, PATCH, DELETE
+	Headers       map[string]string               // extra headers to forward (non-auth)
+	Body          []byte                          // raw request body (optional)
+	Injections    []Injection                     // what to inject and where
+	AgentID       string                          // optional, for audit logging
+	AgentToken    string                          // optional agent token (or reads AS_AGENT_TOKEN)
+	IdentityLevel string                          // "anonymous", "declared", "issued"
+	TokenID       string                          // optional token ID if issued
 	Capabilities  *capabilities.AgentCapabilities // agent's secret access restrictions (nil = unrestricted)
 	// Expected is an optional caller-declared context. When set, the engine
 	// asserts the resolved context matches it and fails the call closed on any
@@ -290,10 +290,7 @@ func NewEngine(projectID string) (*Engine, error) {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-	eng.Client = &http.Client{
-		Transport: transport,
-		Timeout:   DefaultTimeout,
-	}
+	eng.Client = newEngineHTTPClient(transport)
 
 	eng.ResolveSecret = func(key string) (string, error) {
 		return keyring.GetSecret(projectID, resolveEnvForAudit(), key)
@@ -397,11 +394,11 @@ type identityResult struct {
 	Outcome identityOutcome
 
 	// Populated on identityOK (when a token was validated).
-	ResolvedToken        string // the concrete token after <AGENT>_TOKEN deref
-	ResolvedAgentID      string
-	ResolvedTokenID      string
+	ResolvedToken         string // the concrete token after <AGENT>_TOKEN deref
+	ResolvedAgentID       string
+	ResolvedTokenID       string
 	ResolvedIdentityLevel string
-	ResolvedCapabilities *capabilities.AgentCapabilities
+	ResolvedCapabilities  *capabilities.AgentCapabilities
 
 	// Populated on identityBlocked.
 	Reason  string
@@ -459,7 +456,7 @@ func (e *Engine) resolveIdentity(req CallRequest) identityResult {
 		if err != nil {
 			return identityResult{
 				Outcome: identityError,
-				Err: fmt.Errorf("agent token reference %q was not found in the OS Keychain. Please run 'agentsecrets agent token issue %s' to create and save it in your keychain first", token, agentName),
+				Err:     fmt.Errorf("agent token reference %q was not found in the OS Keychain. Please run 'agentsecrets agent token issue %s' to create and save it in your keychain first", token, agentName),
 			}
 		}
 		token = retrievedToken
@@ -482,7 +479,7 @@ func (e *Engine) resolveIdentity(req CallRequest) identityResult {
 	if err != nil {
 		return identityResult{
 			Outcome: identityError,
-			Err: fmt.Errorf("agent token validation failed: %w", err),
+			Err:     fmt.Errorf("agent token validation failed: %w", err),
 		}
 	}
 
@@ -1484,6 +1481,26 @@ func (e *Engine) logForensic(
 	_ = e.Audit.LogForensic(event)
 }
 
+// refuseRedirect stops the proxy client at the first 3xx response. A Location
+// header is data from an untrusted upstream, not permission to carry injected
+// credentials to another host. The allowlist is enforced on the original
+// request only, so following a redirect would bypass it and leak header-style
+// secrets to the redirect target.
+func refuseRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// newEngineHTTPClient builds the outbound client used for proxied calls. It is
+// separate from NewEngine so the redirect policy can be tested without a full
+// project or keychain.
+func newEngineHTTPClient(transport http.RoundTripper) *http.Client {
+	return &http.Client{
+		Transport:     transport,
+		Timeout:       DefaultTimeout,
+		CheckRedirect: refuseRedirect,
+	}
+}
+
 func isPrivateOrLoopbackIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return true
@@ -1514,4 +1531,3 @@ func isPrivateOrLoopbackIP(ip net.IP) bool {
 	}
 	return false
 }
-
