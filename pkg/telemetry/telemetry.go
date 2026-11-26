@@ -38,6 +38,10 @@ type Day struct {
 	WorkspaceType        string `json:"workspace_type"`
 	WorkspaceMemberCount int    `json:"workspace_member_count"`
 
+	// Typos counts where correction prompts were needed. Keys are bounded
+	// categories, never the user's raw input.
+	Typos map[string]int `json:"typos,omitempty"`
+
 	// Execution Path Breakdown
 	ProxyCallsDaemon    int `json:"proxy_calls_daemon"`
 	ProxyCallsTransient int `json:"proxy_calls_transient"`
@@ -198,6 +202,7 @@ func currentDayLocked() *Day {
 			IntegrationsActive:  []string{},
 			OS:                  runtime.GOOS,
 			Arch:                runtime.GOARCH,
+			Typos:               make(map[string]int),
 		}
 		data.Daily[date] = d
 	}
@@ -223,6 +228,34 @@ func RecordCommand(cmdName string) {
 		}
 		d.CommandExecutions[cmdName]++
 		d.DeveloperCommands++
+	})
+}
+
+// TypoCategory names where a correction prompt was needed. The raw text the
+// user typed is never recorded or synced. Only one of these fixed keys can
+// reach the telemetry payload.
+type TypoCategory string
+
+const (
+	TypoCommand     TypoCategory = "command"
+	TypoFlag        TypoCategory = "flag"
+	TypoSecretKey   TypoCategory = "secret_key"
+	TypoEnvironment TypoCategory = "environment"
+	TypoOther       TypoCategory = "other"
+)
+
+// RecordTypo counts a correction by category, not by the string the user
+// typed. A mistyped secret name or email must not become personal data in the
+// synced payload.
+func RecordTypo(category TypoCategory) {
+	if category == "" {
+		category = TypoOther
+	}
+	record(func(d *Day) {
+		if d.Typos == nil {
+			d.Typos = make(map[string]int)
+		}
+		d.Typos[string(category)]++
 	})
 }
 

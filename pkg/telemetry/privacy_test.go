@@ -38,6 +38,7 @@ func TestDaySnapshotExcludesIdentifiers(t *testing.T) {
 		WorkspaceType:        "team",
 		WorkspaceMemberCount: 5,
 		CommandExecutions:    map[string]int{"secrets pull": 2},
+		Typos:                map[string]int{"command": 2},
 	}
 	payload, err := json.Marshal(daySnapshot{Day: day, Date: "2026-11-26"})
 	if err != nil {
@@ -48,13 +49,13 @@ func TestDaySnapshotExcludesIdentifiers(t *testing.T) {
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		t.Fatal(err)
 	}
-	forbidden := []string{"user_email", "project_id", "workspace_id", "active_environment", "typos"}
+	forbidden := []string{"user_email", "project_id", "workspace_id", "active_environment"}
 	for _, key := range forbidden {
 		if _, ok := fields[key]; ok {
 			t.Errorf("telemetry payload contains identifying field %q", key)
 		}
 	}
-	required := []string{"cli_version", "os", "arch", "proxy_calls", "secrets_resolved", "workspace_type", "date"}
+	required := []string{"cli_version", "os", "arch", "proxy_calls", "secrets_resolved", "workspace_type", "date", "typos"}
 	for _, key := range required {
 		if _, ok := fields[key]; !ok {
 			t.Errorf("telemetry payload is missing aggregate field %q", key)
@@ -85,9 +86,41 @@ func TestLocalTelemetryFileExcludesIdentifiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{"user_email", "project_id", "workspace_id", "active_environment", "typos"} {
+	for _, marker := range []string{"user_email", "project_id", "workspace_id", "active_environment"} {
 		if strings.Contains(string(raw), marker) {
 			t.Errorf("local telemetry file contains %q", marker)
 		}
+	}
+}
+
+// TestTypoKeysAreBoundedCategories proves typo metrics survive without the
+// raw user input being stored. The typed argument makes a free-form string
+// impossible at compile time.
+func TestTypoKeysAreBoundedCategories(t *testing.T) {
+	resetTelemetryState(t)
+
+	RecordTypo(TypoCommand)
+	RecordTypo(TypoCommand)
+	RecordTypo(TypoSecretKey)
+	RecordTypo("")
+
+	mu.Lock()
+	d := currentDayLocked()
+	mu.Unlock()
+
+	allowed := map[string]bool{
+		string(TypoCommand): true, string(TypoFlag): true, string(TypoSecretKey): true,
+		string(TypoEnvironment): true, string(TypoOther): true,
+	}
+	for key := range d.Typos {
+		if !allowed[key] {
+			t.Errorf("typo key %q is not a bounded category", key)
+		}
+	}
+	if d.Typos[string(TypoCommand)] != 2 {
+		t.Errorf("command typos = %d, want 2", d.Typos[string(TypoCommand)])
+	}
+	if d.Typos[string(TypoOther)] != 1 {
+		t.Errorf("other typos = %d, want 1", d.Typos[string(TypoOther)])
 	}
 }
