@@ -71,7 +71,6 @@ func InjectAll(req *http.Request, creds []string, injs []Injection) error {
 	// Handle all body and form injections against an in-memory representation.
 	var bodyMap map[string]interface{}
 	var form url.Values
-	contentType := strings.ToLower(req.Header.Get("Content-Type"))
 	bodyDirty := false
 	formDirty := false
 
@@ -117,19 +116,11 @@ func InjectAll(req *http.Request, creds []string, injs []Injection) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal body: %w", err)
 		}
-		req.Body = io.NopCloser(bytes.NewReader(newBody))
-		req.ContentLength = int64(len(newBody))
-		if contentType == "" {
-			req.Header.Set("Content-Type", "application/json")
-		}
+		setInjectedBody(req, newBody, "application/json")
 	}
 	if formDirty {
 		encoded := form.Encode()
-		req.Body = io.NopCloser(strings.NewReader(encoded))
-		req.ContentLength = int64(len(encoded))
-		if contentType == "" {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		}
+		setInjectedBody(req, []byte(encoded), "application/x-www-form-urlencoded")
 	}
 
 	return nil
@@ -235,13 +226,23 @@ func injectBody(req *http.Request, value string, path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal body: %w", err)
 	}
-	req.Body = io.NopCloser(bytes.NewReader(newBody))
-	req.ContentLength = int64(len(newBody))
+	setInjectedBody(req, newBody, "application/json")
+	return nil
+}
+
+// setInjectedBody replaces the request body and keeps GetBody in sync. net/http
+// uses GetBody to replay a request (307/308, auth retries). A body replaced
+// without it is resent with a stale ContentLength and no readable bytes.
+func setInjectedBody(req *http.Request, body []byte, contentType string) {
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
 	// Don't clobber a caller-set Content-Type; only default it when absent.
 	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
-	return nil
 }
 
 // injectForm injects a value into a URL-encoded form body.
@@ -272,11 +273,6 @@ func injectForm(req *http.Request, value string, key string) error {
 	form.Set(key, value)
 
 	encoded := form.Encode()
-	req.Body = io.NopCloser(strings.NewReader(encoded))
-	req.ContentLength = int64(len(encoded))
-	// Don't clobber a caller-set Content-Type; only default it when absent.
-	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
+	setInjectedBody(req, []byte(encoded), "application/x-www-form-urlencoded")
 	return nil
 }
