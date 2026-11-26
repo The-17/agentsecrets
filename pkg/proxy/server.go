@@ -101,6 +101,18 @@ func (s *Server) validateSession(next http.HandlerFunc) http.HandlerFunc {
 // a graceful shutdown: it stops accepting new connections, drains in-flight
 // requests within a bounded window, and waits for background workers to exit
 // before returning.
+// newProxyHTTPServer builds both the persistent proxy server and the transient
+// approval server. Without these limits a local client could hold a connection
+// open by trickling headers or a body forever.
+func newProxyHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+}
+
 func (s *Server) Start(ctx context.Context) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.Port)
 
@@ -129,7 +141,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
-	httpServer := &http.Server{Handler: s.mux}
+	httpServer := newProxyHTTPServer(s.mux)
 	errCh := make(chan error, 1)
 	go func() {
 		// Serve returns ErrServerClosed after a graceful Shutdown; that path is
@@ -501,9 +513,9 @@ func (s *Server) handleRotateSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":     "ok",
-		"message":    "session token rotated successfully",
-		"new_token":  newToken,
+		"status":    "ok",
+		"message":   "session token rotated successfully",
+		"new_token": newToken,
 	})
 }
 
