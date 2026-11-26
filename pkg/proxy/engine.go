@@ -1502,11 +1502,15 @@ func newEngineHTTPClient(transport http.RoundTripper) *http.Client {
 }
 
 func isPrivateOrLoopbackIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
 		return true
 	}
 	// Check RFC 1918 private ranges
 	if ip4 := ip.To4(); ip4 != nil {
+		// 0.0.0.0/8 routes to this host on many systems.
+		if ip4[0] == 0 || ip4.Equal(net.IPv4bcast) {
+			return true
+		}
 		// 10.0.0.0/8
 		if ip4[0] == 10 {
 			return true
