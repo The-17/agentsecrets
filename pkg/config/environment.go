@@ -92,12 +92,12 @@ var dotenvVariants = map[string]struct{}{
 	"template": {},
 }
 
-// LocalEnvironments returns every environment this machine knows about: the
-// standard three first, then custom names found in the project or global
-// selection, a .env.<name> file in projectRoot, or a synced-secret cache.
-// Names the user has never touched on this machine cannot be discovered, because
-// the control plane exposes no environment list per project.
-func LocalEnvironments(projectID, projectRoot string) ([]string, error) {
+// LocalEnvironments returns every environment this machine knows about offline:
+// the standard three first, then custom names found in the project or global
+// selection and .env.<name> files in projectRoot. It never reads a secret cache,
+// because keychain-auth is the only local store. Callers ask the control plane
+// first, so names this machine has not selected are discovered when online.
+func LocalEnvironments(projectRoot string) ([]string, error) {
 	custom := make(map[string]struct{})
 
 	add := func(raw string) {
@@ -129,29 +129,6 @@ func LocalEnvironments(projectID, projectRoot string) ([]string, error) {
 				continue
 			}
 			if _, isVariant := dotenvVariants[name]; isVariant {
-				continue
-			}
-			add(name)
-		}
-	}
-
-	if projectID != "" {
-		paths, err := GetPaths()
-		if err != nil {
-			return nil, err
-		}
-		entries, err := os.ReadDir(paths.GlobalDir)
-		if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("list cached environments in %s: %w", paths.GlobalDir, err)
-		}
-		prefix := "cloud_cache_" + projectID + "_"
-		for _, entry := range entries {
-			name, ok := strings.CutPrefix(entry.Name(), prefix)
-			if !ok {
-				continue
-			}
-			name, ok = strings.CutSuffix(name, ".json")
-			if !ok {
 				continue
 			}
 			add(name)

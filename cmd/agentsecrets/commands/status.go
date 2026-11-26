@@ -146,7 +146,7 @@ var statusCmd = &cobra.Command{
 				isAuthenticated,
 				keychainauth.IsAvailable(),
 				func() (int, int, error) {
-					diff, diffErr := app.Secrets().DiffCached("", "")
+					diff, diffErr := app.Secrets().Diff("", "")
 					if diffErr != nil {
 						return 0, 0, diffErr
 					}

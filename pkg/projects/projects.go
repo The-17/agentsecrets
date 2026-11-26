@@ -55,7 +55,7 @@ func (s *Service) environments(projectID, projectRoot string) ([]string, error) 
 			return names, nil
 		}
 	}
-	return config.LocalEnvironments(projectID, projectRoot)
+	return config.LocalEnvironments(projectRoot)
 }
 
 // List returns all projects for the currently selected workspace
