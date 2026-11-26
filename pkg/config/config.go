@@ -57,11 +57,10 @@ type GlobalConfig struct {
 	SelectedProjectID   string                         `json:"selected_project_id,omitempty"`
 	SelectedEnvironment string                         `json:"selected_environment,omitempty"` // standard or custom environment name
 	Workspaces          map[string]WorkspaceCacheEntry `json:"workspaces,omitempty"`
-	PasswordHash        string                         `json:"password_hash,omitempty"` // Added for local password verification
-	UserID              string                         `json:"user_id,omitempty"`       // Server-side account id bound into vault AAD
-	VaultPubKey         string                         `json:"vault_pubkey,omitempty"`  // Pinned Ed25519 vault proof key (trust on first unlock)
-	DefaultStorageMode  int                            `json:"default_storage_mode"`    // 1 = keychain (default), 2 = env_file
-	DefaultMode         string                         `json:"default_mode,omitempty"`  // "local" (default) or "cloud"
+	UserID              string                         `json:"user_id,omitempty"`      // Server-side account id bound into vault AAD
+	VaultPubKey         string                         `json:"vault_pubkey,omitempty"` // Pinned Ed25519 vault proof key (trust on first unlock)
+	DefaultStorageMode  int                            `json:"default_storage_mode"`   // 1 = keychain (default), 2 = env_file
+	DefaultMode         string                         `json:"default_mode,omitempty"` // "local" (default) or "cloud"
 	LastUpdateCheck     int64                          `json:"last_update_check,omitempty"`
 	LatestVersion       string                         `json:"latest_version,omitempty"`
 	LastUpdateAlert     int64                          `json:"last_update_alert,omitempty"`
@@ -367,6 +366,14 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 	var config GlobalConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
+	}
+
+	// F2: the old unsalted SHA-256 verifier is no longer trusted. Purge it on
+	// sight so an older client or a local reader cannot recover the password.
+	if strings.Contains(string(data), `"password_hash"`) {
+		if err := writeJSON(paths.ConfigFile, &config, 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove the legacy password hash from config.json: %v\n", err)
+		}
 	}
 
 	// Migration: If default_storage_mode is 0, check for legacy storage_mode key

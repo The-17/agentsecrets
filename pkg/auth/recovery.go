@@ -1,9 +1,7 @@
 package auth
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -182,8 +180,8 @@ func (s *Service) RecoverAccount(email, recoveryKey, newPassword string) (*Login
 			return nil, fmt.Errorf("recovery: you are signed in, but the new password was not saved: %w", err)
 		}
 
-		if err := saveLocalPasswordHash(email, newPassword); err != nil {
-			return nil, fmt.Errorf("recovery: the new password was saved, but the local verification hash could not be: %w", err)
+		if err := StorePasswordVerifier(newPassword); err != nil {
+			return nil, fmt.Errorf("recovery: the new password was saved, but the local verifier could not be: %w", err)
 		}
 		result.VaultVersion = fullVault.VaultVersion
 		result.RecoveryConfirmed = fullVault.RecoveryConfirmed
@@ -254,21 +252,4 @@ func (s *Service) storeRecoveredSession(
 		return fmt.Errorf("recovery: failed to save keypair: %w", err)
 	}
 	return nil
-}
-
-// saveLocalPasswordHash stores the allowlist verification hash used offline.
-func saveLocalPasswordHash(email, password string) error {
-	globalCfg, _ := config.LoadGlobalConfig()
-	if globalCfg == nil {
-		globalCfg = &config.GlobalConfig{}
-	}
-	globalCfg.Email = email
-	globalCfg.PasswordHash = localPasswordHash(email, password)
-	return config.SaveGlobalConfig(globalCfg)
-}
-
-// localPasswordHash mirrors the local verification hash stored by PerformLogin.
-func localPasswordHash(email, password string) string {
-	sum := sha256.Sum256([]byte(email + ":" + password))
-	return hex.EncodeToString(sum[:])
 }

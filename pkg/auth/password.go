@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 
@@ -68,17 +66,8 @@ func (s *Service) ChangePassword(currentPassword, newPassword string) error {
 		return fmt.Errorf("change password: %w", err)
 	}
 
-	hasher := sha256.New()
-	hasher.Write([]byte(email + ":" + newPassword))
-	passwordHash := hex.EncodeToString(hasher.Sum(nil))
-
-	globalCfg, _ := config.LoadGlobalConfig()
-	if globalCfg == nil {
-		globalCfg = &config.GlobalConfig{}
-	}
-	globalCfg.PasswordHash = passwordHash
-	if err := config.SaveGlobalConfig(globalCfg); err != nil {
-		return fmt.Errorf("change password: %w", err)
+	if err := StorePasswordVerifier(newPassword); err != nil {
+		return fmt.Errorf("change password: server password changed but the local verifier could not be updated: %w", err)
 	}
 	return nil
 }

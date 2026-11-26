@@ -1,8 +1,6 @@
 package commands
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/The-17/agentsecrets/pkg/auth"
 	"github.com/The-17/agentsecrets/pkg/config"
 	"github.com/The-17/agentsecrets/pkg/errors"
 	"github.com/The-17/agentsecrets/pkg/keyring"
@@ -81,7 +80,7 @@ func verifyPasswordLocally() error {
 			fmt.Errorf("run 'agentsecrets login' first"))
 	}
 
-	if cfg.PasswordHash == "" {
+	if !auth.HasPasswordVerifier() {
 		return errors.New(errors.ErrUnauthorized,
 			"this machine has no stored password for local verification",
 			fmt.Errorf("run 'agentsecrets login' once in a terminal to enable it"))
@@ -104,11 +103,12 @@ func verifyPasswordLocally() error {
 	fmt.Println() // newline after hidden input
 	password := string(passwordBytes)
 
-	hasher := sha256.New()
-	hasher.Write([]byte(cfg.Email + ":" + password))
-	inputHash := hex.EncodeToString(hasher.Sum(nil))
-
-	if inputHash != cfg.PasswordHash {
+	ok, err := auth.VerifyPasswordLocally(password)
+	if err != nil {
+		return errors.New(errors.ErrUnauthorized, "local password verification is unavailable",
+			fmt.Errorf("%v", err))
+	}
+	if !ok {
 		return errors.New(errors.ErrUnauthorized, "incorrect password",
 			fmt.Errorf("the password must match the one you signed in with on this machine"))
 	}
