@@ -541,11 +541,11 @@ func (s *Server) handleGetStatus(ctx context.Context, req mcp.CallToolRequest) (
 		projectData["workspace_id"] = workspaceID
 	}
 
-	// --- Secrets Sync (matches CLI DiffCached) ---
+	// --- Secrets Sync (matches CLI Diff) ---
 	secretsData := map[string]interface{}{}
 	if pc != nil && pc.ProjectID != "" {
 		svc := s.getSecretsService()
-		diff, diffErr := svc.DiffCached("", "")
+		diff, diffErr := svc.Diff("", "")
 		if diffErr == nil {
 			syncedCount := len(diff.Unchanged)
 			unsyncedCount := len(diff.Added) + len(diff.Changed) + len(diff.Removed)
