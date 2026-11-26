@@ -9,12 +9,11 @@
 package auth
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/The-17/agentsecrets/pkg/api"
@@ -158,17 +157,18 @@ func (s *Service) PerformLogin(email, password string, privateKey, publicKey []b
 		return fmt.Errorf("login: failed to save email: %w", err)
 	}
 
-	// Compute and store local password hash for allowlist verification
-	hasher := sha256.New()
-	hasher.Write([]byte(email + ":" + password))
-	passwordHash := hex.EncodeToString(hasher.Sum(nil))
+	// Keep the local re-auth gate in keychain-auth. A failure is loud here and
+	// leaves sensitive local commands locked until the user signs in again.
+	if err := StorePasswordVerifier(password); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: local password verification was not set up: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Run 'agentsecrets login' in an interactive shell to enable sensitive local operations.")
+	}
 
 	globalCfg, _ := config.LoadGlobalConfig()
 	if globalCfg == nil {
 		globalCfg = &config.GlobalConfig{}
 	}
 	globalCfg.Email = email
-	globalCfg.PasswordHash = passwordHash
 	if err := config.SaveGlobalConfig(globalCfg); err != nil {
 		return fmt.Errorf("login: failed to save global config: %w", err)
 	}
