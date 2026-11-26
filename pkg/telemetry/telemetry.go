@@ -13,11 +13,11 @@ import (
 )
 
 // Hook functions registered from other packages to avoid import cycles.
+// The only context hook returns a plan tier. Email, project ID, workspace ID,
+// and environment names are personal or identifying and are never collected.
 var (
 	KeychainInitializedFunc func() bool
-	LoadProjectIDFunc       func() string
-	LoadGlobalConfigFunc    func() (string, string, string) // SelectedWorkspaceID, Email, WorkspaceType
-	ResolveEnvironmentFunc  func() string
+	WorkspaceTypeFunc       func() string
 )
 
 type Day struct {
@@ -34,13 +34,13 @@ type Day struct {
 	CliVersion           string `json:"cli_version"`
 	OS                   string `json:"os"`
 	Arch                 string `json:"arch"`
-	ActiveEnvironment    string `json:"active_environment"`
-	UserEmail            string `json:"user_email,omitempty"`
-	ProjectID            string `json:"project_id,omitempty"`
-	WorkspaceID          string `json:"workspace_id,omitempty"`
 	ProjectSecretCount   int    `json:"project_secret_count"`
 	WorkspaceType        string `json:"workspace_type"`
 	WorkspaceMemberCount int    `json:"workspace_member_count"`
+
+	// Typos counts where correction prompts were needed. Keys are bounded
+	// categories, never the user's raw input.
+	Typos map[string]int `json:"typos,omitempty"`
 
 	// Execution Path Breakdown
 	ProxyCallsDaemon    int `json:"proxy_calls_daemon"`
@@ -72,9 +72,6 @@ type Day struct {
 	// Node Metadata
 	IsHeadlessNode      bool `json:"is_headless_node"`
 	KeychainInitialized bool `json:"keychain_initialized"`
-
-	// Typos
-	Typos map[string]int `json:"typos"`
 
 	// Agent Identity & Capabilities
 	IdentityAnonymousCalls      int `json:"identity_anonymous_calls"`
@@ -207,19 +204,6 @@ func currentDayLocked() *Day {
 		data.Daily[date] = d
 	}
 
-	// Capture current context
-	if LoadProjectIDFunc != nil {
-		d.ProjectID = LoadProjectIDFunc()
-	}
-	if LoadGlobalConfigFunc != nil {
-		wsID, email, wsType := LoadGlobalConfigFunc()
-		d.WorkspaceID = wsID
-		if email != "" {
-			d.UserEmail = email
-		}
-		d.WorkspaceType = wsType
-	}
-
 	return d
 }
 
@@ -241,6 +225,34 @@ func RecordCommand(cmdName string) {
 		}
 		d.CommandExecutions[cmdName]++
 		d.DeveloperCommands++
+	})
+}
+
+// TypoCategory names where a correction prompt was needed. The raw text the
+// user typed is never recorded or synced. Only one of these fixed keys can
+// reach the telemetry payload.
+type TypoCategory string
+
+const (
+	TypoCommand     TypoCategory = "command"
+	TypoFlag        TypoCategory = "flag"
+	TypoSecretKey   TypoCategory = "secret_key"
+	TypoEnvironment TypoCategory = "environment"
+	TypoOther       TypoCategory = "other"
+)
+
+// RecordTypo counts a correction by category, not by the string the user
+// typed. A mistyped secret name or email must not become personal data in the
+// synced payload.
+func RecordTypo(category TypoCategory) {
+	if category == "" {
+		category = TypoOther
+	}
+	record(func(d *Day) {
+		if d.Typos == nil {
+			d.Typos = make(map[string]int)
+		}
+		d.Typos[string(category)]++
 	})
 }
 
@@ -444,16 +456,6 @@ func RecordErrorUnknown() {
 	record(func(d *Day) { d.ErrorsUnknownCount++ })
 }
 
-// RecordTypo records a typo entry.
-func RecordTypo(typo string) {
-	record(func(d *Day) {
-		if d.Typos == nil {
-			d.Typos = make(map[string]int)
-		}
-		d.Typos[typo]++
-	})
-}
-
 // SyncIfDue checks if 24 hours have passed and flushes telemetry to the cloud.
 //
 // The telemetry mutex is deliberately NOT held across the network call. The API
@@ -535,20 +537,14 @@ func prepareSyncLocked(cliVersion string) (snapshots []daySnapshot, syncedDates 
 	// Update metadata for today's bucket before syncing
 	d := currentDayLocked()
 	d.CliVersion = cliVersion
-	if ResolveEnvironmentFunc != nil {
-		d.ActiveEnvironment = ResolveEnvironmentFunc()
-	} else {
-		d.ActiveEnvironment = "development"
-	}
 	if KeychainInitializedFunc != nil {
 		d.KeychainInitialized = KeychainInitializedFunc()
 	}
 
 	wsType := "personal"
-	if LoadGlobalConfigFunc != nil {
-		_, _, wType := LoadGlobalConfigFunc()
-		if wType != "" {
-			wsType = wType
+	if WorkspaceTypeFunc != nil {
+		if tier := WorkspaceTypeFunc(); tier != "" {
+			wsType = tier
 		}
 	}
 	d.WorkspaceType = wsType
