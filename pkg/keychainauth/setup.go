@@ -2,6 +2,7 @@ package keychainauth
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -131,7 +132,7 @@ func AutoSetup() error {
 // compareVersions check in EnsureInstalled and is upgraded to the latest release,
 // so a daemon binary change always reaches users rather than leaving a stale
 // daemon in place.
-const RequiredDaemonVersion = "4.0.0"
+const RequiredDaemonVersion = "4.1.0"
 
 // candidateDaemonPaths returns all standard filesystem and PATH locations where keychain-auth can reside across all operating systems.
 func candidateDaemonPaths() []string {
@@ -338,29 +339,13 @@ func EnsureInstalled() (string, error) {
 	)
 }
 
-// downloadFromGitHub downloads and unpacks the keychain-auth binary release
-// directly from GitHub, preferring the exact RequiredDaemonVersion and falling back
-// to the latest published release when the pinned one is not out yet.
-//
-// The fallback matters during a coordinated release window: this build may pin a
-// daemon version whose release is not yet published. In that case the newest
-// published release is installed rather than failing — a working daemon beats a
-// hard error, and the caller's version gate still reports that a newer daemon is
-// due. There is no build-from-source fallback.
+// downloadFromGitHub installs exactly the pinned keychain-auth version. An
+// older or newer daemon is a compatibility decision, not a download fallback:
+// silently installing "latest" defeated the pin and could promote a binary
+// this build had never verified.
 func downloadFromGitHub(targetPath string) (string, error) {
-	// The common case: the pinned version is released — one request, no API call.
-	if err := fetchReleaseBinary(targetPath, RequiredDaemonVersion); err == nil {
-		return targetPath, nil
-	}
-
-	// Pinned version not published (yet): use the newest published release.
-	latest, err := latestReleasedVersion()
-	if err != nil {
-		return "", fmt.Errorf("keychain-auth v%s is not released and the latest release could not be resolved: %w",
-			RequiredDaemonVersion, err)
-	}
-	if err := fetchReleaseBinary(targetPath, latest); err != nil {
-		return "", err
+	if err := fetchReleaseBinary(targetPath, RequiredDaemonVersion); err != nil {
+		return "", fmt.Errorf("keychain-auth v%s is required but could not be installed: %w", RequiredDaemonVersion, err)
 	}
 	return targetPath, nil
 }
@@ -380,14 +365,27 @@ func fetchReleaseBinary(targetPath, version string) error {
 	downloadURL := fmt.Sprintf("https://github.com/The-17/keychain-auth/releases/download/v%s/%s", version, assetName)
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(downloadURL)
+	base := fmt.Sprintf("https://github.com/The-17/keychain-auth/releases/download/v%s", version)
+
+	checksums, err := downloadReleaseFile(client, base+"/checksums.txt", 1<<20)
+	if err != nil {
+		return fmt.Errorf("download release checksums: %w", err)
+	}
+	want, err := checksumForAsset(string(checksums), assetName)
+	if err != nil {
+		return err
+	}
+
+	archive, err := downloadReleaseFile(client, downloadURL, maxReleaseArchive)
 	if err != nil {
 		return fmt.Errorf("http request failed: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("github release download returned HTTP status %d for %s", resp.StatusCode, downloadURL)
+	sum := sha256.Sum256(archive)
+	if got := hex.EncodeToString(sum[:]); !strings.EqualFold(got, want) {
+		return fmt.Errorf("checksum mismatch for %s: got %s, want %s", assetName, got, want)
+	}
+	if err := verifyReleaseSignature(client, base, assetName, archive); err != nil {
+		return err
 	}
 
 	targetDir := filepath.Dir(targetPath)
@@ -395,7 +393,7 @@ func fetchReleaseBinary(targetPath, version string) error {
 		return fmt.Errorf("failed to create bin directory: %w", err)
 	}
 
-	gzr, err := gzip.NewReader(resp.Body)
+	gzr, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return fmt.Errorf("failed to read gzip archive: %w", err)
 	}
@@ -411,22 +409,96 @@ func fetchReleaseBinary(targetPath, version string) error {
 			return fmt.Errorf("failed reading tar stream: %w", err)
 		}
 
-		cleanName := filepath.Base(header.Name)
-		if cleanName == binaryName {
-			outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-			if err != nil {
-				return fmt.Errorf("failed to open output binary file: %w", err)
-			}
-			if _, err := io.Copy(outFile, tr); err != nil {
-				outFile.Close()
-				return fmt.Errorf("failed to write binary data: %w", err)
-			}
-			outFile.Close()
-			return nil
+		if filepath.Base(header.Name) != binaryName {
+			continue
 		}
+		outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		if err != nil {
+			return fmt.Errorf("failed to open output binary file: %w", err)
+		}
+		_, copyErr := io.Copy(outFile, io.LimitReader(tr, maxDaemonBinary))
+		closeErr := outFile.Close()
+		if copyErr != nil || closeErr != nil {
+			_ = os.Remove(targetPath)
+			return fmt.Errorf("failed to write binary data: %v %v", copyErr, closeErr)
+		}
+		return nil
 	}
 
 	return fmt.Errorf("binary %s not found in release archive", binaryName)
+}
+
+const (
+	maxReleaseArchive = 64 << 20
+	maxDaemonBinary   = 64 << 20
+)
+
+func downloadReleaseFile(client *http.Client, url string, limit int64) ([]byte, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s returned %d", url, resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, limit))
+}
+
+func checksumForAsset(checksums, asset string) (string, error) {
+	for _, line := range strings.Split(checksums, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == asset {
+			return fields[0], nil
+		}
+	}
+	return "", fmt.Errorf("release checksums do not list %s", asset)
+}
+
+// verifyReleaseSignature uses cosign when available. The checksum is always
+// verified; cosign adds provenance verification when the tool is installed.
+func verifyReleaseSignature(client *http.Client, base, asset string, archive []byte) error {
+	cosign, err := exec.LookPath("cosign")
+	if err != nil {
+		return nil
+	}
+	bundle, err := downloadReleaseFile(client, base+"/"+asset+".sigstore.json", 1<<20)
+	if err != nil {
+		return fmt.Errorf("download signature bundle: %w", err)
+	}
+	tmpArchive, err := os.CreateTemp("", "kauth-archive-*.tar.gz")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpArchive.Name())
+	if _, err := tmpArchive.Write(archive); err != nil {
+		tmpArchive.Close()
+		return err
+	}
+	if err := tmpArchive.Close(); err != nil {
+		return err
+	}
+	tmpBundle, err := os.CreateTemp("", "kauth-bundle-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpBundle.Name())
+	if _, err := tmpBundle.Write(bundle); err != nil {
+		tmpBundle.Close()
+		return err
+	}
+	if err := tmpBundle.Close(); err != nil {
+		return err
+	}
+	cmd := exec.Command(cosign, "verify-blob",
+		"--bundle", tmpBundle.Name(),
+		"--certificate-identity-regexp", `^https://github.com/The-17/keychain-auth/\.github/workflows/release\.yml@refs/tags/v.*$`,
+		"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+		tmpArchive.Name())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("cosign verification failed: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // latestReleasedVersion resolves the newest published keychain-auth release via the
