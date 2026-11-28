@@ -138,7 +138,7 @@ var statusCmd = &cobra.Command{
 			if !isAuthenticated {
 				secretsDisplay = "Login to view"
 			} else {
-				diff, diffErr := app.Secrets().DiffCached("", "")
+				diff, diffErr := app.Secrets().Diff("", "")
 				if diffErr != nil {
 					secretsDisplay = fmt.Sprintf("Could not check (%s)", diffErr.Error())
 				} else {

@@ -80,27 +80,16 @@ func Execute() error {
 
 	// Register telemetry callbacks to avoid import cycles
 	telemetry.KeychainInitializedFunc = keychainauth.IsInitialized
-	telemetry.LoadProjectIDFunc = func() string {
-		if project, err := config.LoadProjectConfig(); err == nil && project != nil {
-			return project.ProjectID
-		}
-		return ""
-	}
-	telemetry.LoadGlobalConfigFunc = func() (string, string, string) {
-		if gc, err := config.LoadGlobalConfig(); err == nil && gc != nil {
-			wsType := "personal"
-			if gc.SelectedWorkspaceID != "" {
-				if ws, ok := gc.Workspaces[gc.SelectedWorkspaceID]; ok {
-					if ws.Type != "" {
-						wsType = ws.Type
-					}
-				}
+	// Only the plan tier crosses into telemetry. Email, workspace ID, project
+	// ID, and environment names are personal data and are never collected.
+	telemetry.WorkspaceTypeFunc = func() string {
+		if gc, err := config.LoadGlobalConfig(); err == nil && gc != nil && gc.SelectedWorkspaceID != "" {
+			if ws, ok := gc.Workspaces[gc.SelectedWorkspaceID]; ok && ws.Type != "" {
+				return ws.Type
 			}
-			return gc.SelectedWorkspaceID, gc.Email, wsType
 		}
-		return "", "", "personal"
+		return "personal"
 	}
-	telemetry.ResolveEnvironmentFunc = config.ResolveEnvironment
 
 	// Machine-facing and metadata-only invocations (--version, --help, shell
 	// completion, `mcp serve`, `exec`) skip the interactive preamble: no update

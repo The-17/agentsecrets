@@ -146,9 +146,7 @@ func StartTransientProxy() (int, func(), error) {
 	server := NewServer(port, engine)
 	server.SetSessionToken(sessionToken)
 
-	httpServer := &http.Server{
-		Handler: server.mux,
-	}
+	httpServer := newProxyHTTPServer(server.mux)
 
 	go func() {
 		_ = httpServer.Serve(listener)
