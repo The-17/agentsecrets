@@ -59,6 +59,20 @@ func (e *DaemonBusyError) Unwrap() error {
 	return e.Cause
 }
 
+// DaemonIdentityError means the process on the other end of the socket is not
+// the installed keychain-auth binary. No request has been sent.
+type DaemonIdentityError struct {
+	Cause error
+}
+
+func (e *DaemonIdentityError) Error() string {
+	return fmt.Sprintf("keychain-auth daemon identity check failed: %v", e.Cause)
+}
+
+func (e *DaemonIdentityError) Unwrap() error {
+	return e.Cause
+}
+
 // UserMessage returns the full user-facing error text for keychain-auth errors.
 // These messages should explain what happened and what to do next.
 func UserMessage(err error) string {
@@ -76,6 +90,10 @@ func UserMessage(err error) string {
 		return daemonNotRunningMessage(e.SocketPath)
 	case *DaemonBusyError:
 		return daemonBusyMessage(e.SocketPath)
+	case *DaemonIdentityError:
+		return "The keychain-auth daemon did not match the installed binary.\n" +
+			"No secrets were sent.\n\n" + e.Cause.Error() + "\n\n" +
+			"Run 'agentsecrets doctor' to inspect the daemon installation."
 	default:
 		return err.Error()
 	}

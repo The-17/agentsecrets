@@ -76,6 +76,14 @@ func initLocked() error {
 		return &DaemonNotRunningError{SocketPath: sockPath, Cause: err}
 	}
 
+	// The daemon verifies us; verify it before sending anything. A planted
+	// socket cannot receive a secret when the peer executable does not match
+	// the installed daemon binary.
+	if err := verifyDaemonPeerAtDial(c); err != nil {
+		_ = c.Close()
+		return &DaemonIdentityError{Cause: err}
+	}
+
 	// The daemon verifies us at connection time. If our binary is unregistered
 	// it will send a status="denied" RESPONSE; rather than blocking on a read
 	// deadline to detect that here, we let the denial surface on the first real
